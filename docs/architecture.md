@@ -178,9 +178,24 @@ notes, not blockers. A report may leave out NOTES when there is nothing to note,
 may ask for another format (as `/progress` does). When `/review` finds nothing to review, or
 cannot resolve its target, the reviewer says so in a line or two instead of giving a verdict.
 
-Commands that run a helper in a child session (`/review`, `/progress`) return its report to
-the current session, and opencode 1.x then asks `lead` to continue. `lead` explains the result
-and waits; it acts on a REJECT or a plan's state only when the user asks.
+`/review` and `/progress` are the two commands the user sends straight to a helper. How they run
+differs by platform:
+
+- On opencode 1.x the helper answers in the user's own session, as the command's agent
+  (`subtask: false`). Its report appears in the conversation, and `lead` takes no turn after
+  it. The user stays with `lead`: the TUI offers only primary agents and keeps its selection,
+  so the next message goes to `lead`, which sees the report in the conversation. The plugin
+  drops the earlier conversation from the helper's model requests
+  (`experimental.chat.messages.transform`), so the helper works from the command alone, as in a
+  child session: the reviewer stays independent of `lead`'s reasoning, and a long session does
+  not make a review costly. The stored conversation is unchanged, compaction is never trimmed,
+  and without the plugin the helper sees the whole conversation.
+- On opencode 2.0.16 a command for a helper runs in a child session. Running it in the user's
+  session would first switch the whole session to the helper, so the user's next message would
+  go to the helper. When the child finishes, opencode wakes `lead` with the report; `lead`
+  relays it briefly, without re-running its checks.
+
+Either way, `lead` acts on a REJECT or on a plan's state only when the user asks.
 
 ## Planning and execution
 

@@ -181,12 +181,21 @@ function textOf(message: unknown): string {
   return content.map((part) => (typeof part?.text === "string" ? part.text : "")).join("\n");
 }
 
+/** What the stand-in model received in one streamed request. */
+interface StandInRequest {
+  system: string;
+  /** The text of every user message in the request, in order. */
+  users: string[];
+}
+
 /**
  * A stand-in OpenAI-compatible chat server with a fixed script. lead pushes when told
  * PUSH_AS_LEAD and hands RUN_PUSH to the builder when told DELEGATE_PUSH; the builder runs one
- * harmless command, then `git push origin main`, then answers.
+ * harmless command, then `git push origin main`, then answers. The reviewer answers with a
+ * verdict. Every streamed request is recorded in `requests`.
  */
 function standInModel() {
+  const requests: StandInRequest[] = [];
   const chunk = (delta: unknown, finish: string | null) =>
     `data: ${JSON.stringify({
       id: "stand-in",
@@ -197,7 +206,7 @@ function standInModel() {
       ...(finish ? { usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } } : {}),
     })}\n\n`;
   let calls = 0;
-  return Bun.serve({
+  const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
     async fetch(request) {
@@ -220,6 +229,8 @@ function standInModel() {
         if (results === 0) tool = { name: "bash", args: { command: "echo builder-ok", description: "harmless" } };
         else if (results === 1) tool = { name: "bash", args: { command: "git push origin main", description: "push" } };
         else text = "builder done";
+      } else if (system.includes("You are reviewer.")) {
+        text = "VERDICT: APPROVE";
       }
       if (!body.stream) {
         return Response.json({
@@ -232,6 +243,7 @@ function standInModel() {
         });
       }
       calls++;
+      requests.push({ system, users: messages.filter((message) => role(message) === "user").map(textOf) });
       const events = tool
         ? [
             chunk({ role: "assistant", content: null, tool_calls: [{ index: 0, id: `call_${calls}`, type: "function", function: { name: tool.name, arguments: JSON.stringify(tool.args) } }] }, null),
@@ -241,6 +253,7 @@ function standInModel() {
       return new Response(`${events.join("")}data: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } });
     },
   });
+  return Object.assign(server, { requests });
 }
 
 for (const bin of v1Bins) {
@@ -443,6 +456,73 @@ for (const bin of v1Bins) {
           const push = builder.find((part) => part.state?.input?.command === "git push origin main");
           expect(push?.state?.status).toBe("completed");
           expect(push?.state?.error).toBeUndefined();
+        } finally {
+          setPlugin(box, true);
+        }
+      }, 300_000);
+
+      /**
+       * lead answers a first message, the user runs the reviewer's command in the same session,
+       * then writes to lead again. Returns what each agent's requests contained.
+       */
+      const reviewScenario = async () => {
+        const server = await startServer(box, bin, ["--port", String(freePort())], {}, /listening on (http:\/\/\S+)/);
+        try {
+          const api = async <T>(method: string, route: string, body?: unknown): Promise<T> => {
+            const url = new URL(route, server.url);
+            url.searchParams.set("directory", box.project);
+            const response = await fetch(url, {
+              method,
+              headers: { "content-type": "application/json" },
+              body: body === undefined ? undefined : JSON.stringify(body),
+              signal: AbortSignal.timeout(120_000),
+            });
+            if (!response.ok) throw new Error(`${method} ${route}: HTTP ${response.status}`);
+            const text = await response.text();
+            return (text ? JSON.parse(text) : undefined) as T;
+          };
+          const session = await api<{ id: string }>("POST", "/session", {});
+          await api("POST", `/session/${session.id}/message`, { agent: "lead", parts: [{ type: "text", text: "WARM_UP question" }] });
+          const start = model!.requests.length;
+          await api("POST", `/session/${session.id}/command`, { command: "review", arguments: "REVIEW_TARGET", agent: "lead" });
+          const during = model!.requests.slice(start);
+          await api("POST", `/session/${session.id}/message`, { agent: "lead", parts: [{ type: "text", text: "AFTER_REVIEW" }] });
+          const after = model!.requests.slice(start + during.length);
+          const children = await api<Array<{ id: string }>>("GET", `/session/${session.id}/children`);
+          const messages = await api<Array<{ info: { role: string; agent?: string }; parts: V1Part[] }>>("GET", `/session/${session.id}/message`);
+          return { during, after, children, messages };
+        } finally {
+          await server.stop();
+        }
+      };
+      const isLead = (request: StandInRequest) => request.system.includes("You are lead");
+      const isReviewer = (request: StandInRequest) => request.system.includes("You are reviewer.");
+
+      test("a helper command answers in the user's session, from its request alone, and lead takes no extra turn", async () => {
+        setPlugin(box, true);
+        const { during, after, children, messages } = await reviewScenario();
+        expect(children).toEqual([]);
+        expect(during.length).toBeGreaterThan(0);
+        expect(during.every(isReviewer)).toBe(true);
+        for (const request of during) expect(request.users.join("\n")).not.toContain("WARM_UP");
+        expect(during[0]!.users.join("\n")).toContain("Review REVIEW_TARGET");
+        const report = [...messages].reverse().find((message) => message.info.role === "assistant" && message.info.agent === "reviewer");
+        expect(report?.parts.find((part) => part.type === "text")?.text).toBe("VERDICT: APPROVE");
+        // lead's next turn sees the whole conversation, the report included.
+        expect(after.length).toBeGreaterThan(0);
+        expect(after.every(isLead)).toBe(true);
+        const leadSees = after[0]!.users.join("\n");
+        expect(leadSees).toContain("WARM_UP");
+        expect(leadSees).toContain("AFTER_REVIEW");
+      }, 300_000);
+
+      test("without the plugin, the helper's requests carry the whole conversation", async () => {
+        setPlugin(box, false);
+        try {
+          const { during, children } = await reviewScenario();
+          expect(children).toEqual([]);
+          expect(during.every(isReviewer)).toBe(true);
+          expect(during[0]!.users.join("\n")).toContain("WARM_UP");
         } finally {
           setPlugin(box, true);
         }

@@ -134,10 +134,12 @@ export function v2CommandFile(command: ResolvedCommand, marker: string, modes: R
     agent: command.agent,
   };
   // 2.0.16 runs a command in a background child session when `subagent` is true, and also when
-  // it is left out and the command's agent is a subagent. `subagent: false` keeps it in the
-  // current session, which is what a neutral `subtask: false` means.
-  if (command.subtask) data.subagent = true;
-  else if (modes.get(command.agent) === "subagent") data.subagent = false;
+  // it is left out and the command's agent is a subagent. `subagent: false` runs it in the
+  // current session, but first switches that session to the command's agent for good
+  // (core/src/config/plugin/command.ts:124-131), so the user's next message would go to the
+  // helper instead of lead. A helper's command therefore always runs in a child session here,
+  // whatever `subtask` says; the parent agent then gets a turn to relay the result.
+  if (command.subtask || modes.get(command.agent) === "subagent") data.subagent = true;
   return { path: `commands/${command.id}.md`, content: withFrontmatter(data, command.template, [marker]) };
 }
 

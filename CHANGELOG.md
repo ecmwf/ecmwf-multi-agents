@@ -11,6 +11,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ## [Unreleased]
 
+### Changed
+
+- `/review` and `/progress` cost about a quarter of what they did on opencode 1.x. The reviewer
+  or scout now answers in your own session, so its report appears there directly and `lead`
+  no longer spends a turn relaying it; the plugin keeps the earlier conversation out of the
+  helper's requests, so reviews stay independent and cheap in long sessions. On opencode 2
+  they still run in a separate session, and `lead` relays the report briefly.
+- Releasing is one command: `make release X.Y.Z` runs the checks, sets the version, updates
+  the changelog and `dist/`, commits, pushes, tags and publishes, and continues where it
+  stopped when run again. `make version` now only prints the version.
+
 ### Fixed
 
 - `lead` runs each command that needs your approval (push, pull requests, merges, history
@@ -20,6 +31,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 ### Added
 
 - `evals/results/` keeps eval summaries for comparison; the first one is the 0.1.0 baseline.
+- Eval cases `review-warm` and `progress-warm` run the commands after a first question, as in
+  normal use.
 
 ## [0.1.0] - 2026-10-11
 

@@ -171,6 +171,11 @@
 
   // Names checked against opencode's built-in commands in docs/research/command-clashes.md.
   // `review` deliberately replaces opencode's built-in review command.
+  //
+  // `review` and `progress` have no `subtask`: on opencode 1.x their helper answers in the
+  // user's own session, so the report appears there and lead takes no extra turn to relay it,
+  // and the plugin keeps the earlier conversation out of the helper's requests. opencode 2 has
+  // no such mode and runs them in a child session (see tools/emit-v2.ts).
   "commands": {
     "onboard": {
       "description": "Survey this repository and keep a short summary for later sessions",
@@ -190,13 +195,11 @@
     "review": {
       "description": "Independent review of your uncommitted changes, a branch, a commit, a pull request or a plan",
       "agent": "reviewer",
-      "subtask": true,
       "template": "commands/review.md"
     },
     "progress": {
       "description": "Show progress on the current plan",
       "agent": "scout",
-      "subtask": true,
       "template": "commands/progress.md"
     },
     "guide": {

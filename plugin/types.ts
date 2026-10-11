@@ -6,7 +6,8 @@
 // of the published plugin APIs instead of being imported:
 //
 //   opencode 1.x: @opencode-ai/plugin (packages/plugin/src/index.ts at v1.18.35; identical at
-//                 v1.19.0), hooks `config`, `chat.message`, `chat.params`, `tool.execute.before`.
+//                 v1.19.0), hooks `config`, `chat.message`, `chat.params`, `tool.execute.before`,
+//                 `experimental.session.compacting`, `experimental.chat.messages.transform`.
 //   opencode 2:   @opencode/plugin 2.0.16 (dist/promise/plugin.d.ts, dist/promise/agent.d.ts) and
 //                 @opencode/schema 2.0.16 (Agent.Info, Model.Ref, Location.Info).
 
@@ -131,6 +132,11 @@ export interface V1Hooks {
   "chat.message": (input: { sessionID: string; agent?: string }, output: { message?: { agent?: string } }) => Promise<void>;
   "chat.params": (input: { sessionID: string; agent: string }, output: unknown) => Promise<void>;
   "tool.execute.before": (input: { tool: string; sessionID: string; callID?: string }, output: { args?: unknown }) => Promise<void>;
+  "experimental.session.compacting": (input: { sessionID: string }, output: unknown) => Promise<void>;
+  "experimental.chat.messages.transform": (
+    input: unknown,
+    output: { messages?: Array<{ info: { role?: string; agent?: string; sessionID?: string }; parts: unknown[] }> },
+  ) => Promise<void>;
 }
 
 // opencode 2.0.16 (structural subset of @opencode/plugin and @opencode/schema).

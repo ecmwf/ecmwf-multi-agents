@@ -158,8 +158,9 @@ describe("every case's setup on the fixture", () => {
       const head = applySetup(made, item.setup);
       expect(head).toMatch(/^[0-9a-f]{40}$/);
       const tests = unittest(made.project);
-      // The review-reject change breaks the existing tests on purpose: the reviewer can find it.
-      expect(tests.code).toBe(item.id === "review-reject" ? 1 : 0);
+      // The units bug of the review-reject and review-warm cases breaks the existing tests on
+      // purpose: the reviewer can find it.
+      expect(tests.code).toBe(item.setup === CASES.find((other) => other.id === "review-reject")?.setup ? 1 : 0);
       const hiddenCheck = item.checks.find((check) => check.id === "hidden-tests");
       if (hiddenCheck) {
         expect(existsSync(path.join(HIDDEN, item.id))).toBe(true);

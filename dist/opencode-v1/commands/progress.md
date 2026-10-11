@@ -2,7 +2,7 @@
 # managed by ecmwf-multi-agents
 description: "Show progress on the current plan"
 agent: scout
-subtask: true
+subtask: false
 ---
 
 Report progress on a plan, briefly and in plain words. You do not see the conversation; this message is all you have.

@@ -171,7 +171,7 @@ export function resolvedFixture(): ResolvedHarness {
     agents,
     commands: [
       { id: "plan", description: "Plan a piece of work with you", agent: "lead", subtask: false, template: "Plan: $ARGUMENTS" },
-      { id: "review", description: "Independent review of your changes", agent: "reviewer", subtask: true, template: "Review $ARGUMENTS" },
+      { id: "review", description: "Independent review of your changes", agent: "reviewer", subtask: false, template: "Review $ARGUMENTS" },
     ],
     skills: [{ id: "ecmwf-multi-agents-plan", description: "Plan file format and rules.", body: "# Plan\n\nRules.", hidden: true }],
     profiles: [

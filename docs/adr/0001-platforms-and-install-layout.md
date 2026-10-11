@@ -79,6 +79,10 @@ What it does:
 5. On opencode 1.x, applies each helper's own shell rules again in `tool.execute.before`,
    so a helper's denied commands (git and `gh` writes among them) stay denied. An "Allow
    always" answer there lasts until restart and overrides every agent's `deny` rules.
+6. On opencode 1.x, drops the earlier conversation from the model requests of a helper that
+   answers in the user's own session (`/review`, `/progress`), through
+   `experimental.chat.messages.transform`, so it works from its command alone. Compaction
+   passes through the same hook and is never trimmed.
 
 On opencode 2, agent transforms registered during `setup` run before the agent files load,
 so the plugin registers its transform after activation.

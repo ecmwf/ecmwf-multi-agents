@@ -13,10 +13,14 @@
 // `chat.params` before every model request (opencode/src/session/llm/request.ts:114-121). The
 // plugin records it from both and, for a session it has not seen, asks the server, which keeps
 // the same agent on the session record (prompt.ts:672-689).
+//
+// Helpers that answer in the user's own session (`/review`, `/progress`) get only their own
+// request in each model request; see isolate.ts.
 
 import { applyToV1Config, planAgents, type AgentPlan } from "./apply.ts";
 import { processEnvironment } from "./environment.ts";
 import { checkShellCommand } from "./guard.ts";
+import { Compactions, isolateHelperRequest } from "./isolate.ts";
 import { v1Reporter } from "./report.ts";
 import { loadSettings, mergeSettings } from "./settings.ts";
 import type { EmbeddedHarness, Environment, Settings, V1Hooks, V1PluginInput } from "./types.ts";
@@ -83,6 +87,8 @@ export function createServer(harness: EmbeddedHarness, options: V1Options = {}) 
     }
 
     const sessions = new SessionAgents();
+    const helpers = new Set(harness.agents.filter((agent) => agent.mode === "subagent").map((agent) => agent.id));
+    const compactions = new Compactions();
     const lookup = async (session: string): Promise<string | undefined> => {
       const get = input?.client?.session?.get;
       if (typeof get !== "function") return undefined;
@@ -141,6 +147,25 @@ export function createServer(harness: EmbeddedHarness, options: V1Options = {}) 
         }
         // The one deliberate throw: opencode reports it to the model as the tool's error.
         if (block !== undefined) throw new Error(block.message);
+      },
+
+      async "experimental.session.compacting"(compaction) {
+        try {
+          compactions.mark(compaction?.sessionID);
+        } catch (error) {
+          reporter.internal("the compaction hook", error);
+        }
+      },
+
+      async "experimental.chat.messages.transform"(_input, output) {
+        try {
+          const messages = output?.messages;
+          if (!Array.isArray(messages) || messages.length === 0) return;
+          if (compactions.take(messages[0]?.info?.sessionID)) return;
+          isolateHelperRequest(messages, helpers);
+        } catch (error) {
+          reporter.internal("the message transform hook", error);
+        }
       },
     };
   };

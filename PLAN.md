@@ -31,7 +31,7 @@ support waits in `TODO.md` until approved.
 | Name | `ecmwf-multi-agents` |
 | Agents | Four: `lead` (primary, default), `scout`, `builder`, `reviewer`. No separate deep tiers: each agent has a default effort, which users change per agent in the settings file |
 | Default models | `lead`: `anthropic/claude-opus-5-5` xhigh. `builder`: `anthropic/claude-sonnet-5-5` high. `scout`: `anthropic/claude-sonnet-5-5` medium. `reviewer`: `github-copilot/gpt-6.1-sol` medium |
-| Versions | `MAJOR.MINOR.MICRO` without a `v`, single source in `VERSION`, tag equals version; `make version X.Y.Z` and `make release` |
+| Versions | `MAJOR.MINOR.MICRO` without a `v`, single source in `VERSION`, tag equals version; one step: `make release X.Y.Z` |
 | Profiles | `default` (above), `anthropic` (Anthropic API only), `copilot` (GitHub Copilot only), `inherit` (session model everywhere). ECMWF's internal endpoint deferred, see `TODO.md` |
 | Planning | `lead` interviews the user, sends scouts, writes the plan, has it reviewed, waits for approval |
 | Review policy | `auto` (default), `ask`, `always`, `never`, set in the settings file |
@@ -174,9 +174,9 @@ Integration suites (opt-in, `ECMWF_MULTI_AGENTS_INTEGRATION=1`): 49 tests pass o
   Summary in `evals/results/0.1.0.md`
 - [x] Fix from the results: `lead` chained commit and push in one command, so refusing the push
   lost the commit (`no-push` failed); fixed, and passes three out of three
-- [~] Tiago: `/review` and `/progress` without the extra `lead` turn (see the first finding
+- [x] Tiago: `/review` and `/progress` without the extra `lead` turn (see the first finding
   below); measure cold and warm sessions before and after
-- [~] Tiago: One release command: fold `make version X.Y.Z` into `make release X.Y.Z` (set the
+- [x] Tiago: One release command: fold `make version X.Y.Z` into `make release X.Y.Z` (set the
   version, roll the changelog, rebuild, check, commit, push, tag, publish), resumable and
   with `DRY_RUN=1`
 - [ ] A larger eval fixture, or cases that need broad reading, to test whether delegation saves
@@ -195,10 +195,22 @@ Baseline on 0.1.0 (one run each):
 
 Findings to act on for 0.2.0:
 
-- `/review` and `/progress` run their helper in a child session, and opencode 1.x then gives
-  `lead` a turn to report the result. That turn costs three to four times the helper's own
-  work ($0.08 against $0.02 for a review). Running them in the current session as the helper
-  would avoid it; check the effect on the selected agent in the TUI first.
+- Done: `/review` and `/progress` ran their helper in a child session, and opencode 1.x then
+  gave `lead` a turn to report the result, costing three to four times the helper's own work.
+  On opencode 1.x the helper now answers in the user's session (`subtask: false`); the TUI
+  keeps `lead` selected because it lists only primary agents, and the plugin keeps the earlier
+  conversation out of the helper's requests. On opencode 2 a helper command still needs a child
+  session, because running it inline switches the whole session to the helper. Cost of the
+  command turn, mean of two runs each, opencode 1.18.35, default profile:
+
+  | Case | Before | After | Helper's first request, tokens |
+  |---|---|---|---|
+  | `review-reject` (cold session) | $0.104 | $0.025 | 3,595 before and after |
+  | `review-warm` (after one question) | $0.050 | $0.021 | 3,595 before and after |
+  | `progress` (cold) | $0.096 | $0.029 | 7,490 before and after |
+  | `progress-warm` | $0.046 | $0.029 | 7,490 before and after |
+
+  All 16 runs passed. Equal first requests confirm the helper works from its command alone.
 - The sample repository is small: `lead` answered, investigated and fixed bugs itself, without
   helpers, and still matched the baseline's cost. Delegation only showed in `feature`,
   `onboard` and `plan-go`. Add a larger fixture, or cases that need broad reading, to test
@@ -236,3 +248,6 @@ Findings to act on for 0.2.0:
   agents with per-agent effort. Makefile and version tooling added; 0.1.0 released. Eval
   harness built and run on 0.1.0 with real models: 18 of 19 runs passed for $4.10; the
   failure led to the commit-and-push fix.
+- 2026-10-11: Rules for two developers added (`AGENTS.md`, Working together). `/review` and
+  `/progress` answer in the user's session on opencode 1.x: the command turn costs a quarter
+  to a half of what it did. Releasing is one command, `make release X.Y.Z`.

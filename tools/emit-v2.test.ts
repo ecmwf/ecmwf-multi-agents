@@ -313,8 +313,12 @@ describe("emitV2 commands", () => {
     });
   });
 
-  test("a command for a subagent without subtask stays in the current session: subagent false", () => {
-    expect(file(emitV2(fixture()), "commands/status.md").data.subagent).toBe(false);
+  test("a command for a subagent also runs in a child session without subtask, so the session never switches to a helper", () => {
+    expect(file(emitV2(fixture()), "commands/status.md").data).toEqual({
+      description: "Show progress",
+      agent: "scout",
+      subagent: true,
+    });
   });
 
   test("without subtask, commands for primary or unknown agents leave subagent out", () => {
@@ -322,6 +326,9 @@ describe("emitV2 commands", () => {
     expect("subagent" in file(files, "commands/plan.md").data).toBe(false);
     expect("subagent" in file(files, "commands/guide.md").data).toBe(false);
     expect("subtask" in file(files, "commands/review.md").data).toBe(false);
+    for (const command of files.filter((output) => output.path.startsWith("commands/"))) {
+      expect(file(files, command.path).data.subagent).not.toBe(false);
+    }
   });
 });
 

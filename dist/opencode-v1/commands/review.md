@@ -2,7 +2,7 @@
 # managed by ecmwf-multi-agents
 description: "Independent review of your uncommitted changes, a branch, a commit, a pull request or a plan"
 agent: reviewer
-subtask: true
+subtask: false
 ---
 
 Review the target below and reply in your reviewer format. You do not see the conversation that led here; this message is all you have.

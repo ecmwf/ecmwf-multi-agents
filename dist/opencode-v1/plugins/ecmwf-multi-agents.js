@@ -456,6 +456,53 @@ function blockMessage(harness, agent, part, denied) {
   return `${harness.name}: ${owner}. Do not try another way: say in your report what is needed.`;
 }
 
+// plugin/isolate.ts
+function isolateHelperRequest(messages, helpers) {
+  let request = -1;
+  for (let index = messages.length - 1;index >= 0; index--) {
+    if (messages[index]?.info?.role === "user") {
+      request = index;
+      break;
+    }
+  }
+  if (request <= 0)
+    return 0;
+  const agent = messages[request].info.agent;
+  if (agent === undefined || !helpers.has(agent))
+    return 0;
+  const shared = messages.slice(0, request).some((message) => message?.info?.agent !== agent);
+  if (!shared)
+    return 0;
+  messages.splice(0, request);
+  return request;
+}
+var COMPACTION_WINDOW_MS = 60000;
+
+class Compactions {
+  now;
+  started = new Map;
+  constructor(now = Date.now) {
+    this.now = now;
+  }
+  mark(session) {
+    if (typeof session !== "string" || session === "")
+      return;
+    this.started.set(session, this.now());
+    for (const [id, at] of this.started)
+      if (this.now() - at > COMPACTION_WINDOW_MS)
+        this.started.delete(id);
+  }
+  take(session) {
+    if (typeof session !== "string")
+      return false;
+    const at = this.started.get(session);
+    if (at === undefined)
+      return false;
+    this.started.delete(session);
+    return this.now() - at <= COMPACTION_WINDOW_MS;
+  }
+}
+
 // plugin/report.ts
 var TOAST_DELAY_MS = 2000;
 var TOAST_DURATION_MS = 15000;
@@ -976,6 +1023,8 @@ function createServer(harness, options = {}) {
       reporter.internal("planning the agents", error);
     }
     const sessions = new SessionAgents;
+    const helpers = new Set(harness.agents.filter((agent) => agent.mode === "subagent").map((agent) => agent.id));
+    const compactions = new Compactions;
     const lookup = async (session) => {
       const get = input?.client?.session?.get;
       if (typeof get !== "function")
@@ -1036,6 +1085,25 @@ function createServer(harness, options = {}) {
         }
         if (block !== undefined)
           throw new Error(block.message);
+      },
+      async "experimental.session.compacting"(compaction) {
+        try {
+          compactions.mark(compaction?.sessionID);
+        } catch (error) {
+          reporter.internal("the compaction hook", error);
+        }
+      },
+      async "experimental.chat.messages.transform"(_input, output) {
+        try {
+          const messages = output?.messages;
+          if (!Array.isArray(messages) || messages.length === 0)
+            return;
+          if (compactions.take(messages[0]?.info?.sessionID))
+            return;
+          isolateHelperRequest(messages, helpers);
+        } catch (error) {
+          reporter.internal("the message transform hook", error);
+        }
       }
     };
   };

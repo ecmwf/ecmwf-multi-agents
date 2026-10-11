@@ -223,3 +223,47 @@ describe("v1 server", () => {
     expect(cfg.default_agent).toBe("lead");
   });
 });
+
+describe("v1 helper requests in the user's session", () => {
+  const conversation = (helper: string) => [
+    { info: { role: "user", agent: "lead", sessionID: "ses_root" }, parts: [{ type: "text", text: "explain" }] },
+    { info: { role: "assistant", agent: "lead", sessionID: "ses_root" }, parts: [{ type: "text", text: "it works like this" }] },
+    { info: { role: "user", agent: helper, sessionID: "ses_root" }, parts: [{ type: "text", text: "review" }] },
+  ];
+
+  test("a request by a helper of the harness drops the earlier conversation", async () => {
+    const hooks = await start({});
+    const output = { messages: conversation("reviewer") };
+    await hooks["experimental.chat.messages.transform"]({}, output);
+    expect(output.messages.map((item) => item.info.agent)).toEqual(["reviewer"]);
+  });
+
+  test("a request by lead, or by an agent outside the harness, keeps everything", async () => {
+    const hooks = await start({});
+    for (const agent of ["lead", "build", "general"]) {
+      const output = { messages: conversation(agent) };
+      await hooks["experimental.chat.messages.transform"]({}, output);
+      expect(output.messages).toHaveLength(3);
+    }
+  });
+
+  test("compaction's pass through the hook is never trimmed, and the next request is again", async () => {
+    const hooks = await start({});
+    await hooks["experimental.session.compacting"]({ sessionID: "ses_root" }, { context: [] });
+    const compaction = { messages: conversation("reviewer") };
+    await hooks["experimental.chat.messages.transform"]({}, compaction);
+    expect(compaction.messages).toHaveLength(3);
+    const next = { messages: conversation("reviewer") };
+    await hooks["experimental.chat.messages.transform"]({}, next);
+    expect(next.messages).toHaveLength(1);
+  });
+
+  test("fail safe: malformed input is ignored and nothing is thrown", async () => {
+    const record = recorder();
+    const hooks = await start({}, record);
+    await hooks["experimental.chat.messages.transform"](null, null as never);
+    await hooks["experimental.chat.messages.transform"]({}, { messages: [null, undefined] as never });
+    await hooks["experimental.session.compacting"](null as never, null);
+    expect(record.logs.filter((log) => log.level === "error")).toEqual([]);
+  });
+});

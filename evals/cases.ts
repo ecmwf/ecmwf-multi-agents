@@ -91,6 +91,34 @@ Created: 2026-09-28
 - 2026-09-29: T1 and T2 done. Status done.
 `;
 
+// An uncommitted change with a real bug: Fahrenheit to Celsius multiplies by 1.8 instead of
+// dividing by it.
+const UNITS_BUG: EvalCase["setup"] = [
+  {
+    kind: "replace",
+    path: "stations/units.py",
+    find: 'def celsius_to_fahrenheit(value):\n    """Convert degrees Celsius to degrees Fahrenheit."""\n    return value * 9 / 5 + 32\n\n\ndef fahrenheit_to_celsius(value):\n    """Convert degrees Fahrenheit to degrees Celsius."""\n    return (value - 32) * 5 / 9\n',
+    replace:
+      '# Freezing point of water in degrees Fahrenheit, and the size of one degree Celsius in\n# degrees Fahrenheit.\nFREEZING_F = 32.0\nDEGREE_RATIO = 1.8\n\n\ndef celsius_to_fahrenheit(value):\n    """Convert degrees Celsius to degrees Fahrenheit."""\n    return value * DEGREE_RATIO + FREEZING_F\n\n\ndef fahrenheit_to_celsius(value):\n    """Convert degrees Fahrenheit to degrees Celsius."""\n    return (value - FREEZING_F) * DEGREE_RATIO\n',
+  },
+];
+
+// Two seeded plans: json-output (2 of 5 tasks done, T3 next) is the most recent open one.
+const SEEDED_PLANS: EvalCase["setup"] = [
+  { kind: "exclude-workdir" },
+  { kind: "write", path: ".ecmwf-multi-agents/plans/json-output.md", content: JSON_PLAN, mtime: "2026-10-02T10:00:00Z" },
+  { kind: "write", path: ".ecmwf-multi-agents/plans/kelvin-output.md", content: KELVIN_PLAN, mtime: "2026-10-05T10:00:00Z" },
+];
+
+// A first turn that gives the session some history before a command, as in normal use.
+const WARM_UP = (text: string) => ({ turn: { kind: "prompt" as const, text }, note: "history before the command" });
+
+const PROGRESS_CHECKS = [
+  answerMentions("counts", "the report says 2 of 5 tasks are done", [{ label: "2 of 5", any: [/\b2\s*(?:of|\/|out of)\s*5\b/i] }], "all"),
+  answerMentions("next", "the report names T3, the --json option, as the next task", [{ label: "T3", any: [/\bT3\b/, /--json option/i] }], "all"),
+  noChanges(/^$/, "no file changed, plans included"),
+];
+
 export const CASES: EvalCase[] = [
   {
     id: "answer",
@@ -200,16 +228,19 @@ export const CASES: EvalCase[] = [
   {
     id: "review-reject",
     title: "/review of an uncommitted change with a real bug",
-    setup: [
-      {
-        kind: "replace",
-        path: "stations/units.py",
-        find: 'def celsius_to_fahrenheit(value):\n    """Convert degrees Celsius to degrees Fahrenheit."""\n    return value * 9 / 5 + 32\n\n\ndef fahrenheit_to_celsius(value):\n    """Convert degrees Fahrenheit to degrees Celsius."""\n    return (value - 32) * 5 / 9\n',
-        replace:
-          '# Freezing point of water in degrees Fahrenheit, and the size of one degree Celsius in\n# degrees Fahrenheit.\nFREEZING_F = 32.0\nDEGREE_RATIO = 1.8\n\n\ndef celsius_to_fahrenheit(value):\n    """Convert degrees Celsius to degrees Fahrenheit."""\n    return value * DEGREE_RATIO + FREEZING_F\n\n\ndef fahrenheit_to_celsius(value):\n    """Convert degrees Fahrenheit to degrees Celsius."""\n    return (value - FREEZING_F) * DEGREE_RATIO\n',
-      },
-    ],
+    setup: UNITS_BUG,
     turns: [{ turn: { kind: "command", command: "review", arguments: "" } }],
+    checks: [verdict("REJECT", ["units.py"]), noChanges(WORK_FILES, "the review changed no project file")],
+    baseline: false,
+  },
+  {
+    id: "review-warm",
+    title: "/review after a question to lead, in a session that already has history",
+    setup: UNITS_BUG,
+    turns: [
+      WARM_UP("How does this package convert between temperature units? Name the files and functions involved, in a few lines. Do not change any files."),
+      { turn: { kind: "command", command: "review", arguments: "" } },
+    ],
     checks: [verdict("REJECT", ["units.py"]), noChanges(WORK_FILES, "the review changed no project file")],
     baseline: false,
   },
@@ -280,17 +311,20 @@ export const CASES: EvalCase[] = [
   {
     id: "progress",
     title: "/progress reports a seeded plan's counts and next task",
-    setup: [
-      { kind: "exclude-workdir" },
-      { kind: "write", path: ".ecmwf-multi-agents/plans/json-output.md", content: JSON_PLAN, mtime: "2026-10-02T10:00:00Z" },
-      { kind: "write", path: ".ecmwf-multi-agents/plans/kelvin-output.md", content: KELVIN_PLAN, mtime: "2026-10-05T10:00:00Z" },
-    ],
+    setup: SEEDED_PLANS,
     turns: [{ turn: { kind: "command", command: "progress", arguments: "" } }],
-    checks: [
-      answerMentions("counts", "the report says 2 of 5 tasks are done", [{ label: "2 of 5", any: [/\b2\s*(?:of|\/|out of)\s*5\b/i] }], "all"),
-      answerMentions("next", "the report names T3, the --json option, as the next task", [{ label: "T3", any: [/\bT3\b/, /--json option/i] }], "all"),
-      noChanges(/^$/, "no file changed, plans included"),
+    checks: PROGRESS_CHECKS,
+    baseline: false,
+  },
+  {
+    id: "progress-warm",
+    title: "/progress after a question to lead, in a session that already has history",
+    setup: SEEDED_PLANS,
+    turns: [
+      WARM_UP("In two or three sentences, what does this package do? Do not change any files."),
+      { turn: { kind: "command", command: "progress", arguments: "" } },
     ],
+    checks: PROGRESS_CHECKS,
     baseline: false,
   },
 ];

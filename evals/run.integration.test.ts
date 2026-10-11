@@ -217,14 +217,15 @@ describe.skipIf(!enabled)(`eval runner end to end (${bin}, stand-in model)`, () 
     expect(record.changedFiles).toEqual([]);
   }, 400_000);
 
-  test("harness, review-reject: /review runs the reviewer in a child session", async () => {
+  test("harness, review-reject: /review runs the reviewer in the user's session, and lead takes no turn", async () => {
     const record = keep(await runCase(byId("review-reject"), options("harness")));
     expect(record.error).toBeUndefined();
     expect(record.checks.map((check) => [check.id, check.pass])).toEqual([
       ["verdict-reject", true],
       ["no-changes", true],
     ]);
-    expect(record.metrics.childSessions).toEqual({ reviewer: 1 });
+    expect(record.metrics.childSessions).toEqual({});
+    expect(Object.keys(record.metrics.agents)).toEqual(["reviewer"]);
     expect(record.metrics.agents.reviewer!.shellCommands).toEqual(["git diff HEAD"]);
     expect(record.pass).toBe(true);
   }, 400_000);
