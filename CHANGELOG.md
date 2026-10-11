@@ -13,11 +13,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ### Changed
 
-- `/review` and `/progress` cost about a quarter of what they did on opencode 1.x. The reviewer
-  or scout now answers in your own session, so its report appears there directly and `lead`
-  no longer spends a turn relaying it; the plugin keeps the earlier conversation out of the
-  helper's requests, so reviews stay independent and cheap in long sessions. On opencode 2
-  they still run in a separate session, and `lead` relays the report briefly.
+- `/review` and `/progress` cost less on opencode 1.x: a quarter to a third of what they did
+  in a new session, and about half after some conversation. The reviewer or scout now answers
+  in your own session, so its report appears there directly and `lead` no longer spends a turn
+  relaying it; the plugin keeps the earlier conversation out of the helper's requests, so
+  reviews stay independent and cheap in long sessions. On opencode 2 they still run in a
+  separate session, and `lead` relays the report briefly.
 - Releasing is one command: `make release X.Y.Z` runs the checks, sets the version, updates
   the changelog and `dist/`, commits, pushes, tags and publishes, and continues where it
   stopped when run again. `make version` now only prints the version.

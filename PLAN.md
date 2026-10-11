@@ -249,5 +249,6 @@ Findings to act on for 0.2.0:
   harness built and run on 0.1.0 with real models: 18 of 19 runs passed for $4.10; the
   failure led to the commit-and-push fix.
 - 2026-10-11: Rules for two developers added (`AGENTS.md`, Working together). `/review` and
-  `/progress` answer in the user's session on opencode 1.x: the command turn costs a quarter
-  to a half of what it did. Releasing is one command, `make release X.Y.Z`.
+  `/progress` answer in the user's session on opencode 1.x: the command turn costs 24 to 30%
+  of what it did in a new session, 42 to 63% after a first question. Releasing is one
+  command, `make release X.Y.Z`.
