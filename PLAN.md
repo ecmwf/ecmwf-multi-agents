@@ -76,7 +76,7 @@ Source content and generator code are written in parallel against the contracts 
 | 2 | Generator core; `lead` prompt + `onboard`, `plan`, `go` + plan skill; helper prompts + `review`, `progress`, `guide` + guide skill; plugin + bundler; installer + install guide | Build and gate green | done |
 | 3 | Independent prompt review; install and load tests on 1.18.35, 1.19.0 and 2.0.16; fixes | Installs and loads in isolated v1 and v2 configs | done |
 | 4 | Four agents with per-agent effort (generator and plugin; prompts and docs); Makefile and version tool; eval harness | Release 0.1.0 | done |
-| 5 | Eval runs, baseline, prompt fixes from the results | Release 0.2.0 | in progress |
+| 5 | Eval runs, baseline, prompt fixes from the results | Release 0.2.0 (done); the open tasks feed the next release | in progress |
 | 6 | npm package, CI, v2 central install, docs polish | | |
 
 Ownership rule for parallel work: every task owns a disjoint set of files; shared contracts
@@ -183,7 +183,7 @@ Integration suites (opt-in, `ECMWF_MULTI_AGENTS_INTEGRATION=1`): 49 tests pass o
   cost at scale (see the second finding below)
 - [ ] Baseline for the `copilot` and `anthropic` profiles; repeats (`--repeat 3`) for variance
 - [ ] Set targets once variance is known
-- [~] Tiago: Release 0.2.0
+- [x] Tiago: Release 0.2.0
 
 Baseline on 0.1.0 (one run each):
 
@@ -252,3 +252,5 @@ Findings to act on for 0.2.0:
   `/progress` answer in the user's session on opencode 1.x: the command turn costs 24 to 30%
   of what it did in a new session, 42 to 63% after a first question. Releasing is one
   command, `make release X.Y.Z`.
+- 2026-10-11: 0.2.0 released with `make release 0.2.0`, the first release made with it: gate
+  twice, release commit, tag and GitHub release in one run.
