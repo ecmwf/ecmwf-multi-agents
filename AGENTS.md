@@ -73,6 +73,8 @@ Tiago Quintino and Samet Demir develop this repository together, each with their
 - Versions are `MAJOR.MINOR.MICRO` without a `v`; the tag is exactly the version. The
   `VERSION` file is the single source; `package.json` and the generated plugin carry copies.
 - Record user-visible changes under `## [Unreleased]` in `CHANGELOG.md` as you make them.
-- To release: `make version X.Y.Z` (sets the version, moves the `[Unreleased]` entries under
-  it, rebuilds `dist/`), `make check`, commit as `chore: release X.Y.Z`, push with the user's
-  approval, then `make release` (tags and publishes the GitHub release; `DRY_RUN=1` previews).
+- Release only when your user asks: `make release X.Y.Z` runs the gate, sets the version, moves
+  the `[Unreleased]` entries under it, rebuilds `dist/`, runs the gate again, commits
+  `chore: release X.Y.Z`, pushes, tags and publishes the GitHub release. Asking for the release
+  is the approval for its push. `DRY_RUN=1` previews; after a failure, fix the cause and run the
+  same command again, and it continues where it stopped.

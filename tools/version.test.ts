@@ -164,7 +164,7 @@ describe("files", () => {
   test("consistent files have no problems; a package.json mismatch is reported", () => {
     expect(consistencyProblems(project("0.1.0", RELEASED))).toEqual([]);
     expect(consistencyProblems(project("0.1.0", RELEASED, "0.0.9"))).toEqual([
-      "package.json says 0.0.9 but VERSION says 0.1.0; run make version 0.1.0",
+      "package.json says 0.0.9 but VERSION says 0.1.0; set it to the same value",
     ]);
   });
 

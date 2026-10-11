@@ -7,13 +7,9 @@
 //
 //   bun tools/version.ts                 print the version; exit 1 if the files disagree
 //   bun tools/version.ts --check         check VERSION, package.json and CHANGELOG.md agree
-//   bun tools/version.ts --set X.Y.Z [--date YYYY-MM-DD]
-//                                        set the version and move [Unreleased] under it
 //   bun tools/version.ts --notes X.Y.Z   print the CHANGELOG section of a release
-//   bun tools/version.ts --preflight     check the repository is ready to tag VERSION
 //
-// The generator embeds the version in dist/, so run `bun tools/build.ts` after --set
-// (`make version X.Y.Z` does both).
+// Setting a version is part of releasing it: `make release X.Y.Z` (tools/release.ts).
 
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -181,7 +177,7 @@ export function consistencyProblems(root: string): string[] {
   if (packageText !== undefined && version !== undefined) {
     try {
       const value = packageVersion(packageText);
-      if (value !== version) problems.push(`${PACKAGE_FILE} says ${value} but ${VERSION_FILE} says ${version}; run make version ${version}`);
+      if (value !== version) problems.push(`${PACKAGE_FILE} says ${value} but ${VERSION_FILE} says ${version}; set it to the same value`);
     } catch (error) {
       problems.push(error instanceof Error ? error.message : String(error));
     }
@@ -230,43 +226,9 @@ export function setVersion(root: string, version: string, date: string): string[
   return changes;
 }
 
-function git(root: string, args: string[]): { ok: boolean; out: string } {
-  const result = Bun.spawnSync(["git", ...args], { cwd: root, stdout: "pipe", stderr: "pipe" });
-  return { ok: result.exitCode === 0, out: result.stdout.toString().trim() };
-}
-
-/** Problems that stop tagging VERSION as a release; empty when ready. Needs git and network. */
-export function preflightProblems(root: string): string[] {
-  const problems = consistencyProblems(root);
-  if (problems.length > 0) return problems;
-  const version = checkVersion(readFileSync(path.join(root, VERSION_FILE), "utf8"));
-  try {
-    releaseNotes(readFileSync(path.join(root, CHANGELOG_FILE), "utf8"), version);
-  } catch (error) {
-    problems.push(`${error instanceof Error ? error.message : String(error)}; run make version ${version} first`);
-  }
-  const branch = git(root, ["rev-parse", "--abbrev-ref", "HEAD"]).out;
-  if (branch !== "main") problems.push(`releases are tagged on main, but the current branch is ${branch}`);
-  if (git(root, ["status", "--porcelain"]).out !== "") problems.push("the working tree has uncommitted changes");
-  if (!git(root, ["fetch", "--quiet", "origin"]).ok) problems.push("git fetch origin failed");
-  const head = git(root, ["rev-parse", "HEAD"]).out;
-  const remote = git(root, ["rev-parse", "origin/main"]).out;
-  if (head !== remote) problems.push("HEAD is not origin/main: push the release commit first, or pull");
-  if (git(root, ["rev-parse", "-q", "--verify", `refs/tags/${version}`]).ok) problems.push(`the tag ${version} already exists here`);
-  if (git(root, ["ls-remote", "--tags", "origin", `refs/tags/${version}`]).out !== "") problems.push(`the tag ${version} already exists on origin`);
-  if (Bun.spawnSync(["gh", "auth", "status"], { stdout: "ignore", stderr: "ignore" }).exitCode !== 0) {
-    problems.push("gh is not logged in to GitHub (gh auth login)");
-  }
-  return problems;
-}
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
 function main(argv: string[]): number {
   const root = path.resolve(import.meta.dir, "..");
-  const [command, value, ...rest] = argv;
+  const [command, value] = argv;
   const report = (problems: string[]): number => {
     for (const problem of problems) console.error(`error: ${problem}`);
     return problems.length === 0 ? 0 : 1;
@@ -282,29 +244,10 @@ function main(argv: string[]): number {
       if (problems.length === 0) console.log(`version ${readFileSync(path.join(root, VERSION_FILE), "utf8").trim()}: VERSION, package.json and CHANGELOG.md agree`);
       return report(problems);
     }
-    case "--set": {
-      if (value === undefined) return report(["usage: bun tools/version.ts --set X.Y.Z [--date YYYY-MM-DD]"]);
-      let date = today();
-      if (rest[0] === "--date") {
-        if (rest[1] === undefined) return report(["--date needs a value such as 2026-01-31"]);
-        date = rest[1];
-      } else if (rest.length > 0) {
-        return report([`unexpected argument: ${rest[0]}`]);
-      }
-      const changes = setVersion(root, value, date);
-      for (const change of changes) console.log(change);
-      if (changes.length === 0) console.log(`version ${value} is already set and released in ${CHANGELOG_FILE}`);
-      return 0;
-    }
     case "--notes": {
       if (value === undefined) return report(["usage: bun tools/version.ts --notes X.Y.Z"]);
       process.stdout.write(releaseNotes(readFileSync(path.join(root, CHANGELOG_FILE), "utf8"), checkVersion(value)));
       return 0;
-    }
-    case "--preflight": {
-      const problems = preflightProblems(root);
-      if (problems.length === 0) console.log(`ready to release ${readFileSync(path.join(root, VERSION_FILE), "utf8").trim()}`);
-      return report(problems);
     }
     default:
       return report([`unknown argument: ${command}; see the comment at the top of tools/version.ts`]);

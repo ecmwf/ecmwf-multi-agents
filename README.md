@@ -160,8 +160,7 @@ make help       # every target
 
 `make integration` runs the suites against real opencode binaries without calling a model.
 `make evals` runs scenario evals with real models and uses your provider quota; see
-`evals/README.md`. `make version X.Y.Z` sets a new version everywhere, and `make release`
-publishes it.
+`evals/README.md`. `make release X.Y.Z` releases a version in one step (`DRY_RUN=1` previews).
 
 ## Licence
 

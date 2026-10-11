@@ -17,12 +17,12 @@ INTEGRATION_TESTS := tools/emit-v1.integration.test.ts tools/emit-v2.integration
 	plugin/plugin.integration.test.ts tests/install.integration.test.ts \
 	evals/run.integration.test.ts
 
-# `make version X.Y.Z` (positional) or `make version VERSION=X.Y.Z`. A VERSION inherited from
-# the environment is ignored so a stray shell variable can never bump the release.
+# `make release X.Y.Z` (positional) or `make release VERSION=X.Y.Z`. A VERSION inherited from
+# the environment is ignored so a stray shell variable can never start a release.
 ifeq ($(origin VERSION),environment)
 VERSION :=
 endif
-ifeq (version,$(firstword $(MAKECMDGOALS)))
+ifneq ($(filter $(firstword $(MAKECMDGOALS)),release version),)
 ifneq ($(word 2,$(MAKECMDGOALS)),)
 VERSION := $(word 2,$(MAKECMDGOALS))
 $(eval $(VERSION):;@:)
@@ -75,36 +75,25 @@ evals: ## Scenario evals with REAL models (uses your provider quota): CASES="a b
 
 # ── Versioning and releases ──────────────────────────────────────────────────
 
-version: ## Print the version, or set it everywhere: make version X.Y.Z
+version: ## Print the version (set one with make release X.Y.Z)
 ifeq ($(VERSION),)
 	@$(BUN) tools/version.ts
 else
-	@[[ "$(VERSION)" =~ ^[0-9]+\.[0-9]+\.[0-9]+$$ ]] || { \
-		echo "error: version must be MAJOR.MINOR.MICRO without a 'v' prefix, got '$(VERSION)'" >&2; \
-		exit 2; }
-	$(BUN) tools/version.ts --set $(VERSION)
-	$(BUN) tools/build.ts
-	@echo "Next: review CHANGELOG.md, run make check, commit as 'chore: release $(VERSION)',"
-	@echo "push it, then run make release."
+	@echo "error: setting a version is part of releasing it: make release $(VERSION)" >&2; exit 2
 endif
 
 version-check: ## Verify VERSION, package.json and CHANGELOG.md agree
 	$(BUN) tools/version.ts --check
 
-release: ## Tag VERSION and publish the GitHub release; run after the release commit is on origin/main. DRY_RUN=1 previews
-	$(BUN) tools/version.ts --preflight
-	$(MAKE) --no-print-directory check
-	@v=$$(cat VERSION); \
-	if [ -n "$(DRY_RUN)" ]; then \
-		echo "Would run:"; \
-		echo "  git tag -a $$v -m $$v"; \
-		echo "  git push origin $$v"; \
-		echo "  $(BUN) tools/version.ts --notes $$v | gh release create $$v --title $$v --notes-file -"; \
-	else \
-		git tag -a "$$v" -m "$$v"; \
-		git push origin "$$v"; \
-		$(BUN) tools/version.ts --notes "$$v" | gh release create "$$v" --title "$$v" --notes-file -; \
-	fi
+release: ## Release in one step: gate, set version, changelog, dist/, commit, push, tag, publish. make release X.Y.Z [DRY_RUN=1]
+ifeq ($(VERSION),)
+	@echo "error: name the version: make release X.Y.Z (DRY_RUN=1 previews)" >&2; exit 2
+else
+	@[[ "$(VERSION)" =~ ^[0-9]+\.[0-9]+\.[0-9]+$$ ]] || { \
+		echo "error: version must be MAJOR.MINOR.MICRO without a 'v' prefix, got '$(VERSION)'" >&2; \
+		exit 2; }
+	$(BUN) tools/release.ts $(VERSION) $(if $(DRY_RUN),--dry-run)
+endif
 
 # ── Cleanup ──────────────────────────────────────────────────────────────────
 
