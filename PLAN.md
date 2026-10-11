@@ -183,7 +183,7 @@ Integration suites (opt-in, `ECMWF_MULTI_AGENTS_INTEGRATION=1`): 49 tests pass o
   cost at scale (see the second finding below)
 - [ ] Baseline for the `copilot` and `anthropic` profiles; repeats (`--repeat 3`) for variance
 - [ ] Set targets once variance is known
-- [ ] Release 0.2.0
+- [~] Tiago: Release 0.2.0
 
 Baseline on 0.1.0 (one run each):
 
