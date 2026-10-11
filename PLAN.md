@@ -174,9 +174,9 @@ Integration suites (opt-in, `ECMWF_MULTI_AGENTS_INTEGRATION=1`): 49 tests pass o
   Summary in `evals/results/0.1.0.md`
 - [x] Fix from the results: `lead` chained commit and push in one command, so refusing the push
   lost the commit (`no-push` failed); fixed, and passes three out of three
-- [ ] `/review` and `/progress` without the extra `lead` turn (see the first finding below);
-  measure cold and warm sessions before and after
-- [ ] One release command: fold `make version X.Y.Z` into `make release X.Y.Z` (set the
+- [~] Tiago: `/review` and `/progress` without the extra `lead` turn (see the first finding
+  below); measure cold and warm sessions before and after
+- [~] Tiago: One release command: fold `make version X.Y.Z` into `make release X.Y.Z` (set the
   version, roll the changelog, rebuild, check, commit, push, tag, publish), resumable and
   with `DRY_RUN=1`
 - [ ] A larger eval fixture, or cases that need broad reading, to test whether delegation saves
