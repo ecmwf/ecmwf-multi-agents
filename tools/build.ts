@@ -4,7 +4,7 @@
 // The generator. `bun tools/build.ts` loads and checks src/, runs each platform's emitter, adds
 // the plugin bundle and the support files, and writes dist/<platform>/, removing files the build
 // no longer produces. `bun tools/build.ts --check` writes nothing and fails when dist/ differs
-// from what a build would write, so `bun run check` catches an out-of-date dist/.
+// from what a build would write, so `make check` catches an out-of-date dist/.
 
 import { lstat, mkdir, readdir, readFile, rm, rmdir, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -54,7 +54,7 @@ export interface BuildResult {
 
 /**
  * A profile as the installer reads it: keys id, description and agents in that order, agents in
- * manifest order, model before variant, one key per line.
+ * manifest order, model before effort, one key per line.
  */
 export function profileJson(harness: ResolvedHarness, profile: Profile): string {
   const agents: Record<string, ProfileAgent> = {};
@@ -63,7 +63,7 @@ export function profileJson(harness: ResolvedHarness, profile: Profile): string 
     if (choice === undefined) continue;
     const entry: ProfileAgent = {};
     if (choice.model !== undefined) entry.model = choice.model;
-    if (choice.variant !== undefined) entry.variant = choice.variant;
+    if (choice.effort !== undefined) entry.effort = choice.effort;
     agents[agent.id] = entry;
   }
   return JSON.stringify({ id: profile.id, description: profile.description, agents }, null, 2);

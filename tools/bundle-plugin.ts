@@ -46,10 +46,10 @@ export function embedHarness(harness: ResolvedHarness): EmbeddedHarness {
     for (const id of ids) {
       const entry = profile.agents[id];
       if (entry === undefined) continue;
-      if (entry.variant !== undefined && entry.model === undefined) fail(`profile ${profile.id}: ${id} has a variant but no model`);
+      if (entry.effort !== undefined && entry.model === undefined) fail(`profile ${profile.id}: ${id} has an effort but no model`);
       agents[id] = {
         ...(entry.model !== undefined ? { model: entry.model } : {}),
-        ...(entry.variant !== undefined ? { variant: entry.variant } : {}),
+        ...(entry.effort !== undefined ? { effort: entry.effort } : {}),
       };
     }
     return { id: profile.id, description: profile.description, agents };

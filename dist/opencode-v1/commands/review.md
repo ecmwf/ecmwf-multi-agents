@@ -1,6 +1,6 @@
 ---
 # managed by ecmwf-multi-agents
-description: "Independent review of your changes, a branch, a pull request or a plan"
+description: "Independent review of your uncommitted changes, a branch, a commit, a pull request or a plan"
 agent: reviewer
 subtask: true
 ---

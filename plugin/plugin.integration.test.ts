@@ -43,7 +43,8 @@ const ISOLATION = {
   OPENCODE_DISABLE_MODELS_FETCH: "1",
 };
 
-const VALID = '// test settings\n{ "profile": "anthropic", "review": "always", "agents": { "scout": { "steps": 9 } }, }\n';
+const VALID =
+  '// test settings\n{ "profile": "anthropic", "review": "always", "agents": { "scout": { "steps": 9 }, "builder": { "effort": "xhigh" } }, }\n';
 const INVALID = '{ "profile": "anthropic", "review": "sometimes" }\n';
 
 interface Sandbox {
@@ -281,7 +282,7 @@ for (const bin of v1Bins) {
       expect(version).toMatch(/^1\.\d+\.\d+$/);
     });
 
-    test("settings apply: profile, a step override, the review policy and lead as default agent", async () => {
+    test("settings apply: profile, a step override, an effort override, the review policy and lead as default agent", async () => {
       writeSettings(box, VALID);
       const reviewer = await agent("reviewer");
       expect(reviewer.model).toEqual({ providerID: "anthropic", modelID: "claude-opus-5-5" });
@@ -290,6 +291,11 @@ for (const bin of v1Bins) {
       const scout = await agent("scout");
       expect(scout.steps).toBe(9);
       expect(scout.model).toEqual({ providerID: "anthropic", modelID: "claude-sonnet-5-5" });
+      expect(scout.variant).toBe("medium");
+      const builder = await agent("builder");
+      expect(builder.model).toEqual({ providerID: "anthropic", modelID: "claude-sonnet-5-5" });
+      expect(builder.variant).toBe("xhigh");
+      expect(builder.steps).toBe(60);
       expect(reviewLine(await agent("lead"))).toBe("Review policy: always");
       expect(await defaultAgent()).toBe("lead");
     }, 300_000);
@@ -301,7 +307,7 @@ for (const bin of v1Bins) {
       writeSettings(box, '{ "profile": "anthropic", "review": "never" }', '{ "review": "always", "agents": { "scout": { "steps": 0 } } }');
       expect((await agent("reviewer")).model?.providerID).toBe("anthropic");
       expect(reviewLine(await agent("lead"))).toBe("Review policy: never");
-      expect((await agent("scout")).steps).toBe(15);
+      expect((await agent("scout")).steps).toBe(30);
     }, 120_000);
 
     test("an invalid settings file leaves the defaults", async () => {
@@ -309,9 +315,17 @@ for (const bin of v1Bins) {
       const reviewer = await agent("reviewer");
       expect(reviewer.model).toEqual({ providerID: "github-copilot", modelID: "gpt-6.1-sol" });
       expect(reviewer.variant).toBe("medium");
-      expect((await agent("scout")).steps).toBe(15);
+      expect((await agent("scout")).steps).toBe(30);
       expect(reviewLine(await agent("lead"))).toBe("Review policy: auto");
       expect(await defaultAgent()).toBe("lead");
+    }, 120_000);
+
+    test("a settings file that still says variant is ignored", async () => {
+      writeSettings(box, '{ "profile": "anthropic", "agents": { "builder": { "variant": "xhigh" } } }');
+      const builder = await agent("builder");
+      expect(builder.model).toEqual({ providerID: "anthropic", modelID: "claude-sonnet-5-5" });
+      expect(builder.variant).toBe("high");
+      expect((await agent("reviewer")).model?.providerID).toBe("github-copilot");
     }, 120_000);
 
     test("default_agent false leaves opencode's default", async () => {
@@ -326,7 +340,8 @@ for (const bin of v1Bins) {
         const reviewer = await agent("reviewer");
         expect(reviewer.model).toEqual({ providerID: "github-copilot", modelID: "gpt-6.1-sol" });
         expect(reviewer.variant).toBe("medium");
-        expect((await agent("scout")).steps).toBe(15);
+        expect((await agent("builder")).variant).toBe("high");
+        expect((await agent("scout")).steps).toBe(30);
         expect(reviewLine(await agent("lead"))).toBe("Review policy: auto");
         expect(await defaultAgent()).toBeUndefined();
       } finally {
@@ -479,7 +494,10 @@ describe.skipIf(!enabled)(`plugin in opencode ${V2_VERSION}`, () => {
       return check(list) ? list : undefined;
     });
   const ours = (list: V2Agent[]) =>
-    find(list, "reviewer")?.model?.providerID === "anthropic" && find(list, "scout")?.steps === 9 && reviewLine(find(list, "lead")) === "Review policy: always";
+    find(list, "reviewer")?.model?.providerID === "anthropic" &&
+    find(list, "scout")?.steps === 9 &&
+    find(list, "builder")?.model?.variant === "xhigh" &&
+    reviewLine(find(list, "lead")) === "Review policy: always";
   /** Lets the plugin's transform settle after the agents first appear (its fallback is 3 s). */
   const settle = () => Bun.sleep(4_000);
 
@@ -501,6 +519,8 @@ describe.skipIf(!enabled)(`plugin in opencode ${V2_VERSION}`, () => {
     const list = await until("the settings to apply", ours);
     expect(find(list, "reviewer")!.model).toEqual({ id: "claude-opus-5-5", providerID: "anthropic", variant: "high" });
     expect(find(list, "scout")!.model).toEqual({ id: "claude-sonnet-5-5", providerID: "anthropic", variant: "medium" });
+    expect(find(list, "builder")!.model).toEqual({ id: "claude-sonnet-5-5", providerID: "anthropic", variant: "xhigh" });
+    expect(find(list, "builder")!.steps).toBe(60);
     expect(find(list, "reviewer")!.steps).toBe(30);
     expect(list[0]!.id).toBe("lead");
     const plugins = await server!.get<Array<{ id?: string; state: { status: string } }>>("/api/plugin");
@@ -539,7 +559,7 @@ describe.skipIf(!enabled)(`plugin in opencode ${V2_VERSION}`, () => {
     await start();
     const list = await until("the global settings", (items) => find(items, "reviewer")?.model?.providerID === "anthropic");
     expect(reviewLine(find(list, "lead"))).toBe("Review policy: never");
-    expect(find(list, "scout")!.steps).toBe(15);
+    expect(find(list, "scout")!.steps).toBe(30);
     expect(server!.stderr()).toContain(
       `ecmwf-multi-agents: ignoring ${path.join(box.project, ".opencode", SETTINGS)}: "agents.scout.steps" must be a whole number of at least 1, not 0`,
     );
@@ -553,7 +573,7 @@ describe.skipIf(!enabled)(`plugin in opencode ${V2_VERSION}`, () => {
     await settle();
     const list = await agents();
     expect(find(list, "reviewer")!.model).toEqual({ id: "gpt-6.1-sol", providerID: "github-copilot", variant: "medium" });
-    expect(find(list, "scout")!.steps).toBe(15);
+    expect(find(list, "scout")!.steps).toBe(30);
     expect(reviewLine(find(list, "lead"))).toBe("Review policy: auto");
     expect(server!.stderr()).toContain(`ecmwf-multi-agents: ignoring ${path.join(box.config, SETTINGS)}: "review" must be`);
     await stop();
@@ -569,7 +589,8 @@ describe.skipIf(!enabled)(`plugin in opencode ${V2_VERSION}`, () => {
       const list = await agents();
       expect(list[0]!.id).toBe("build");
       expect(find(list, "reviewer")!.model).toEqual({ id: "gpt-6.1-sol", providerID: "github-copilot", variant: "medium" });
-      expect(find(list, "scout")!.steps).toBe(15);
+      expect(find(list, "builder")!.model).toEqual({ id: "claude-sonnet-5-5", providerID: "anthropic", variant: "high" });
+      expect(find(list, "scout")!.steps).toBe(30);
       expect(reviewLine(find(list, "lead"))).toBe("Review policy: auto");
     } finally {
       await stop();

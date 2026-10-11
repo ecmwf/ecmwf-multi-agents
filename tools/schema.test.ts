@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, test } from "bun:test";
-import { MODEL_PATTERN, VARIANT_PATTERN, validateSettings } from "../plugin/settings.ts";
+import { EFFORT_PATTERN, MODEL_PATTERN, validateSettings } from "../plugin/settings.ts";
 import { embedHarness } from "./bundle-plugin.ts";
 import { type JsonSchema, type JsonValue, SCHEMA_DIALECT, settingsSchema } from "./schema.ts";
 import type { ResolvedHarness } from "./types.ts";
@@ -29,7 +29,7 @@ const harness: ResolvedHarness = {
   commands: [],
   skills: [],
   profiles: [
-    { id: "default", description: "Acme models.", agents: { lead: { model: "acme/big", variant: "high" } } },
+    { id: "default", description: "Acme models.", agents: { lead: { model: "acme/big", effort: "high" } } },
     { id: "inherit", description: "The session model everywhere.", agents: {} },
   ],
 };
@@ -99,9 +99,10 @@ const GOOD: unknown[] = [
   { $schema: "./ecmwf-multi-agents/schema.json" },
   { review: "never", profile: "inherit", default_agent: false },
   { review: "ask" },
-  { agents: { scout: { model: "openai/gpt-6.1-sol", variant: "high", steps: 20 } } },
-  // An override may change only the variant, keeping the profile's model.
-  { agents: { lead: { variant: "low" } } },
+  { agents: { scout: { model: "openai/gpt-6.1-sol", effort: "high", steps: 20 } } },
+  // An override may change only the effort, keeping the profile's model.
+  { agents: { lead: { effort: "low" } } },
+  { agents: { lead: { effort: "none" } } },
   { agents: { scout: { model: "My-Proxy/qwen:27b" } } },
   { agents: {} },
 ];
@@ -119,8 +120,12 @@ const BAD: [unknown, string][] = [
   [{ agents: { scout: { model: "gpt" } } }, "$.agents.scout.model: pattern"],
   [{ agents: { scout: { model: "acme/big#high" } } }, "$.agents.scout.model: pattern"],
   [{ agents: { scout: { model: "acme/big model" } } }, "$.agents.scout.model: pattern"],
-  [{ agents: { scout: { variant: "" } } }, "$.agents.scout.variant: minLength"],
-  [{ agents: { scout: { variant: "hi#gh" } } }, "$.agents.scout.variant: pattern"],
+  [{ agents: { scout: { effort: "" } } }, "$.agents.scout.effort: minLength"],
+  [{ agents: { scout: { effort: "hi#gh" } } }, "$.agents.scout.effort: pattern"],
+  [{ agents: { scout: { effort: "very high" } } }, "$.agents.scout.effort: pattern"],
+  [{ agents: { scout: { effort: 2 } } }, "$.agents.scout.effort: type"],
+  // The old name of effort.
+  [{ agents: { lead: { model: "acme/big", variant: "high" } } }, "$.agents.lead.variant: additionalProperties"],
   [{ agents: { scout: { steps: 0 } } }, "$.agents.scout.steps: minimum"],
   [{ agents: { scout: { steps: 1.5 } } }, "$.agents.scout.steps: type"],
   [[], "$: type"],
@@ -145,11 +150,11 @@ describe("settings schema", () => {
     }
   });
 
-  test("uses the plugin's model and variant patterns", () => {
+  test("uses the plugin's model and effort patterns", () => {
     const model = sub(schema, "properties", "agents", "properties", "scout", "properties", "model");
-    const variant = sub(schema, "properties", "agents", "properties", "lead", "properties", "variant");
+    const effort = sub(schema, "properties", "agents", "properties", "lead", "properties", "effort");
     expect(model.pattern).toBe(MODEL_PATTERN.source);
-    expect(variant.pattern).toBe(VARIANT_PATTERN.source);
+    expect(effort.pattern).toBe(EFFORT_PATTERN.source);
   });
 
   test("is draft 2020-12 and closed at every level", () => {
@@ -178,7 +183,7 @@ describe("settings schema", () => {
     expect(Object.keys(sub(schema, "properties", "agents", "properties"))).toEqual(["lead", "scout"]);
     expect(Object.keys(sub(schema, "properties", "agents", "properties", "scout", "properties"))).toEqual([
       "model",
-      "variant",
+      "effort",
       "steps",
     ]);
     expect(sub(schema, "properties", "agents", "properties", "scout", "properties", "steps")).toMatchObject({
@@ -201,6 +206,15 @@ describe("settings schema", () => {
     expect(String(sub(properties, "agents", "properties", "lead", "properties", "model").description)).toContain(
       "for example acme/big",
     );
+    const effort = (agent: string) => String(sub(properties, "agents", "properties", agent, "properties", "effort").description);
+    expect(effort("lead")).toBe(
+      "Reasoning effort for the model of lead. Common values: low, medium, high, xhigh and max; some models also take none. " +
+        "Default: high, from the default profile. It applies only when lead has a model, from the profile or from this entry, " +
+        'so it has no effect under the inherit profile unless this entry also names a model. No "#" and no spaces. ' +
+        "Leave it out to use the profile's choice.",
+    );
+    expect(effort("scout")).not.toContain("Default:");
+    expect(effort("scout")).toContain("so it has no effect under the default or inherit profiles unless this entry also names a model.");
     const described = (node: JsonSchema, at: string) => {
       expect({ at, title: typeof node.title, description: typeof node.description }).toEqual({
         at,

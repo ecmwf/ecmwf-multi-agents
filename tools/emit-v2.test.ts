@@ -43,6 +43,7 @@ function fixture(): ResolvedHarness {
         variant: "medium",
         permissions: [
           { action: "edit", resource: "*", effect: "deny" },
+          { action: "edit", resource: ".ecmwf-multi-agents/notes/*", effect: "allow" },
           { action: "shell", resource: "*", effect: "deny" },
           { action: "shell", resource: "git log *", effect: "allow" },
           { action: "delegate", resource: "*", effect: "deny" },
@@ -50,17 +51,6 @@ function fixture(): ResolvedHarness {
           { action: "todo", resource: "*", effect: "deny" },
           { action: "skill", resource: "ecmwf-multi-agents-*", effect: "deny" },
           { action: "list", resource: "*", effect: "allow" },
-        ],
-      },
-      {
-        id: "scout-deep",
-        mode: "subagent",
-        description: "Longer read-only investigation.",
-        prompt: "Scout prompt.\n\nDeep addendum.",
-        steps: 40,
-        permissions: [
-          { action: "edit", resource: "*", effect: "deny" },
-          { action: "edit", resource: ".ecmwf-multi-agents/notes/*", effect: "allow" },
         ],
       },
       {
@@ -80,14 +70,13 @@ function fixture(): ResolvedHarness {
           { action: "external_directory", resource: "~/data/*", effect: "ask" },
         ],
       },
+      // No model of its own and no rules: it runs on the session model with the defaults.
       {
         id: "reviewer",
         mode: "subagent",
         description: "Independent review: APPROVE or REJECT.",
-        prompt: "Reviewer prompt.",
+        prompt: "Reviewer prompt.\n\nSecond part.",
         steps: 30,
-        model: "github-copilot/gpt-6.1-sol",
-        variant: "medium",
         permissions: [],
       },
     ],
@@ -145,7 +134,6 @@ describe("emitV2 layout", () => {
       "agents/builder.md",
       "agents/lead.md",
       "agents/reviewer.md",
-      "agents/scout-deep.md",
       "agents/scout.md",
       "commands/guide.md",
       "commands/plan.md",
@@ -220,7 +208,7 @@ describe("emitV2 agents", () => {
   test("the prompt is the body, which 2.0.16 uses as the system prompt", () => {
     const files = emitV2(fixture());
     expect(file(files, "agents/lead.md").body).toBe("Lead prompt.\n\nSecond paragraph.\n");
-    expect(file(files, "agents/scout-deep.md").body).toBe("Scout prompt.\n\nDeep addendum.\n");
+    expect(file(files, "agents/reviewer.md").body).toBe("Reviewer prompt.\n\nSecond part.\n");
   });
 
   test("description and mode are written for every agent", () => {
@@ -234,15 +222,14 @@ describe("emitV2 agents", () => {
     expect(file(files, "agents/lead.md").data.model).toBe("anthropic/claude-opus-5-5#xhigh");
     expect(file(files, "agents/scout.md").data.model).toBe("anthropic/claude-sonnet-5-5#medium");
     expect(file(files, "agents/builder.md").data.model).toBe("anthropic/claude-sonnet-5-5");
-    expect(file(files, "agents/reviewer.md").data.model).toBe("github-copilot/gpt-6.1-sol#medium");
-    expect("model" in file(files, "agents/scout-deep.md").data).toBe(false);
+    expect("model" in file(files, "agents/reviewer.md").data).toBe(false);
     expect("variant" in file(files, "agents/lead.md").data).toBe(false);
   });
 
   test("steps and color are written only when set", () => {
     const files = emitV2(fixture());
     expect(file(files, "agents/scout.md").data.steps).toBe(15);
-    expect(file(files, "agents/scout-deep.md").data.steps).toBe(40);
+    expect(file(files, "agents/builder.md").data.steps).toBe(40);
     expect("steps" in file(files, "agents/lead.md").data).toBe(false);
     expect(file(files, "agents/lead.md").data.color).toBe("#0b5394");
     expect("color" in file(files, "agents/scout.md").data).toBe(false);
@@ -252,15 +239,12 @@ describe("emitV2 agents", () => {
     const files = emitV2(fixture());
     expect(file(files, "agents/scout.md").data.permissions).toEqual([
       { action: "edit", resource: "*", effect: "deny" },
+      { action: "edit", resource: ".ecmwf-multi-agents/notes/*", effect: "allow" },
       { action: "shell", resource: "*", effect: "deny" },
       { action: "shell", resource: "git log *", effect: "allow" },
       { action: "subagent", resource: "*", effect: "deny" },
       { action: "question", resource: "*", effect: "deny" },
       { action: "skill", resource: "ecmwf-multi-agents-*", effect: "deny" },
-    ]);
-    expect(file(files, "agents/scout-deep.md").data.permissions).toEqual([
-      { action: "edit", resource: "*", effect: "deny" },
-      { action: "edit", resource: ".ecmwf-multi-agents/notes/*", effect: "allow" },
     ]);
     expect(file(files, "agents/builder.md").data.permissions).toEqual([
       { action: "shell", resource: "git commit *", effect: "deny" },

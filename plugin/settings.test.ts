@@ -50,10 +50,10 @@ describe("validateSettings", () => {
       profile: "copilot",
       default_agent: false,
       agents: {
-        reviewer: { model: "openai/gpt-6.1-sol", variant: "high", steps: 40 },
+        reviewer: { model: "openai/gpt-6.1-sol", effort: "high", steps: 40 },
         scout: { steps: 9 },
-        builder: { variant: "low" },
-        "scout-deep": {},
+        builder: { effort: "low" },
+        lead: {},
       },
     };
     expect(validateSettings(value, harness)).toEqual({
@@ -62,10 +62,10 @@ describe("validateSettings", () => {
         profile: "copilot",
         default_agent: false,
         agents: {
-          reviewer: { model: "openai/gpt-6.1-sol", variant: "high", steps: 40 },
+          reviewer: { model: "openai/gpt-6.1-sol", effort: "high", steps: 40 },
           scout: { steps: 9 },
-          builder: { variant: "low" },
-          "scout-deep": {},
+          builder: { effort: "low" },
+          lead: {},
         },
       },
       problems: [],
@@ -105,9 +105,12 @@ describe("validateSettings", () => {
   test("agents is an object keyed by known agents, each an object", () => {
     expect(problemsOf({ agents: [] })).toEqual(['"agents" must be an object that maps agent names to settings, not []']);
     expect(problemsOf({ agents: { build: {} } })).toEqual([
-      '"agents" names "build", which is not one of the agents lead, scout, scout-deep, builder, builder-deep and reviewer',
+      '"agents" names "build", which is not one of the agents lead, scout, builder and reviewer',
     ]);
-    expect(problemsOf({ agents: { scout: "fast" } })).toEqual(['"agents.scout" must be an object with model, variant or steps, not "fast"']);
+    expect(problemsOf({ agents: { "scout-deep": {} } })).toEqual([
+      '"agents" names "scout-deep", which is not one of the agents lead, scout, builder and reviewer',
+    ]);
+    expect(problemsOf({ agents: { scout: "fast" } })).toEqual(['"agents.scout" must be an object with model, effort or steps, not "fast"']);
   });
 
   test("model is provider/model without '#' or spaces", () => {
@@ -121,13 +124,22 @@ describe("validateSettings", () => {
     }
   });
 
-  test("variant is a non-empty name without '#'", () => {
-    expect(validateSettings({ agents: { lead: { variant: "xhigh" } } }, harness).problems).toEqual([]);
-    for (const variant of ["", "hi#gh", 3]) {
-      expect(problemsOf({ agents: { lead: { variant } } })).toEqual([
-        `"agents.lead.variant" must be a non-empty name without "#", not ${JSON.stringify(variant)}`,
+  test("effort is a non-empty name without '#' or spaces", () => {
+    for (const effort of ["none", "low", "medium", "high", "xhigh", "max", "thinking-32k"]) {
+      expect(validateSettings({ agents: { lead: { effort } } }, harness).problems).toEqual([]);
+    }
+    for (const effort of ["", "hi#gh", "very high", 3]) {
+      expect(problemsOf({ agents: { lead: { effort } } })).toEqual([
+        `"agents.lead.effort" must be a non-empty name such as "high", without "#" or spaces, not ${JSON.stringify(effort)}`,
       ]);
     }
+  });
+
+  test("the old name variant is refused with a pointer to effort", () => {
+    expect(problemsOf({ agents: { reviewer: { model: "openai/gpt-6.1-sol", variant: "high" } } })).toEqual([
+      '"agents.reviewer" has the unknown key "variant"; it is now called "effort"',
+    ]);
+    expect(problemsOf({ variant: "high" })).toEqual(['unknown setting "variant"; the settings are $schema, review, profile, default_agent and agents']);
   });
 
   test("steps is a whole number of at least 1", () => {
@@ -142,7 +154,7 @@ describe("validateSettings", () => {
   test("no other keys, at the top or in an agent", () => {
     expect(problemsOf({ reviews: "auto" })).toEqual(['unknown setting "reviews"; the settings are $schema, review, profile, default_agent and agents']);
     expect(problemsOf({ agents: { scout: { temperature: 0.2 } } })).toEqual([
-      '"agents.scout" has the unknown setting "temperature"; an agent takes model, variant or steps',
+      '"agents.scout" has the unknown setting "temperature"; an agent takes model, effort or steps',
     ]);
   });
 
@@ -159,8 +171,8 @@ describe("mergeSettings", () => {
   test("later files win; agents merge per agent and per field", () => {
     const merged = mergeSettings(
       [
-        { review: "never", profile: "copilot", agents: { reviewer: { model: "openai/gpt-x", variant: "high" }, scout: { steps: 5 } } },
-        { review: "always", default_agent: false, agents: { reviewer: { variant: "low" } } },
+        { review: "never", profile: "copilot", agents: { reviewer: { model: "openai/gpt-x", effort: "high" }, scout: { steps: 5 } } },
+        { review: "always", default_agent: false, agents: { reviewer: { effort: "low" } } },
         { profile: "anthropic", agents: { reviewer: { steps: 12 }, builder: { steps: 60 } } },
       ],
       harness,
@@ -171,7 +183,7 @@ describe("mergeSettings", () => {
       profile: "anthropic",
       defaultAgent: false,
       agents: {
-        reviewer: { model: "openai/gpt-x", variant: "low", steps: 12 },
+        reviewer: { model: "openai/gpt-x", effort: "low", steps: 12 },
         scout: { steps: 5 },
         builder: { steps: 60 },
       },
@@ -187,7 +199,7 @@ describe("loadSettings", () => {
 
   test("applies site, global and project files in that order", () => {
     const files = {
-      [site]: '{ "review": "never", "profile": "copilot", "agents": { "scout": { "steps": 3, "variant": "low" } } }',
+      [site]: '{ "review": "never", "profile": "copilot", "agents": { "scout": { "steps": 3, "effort": "low" } } }',
       [global]: '// mine\n{ "review": "ask", "agents": { "scout": { "steps": 7 } }, }',
       [project]: '{ "review": "always", "agents": { "reviewer": { "steps": 9 } } }',
     };
@@ -199,7 +211,7 @@ describe("loadSettings", () => {
       reviewSet: true,
       profile: "copilot",
       defaultAgent: true,
-      agents: { scout: { steps: 7, variant: "low" }, reviewer: { steps: 9 } },
+      agents: { scout: { steps: 7, effort: "low" }, reviewer: { steps: 9 } },
     });
   });
 

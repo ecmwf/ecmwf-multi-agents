@@ -30,7 +30,6 @@ afterAll(async () => {
 function manifest(): Json {
   return {
     name: "test-harness",
-    version: "1.2.3",
     defaultAgent: "lead",
     defaultProfile: "default",
     workDir: ".work",
@@ -68,12 +67,16 @@ function manifest(): Json {
           { action: "edit", resource: "*", effect: "deny" },
         ],
       },
-      "scout-deep": {
-        base: "scout",
-        description: "Looks deeper.",
-        prompt: ["agents/scout-deep.md"],
+      builder: {
+        mode: "subagent",
+        description: "Builds.",
+        prompt: ["agents/builder.md", "fragments/helper.md"],
+        budget: "helper",
         steps: 30,
-        permissions: [{ action: "edit", resource: "notes/*", effect: "allow" }],
+        permissions: [
+          { use: "writes", effect: "deny" },
+          { action: "edit", resource: "notes/*", effect: "allow" },
+        ],
       },
     },
     // Not in alphabetical order, to show manifest order is kept.
@@ -91,20 +94,21 @@ function manifest(): Json {
 const MARKDOWN: Record<string, string> = {
   "agents/lead.md": "\n\nYou are lead.\r\n\r\nReview policy: auto\r\n\n",
   "agents/scout.md": "  You are scout.  \n",
-  "agents/scout-deep.md": "\nGo deep.\n",
+  "agents/builder.md": "\nYou build.\n",
+  "fragments/helper.md": "Helpers never ask.\n",
   "commands/zulu.md": "\nZulu: $ARGUMENTS\n\n",
   "commands/alpha.md": "Alpha.",
   "skills/skill-b/SKILL.md": "# B\n\nBody B.\n",
   "skills/skill-a/SKILL.md": "# A\n",
 };
 
-// Agents listed out of manifest order, and variant before model.
+// Agents listed out of manifest order, and effort before model.
 const PROFILES: Record<string, Json> = {
   default: {
     description: "Default.",
-    agents: { scout: { model: "acme/small", variant: "low" }, lead: { variant: "max", model: "acme/big" } },
+    agents: { scout: { model: "acme/small", effort: "low" }, lead: { effort: "max", model: "acme/big" } },
   },
-  other: { description: "Other.", agents: { "scout-deep": { model: "acme/deep" } } },
+  other: { description: "Other.", agents: { builder: { model: "acme/deep" } } },
 };
 
 async function sourceOf(
@@ -112,7 +116,10 @@ async function sourceOf(
 ): Promise<Source> {
   const root = await mkdtemp(path.join(tmpdir(), "ecmwf-multi-agents-resolve-"));
   roots.push(root);
-  const files: Record<string, string> = { "src/manifest.jsonc": JSON.stringify(options.manifest ?? manifest(), null, 2) };
+  const files: Record<string, string> = {
+    "src/manifest.jsonc": JSON.stringify(options.manifest ?? manifest(), null, 2),
+    VERSION: "1.2.3\n",
+  };
   for (const [id, profile] of Object.entries(options.profiles ?? PROFILES)) {
     files[`src/profiles/${id}.jsonc`] = JSON.stringify(profile, null, 2);
   }
@@ -186,45 +193,36 @@ describe("rule sets", () => {
 });
 
 describe("agents", () => {
-  test("a derived agent inherits mode, budget, color, prompt and rules from its base", async () => {
+  test("an agent gets its own mode, prompt files, steps, color and rules, and is measured against its budget", async () => {
     const source = await sourceOf();
     const harness = resolveHarness(source);
-    const deep = harness.agents.find((agent) => agent.id === "scout-deep");
-    expect(deep).toEqual({
-      id: "scout-deep",
+    expect(harness.agents.find((agent) => agent.id === "builder")).toEqual({
+      id: "builder",
       mode: "subagent",
-      description: "Looks deeper.",
-      prompt: "You are scout.\n\nGo deep.",
+      description: "Builds.",
+      prompt: "You build.\n\nHelpers never ask.",
       steps: 30,
-      color: "#445566",
       permissions: [
-        { action: "shell", resource: "*", effect: "deny" },
-        { action: "shell", resource: "git log *", effect: "allow" },
-        { action: "edit", resource: "*", effect: "deny" },
+        { action: "shell", resource: "git push *", effect: "deny" },
+        { action: "shell", resource: "git commit *", effect: "deny" },
         { action: "edit", resource: "notes/*", effect: "allow" },
       ],
     });
-    const row = sizeTable(source, harness).find((candidate) => candidate.id === "scout-deep");
-    expect(row).toMatchObject({ budget: "helper", limit: 500, files: ["src/agents/scout.md", "src/agents/scout-deep.md"] });
+    expect(harness.agents.find((agent) => agent.id === "scout")).toMatchObject({ color: "#445566", steps: 10 });
+    const row = sizeTable(source, harness).find((candidate) => candidate.id === "builder");
+    expect(row).toMatchObject({ budget: "helper", limit: 500, files: ["src/agents/builder.md", "src/fragments/helper.md"] });
   });
 
-  test("a derived agent's own mode, budget and color win over its base", async () => {
+  test("agents may share a prompt file", async () => {
     const m = edited((m) => {
-      m.agents["lead-two"] = {
-        base: "scout",
-        mode: "primary",
-        budget: "lead",
-        color: "#ffffff",
-        description: "Two.",
-        prompt: ["agents/two.md"],
-      };
+      m.agents.scout.prompt = ["agents/scout.md", "fragments/helper.md"];
     });
-    const source = await sourceOf({ manifest: m, markdown: { "agents/two.md": "Two." } });
-    const harness = resolveHarness(source);
-    const two = harness.agents.find((agent) => agent.id === "lead-two");
-    expect(two).toMatchObject({ mode: "primary", color: "#ffffff", prompt: "You are scout.\n\nTwo." });
-    expect(two?.steps).toBeUndefined();
-    expect(sizeTable(source, harness).find((row) => row.id === "lead-two")).toMatchObject({ budget: "lead", limit: 1000 });
+    const harness = resolveHarness(await sourceOf({ manifest: m }));
+    expect(harness.agents.map((agent) => agent.prompt)).toEqual([
+      "You are lead.\n\nReview policy: auto",
+      "You are scout.\n\nHelpers never ask.",
+      "You build.\n\nHelpers never ask.",
+    ]);
   });
 
   test("prompt files are trimmed, get LF line endings and are joined by one blank line", async () => {
@@ -237,21 +235,22 @@ describe("agents", () => {
     expect(harness.agents[0]?.prompt).toBe("You are lead.\n\nReview policy: auto\n\nRule one.\nRule two.");
   });
 
-  test("the default profile is baked in; agents it leaves out get no model", async () => {
+  test("the default profile is baked in, its effort as the variant; agents it leaves out get no model", async () => {
     const harness = resolveHarness(await sourceOf());
     const models = harness.agents.map((agent) => [agent.id, agent.model, agent.variant]);
     expect(models).toEqual([
       ["lead", "acme/big", "max"],
       ["scout", "acme/small", "low"],
-      ["scout-deep", undefined, undefined],
+      ["builder", undefined, undefined],
     ]);
     expect("model" in (harness.agents[2] ?? {})).toBe(false);
+    expect("effort" in (harness.agents[0] ?? {})).toBe(false);
 
     const other = resolveHarness(await sourceOf({ manifest: edited((m) => (m.defaultProfile = "other")) }));
     expect(other.agents.map((agent) => [agent.id, agent.model, agent.variant])).toEqual([
       ["lead", undefined, undefined],
       ["scout", undefined, undefined],
-      ["scout-deep", "acme/deep", undefined],
+      ["builder", "acme/deep", undefined],
     ]);
   });
 });
@@ -267,7 +266,7 @@ describe("harness", () => {
       workDir: ".work",
       marker: "# managed by test",
     });
-    expect(harness.agents.map((agent) => agent.id)).toEqual(["lead", "scout", "scout-deep"]);
+    expect(harness.agents.map((agent) => agent.id)).toEqual(["lead", "scout", "builder"]);
     expect(harness.commands).toEqual([
       { id: "zulu", description: "Zulu.", agent: "scout", subtask: true, template: "Zulu: $ARGUMENTS" },
       { id: "alpha", description: "Alpha.", agent: "lead", subtask: false, template: "Alpha." },
@@ -282,8 +281,9 @@ describe("harness", () => {
     const harness = resolveHarness(await sourceOf());
     expect(harness.profiles.map((profile) => profile.id)).toEqual(["default", "other"]);
     expect(Object.keys(harness.profiles[0]?.agents ?? {})).toEqual(["lead", "scout"]);
-    expect(Object.keys(harness.profiles[0]?.agents.lead ?? {})).toEqual(["model", "variant"]);
-    expect(harness.profiles[1]).toEqual({ id: "other", description: "Other.", agents: { "scout-deep": { model: "acme/deep" } } });
+    expect(Object.keys(harness.profiles[0]?.agents.lead ?? {})).toEqual(["model", "effort"]);
+    expect(harness.profiles[0]?.agents.lead).toEqual({ model: "acme/big", effort: "max" });
+    expect(harness.profiles[1]).toEqual({ id: "other", description: "Other.", agents: { builder: { model: "acme/deep" } } });
   });
 });
 
@@ -297,7 +297,7 @@ describe("budgets", () => {
     expect(approxTokens("😀😀😀😀")).toBe(1);
   });
 
-  // Sizes: lead 34 characters (9 tokens), scout 14 (4), scout-deep 24 (6), zulu 16 (4),
+  // Sizes: lead 34 characters (9 tokens), scout 14 (4), builder 30 (8), zulu 16 (4),
   // alpha 6 (2), skill-b 12 (3), skill-a 3 (1).
   const tight = edited((m) => {
     m.budgets = { lead: 8, helper: 5, command: 3, skill: 2 };
@@ -309,7 +309,7 @@ describe("budgets", () => {
     expect(rows.map((row) => [row.kind, row.id, row.characters, row.tokens, row.budget, row.limit])).toEqual([
       ["agent", "lead", 34, 9, "lead", 8],
       ["agent", "scout", 14, 4, "helper", 5],
-      ["agent", "scout-deep", 24, 6, "helper", 5],
+      ["agent", "builder", 30, 8, "helper", 5],
       ["command", "zulu", 16, 4, "command", 3],
       ["command", "alpha", 6, 2, "command", 3],
       ["skill", "skill-b", 12, 3, "skill", 2],
@@ -323,7 +323,7 @@ describe("budgets", () => {
     const harness = resolveHarness(source);
     const expected = [
       "src/agents/lead.md: agents.lead.prompt: about 9 tokens (34 characters), over the lead budget of 8 tokens by 1",
-      "src/agents/scout.md, src/agents/scout-deep.md: agents.scout-deep.prompt: about 6 tokens (24 characters), over the helper budget of 5 tokens by 1",
+      "src/agents/builder.md, src/fragments/helper.md: agents.builder.prompt: about 8 tokens (30 characters), over the helper budget of 5 tokens by 3",
       "src/commands/zulu.md: commands.zulu.template: about 4 tokens (16 characters), over the command budget of 3 tokens by 1",
       "src/skills/skill-b/SKILL.md: skills.skill-b.body: about 3 tokens (12 characters), over the skill budget of 2 tokens by 1",
     ];

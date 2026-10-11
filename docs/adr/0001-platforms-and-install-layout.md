@@ -71,8 +71,8 @@ What it does:
    3. `<project root>/.opencode/ecmwf-multi-agents.jsonc`.
 
    An invalid file is reported (log, and a toast where the platform offers one) and ignored.
-2. Applies the chosen profile, then per-agent overrides: sets model and variant, or removes
-   them so the agent uses the session model; sets `steps`.
+2. Applies the chosen profile, then per-agent overrides: sets model and effort (opencode's
+   variant), or removes them so the agent uses the session model; sets `steps`.
 3. Rewrites the line `Review policy: <value>` in the `lead` prompt.
 4. Makes `lead` the default agent when the settings allow it (`default_agent`, default true)
    and no config file already names a default agent.

@@ -41,7 +41,7 @@ const harness: ResolvedHarness = {
         { action: "question", resource: "*", effect: "allow" },
         { action: "delegate", resource: "*", effect: "deny" },
         { action: "delegate", resource: "scout", effect: "allow" },
-        { action: "delegate", resource: "scout-deep", effect: "allow" },
+        { action: "delegate", resource: "builder", effect: "allow" },
         { action: "delegate", resource: "reviewer", effect: "allow" },
         { action: "shell", resource: "git push *", effect: "ask" },
         { action: "shell", resource: "gh pr merge *", effect: "ask" },
@@ -50,13 +50,15 @@ const harness: ResolvedHarness = {
     {
       id: "scout",
       mode: "subagent",
-      description: "Quick read-only lookup in code, docs or the web.",
+      description: "Read-only lookups and investigations in code, docs or the web. Long findings go to a notes file.",
       prompt: "You are scout.",
-      steps: 15,
+      steps: 30,
       model: "anthropic/claude-sonnet-5-5",
       variant: "medium",
       permissions: [
         { action: "edit", resource: "*", effect: "deny" },
+        { action: "edit", resource: ".ecmwf-multi-agents/notes/*", effect: "allow" },
+        { action: "edit", resource: "*/.ecmwf-multi-agents/notes/*", effect: "allow" },
         { action: "shell", resource: "*", effect: "deny" },
         { action: "shell", resource: "git log *", effect: "allow" },
         { action: "shell", resource: "ls *", effect: "allow" },
@@ -66,15 +68,19 @@ const harness: ResolvedHarness = {
         { action: "skill", resource: "ecmwf-multi-agents-*", effect: "deny" },
       ],
     },
+    // No model of its own, so it runs on the session model.
     {
-      id: "scout-deep",
+      id: "builder",
       mode: "subagent",
-      description: "Longer read-only investigation. Writes long findings to a notes file.",
-      prompt: "You are scout.\n\nDeep addendum.",
-      steps: 40,
+      description: "Makes one clearly specified change, runs its checks and reports.",
+      prompt: "You are builder.",
+      steps: 60,
       permissions: [
-        { action: "edit", resource: "*", effect: "deny" },
-        { action: "edit", resource: ".ecmwf-multi-agents/notes/*", effect: "allow" },
+        { action: "shell", resource: "git push *", effect: "deny" },
+        { action: "shell", resource: "git commit *", effect: "deny" },
+        { action: "shell", resource: "gh *", effect: "deny" },
+        { action: "delegate", resource: "*", effect: "deny" },
+        { action: "question", resource: "*", effect: "deny" },
       ],
     },
     {
@@ -246,7 +252,7 @@ describe.skipIf(!enabled)(`emitV2 output in opencode ${V2_VERSION}`, () => {
     expect(model("lead")).toEqual({ id: "claude-opus-5-5", providerID: "anthropic", variant: "xhigh" });
     expect(model("scout")).toEqual({ id: "claude-sonnet-5-5", providerID: "anthropic", variant: "medium" });
     expect(model("reviewer")).toEqual({ id: "gpt-6.1-sol", providerID: "github-copilot", variant: "medium" });
-    expect(model("scout-deep")).toBeUndefined();
+    expect(model("builder")).toBeUndefined();
   });
 
   test("agent rules follow the built-in defaults in order, with dropped actions absent", async () => {
@@ -270,13 +276,15 @@ describe.skipIf(!enabled)(`emitV2 output in opencode ${V2_VERSION}`, () => {
       "question * allow",
       "subagent * deny",
       "subagent scout allow",
-      "subagent scout-deep allow",
+      "subagent builder allow",
       "subagent reviewer allow",
       "shell git push * ask",
       "shell gh pr merge * ask",
     ]);
-    expect(tail("scout", 7)).toEqual([
+    expect(tail("scout", 9)).toEqual([
       "edit * deny",
+      "edit .ecmwf-multi-agents/notes/* allow",
+      "edit */.ecmwf-multi-agents/notes/* allow",
       "shell * deny",
       "shell git log * allow",
       "shell ls * allow",
@@ -284,7 +292,13 @@ describe.skipIf(!enabled)(`emitV2 output in opencode ${V2_VERSION}`, () => {
       "question * deny",
       "skill ecmwf-multi-agents-* deny",
     ]);
-    expect(tail("scout-deep", 2)).toEqual(["edit * deny", "edit .ecmwf-multi-agents/notes/* allow"]);
+    expect(tail("builder", 5)).toEqual([
+      "shell git push * deny",
+      "shell git commit * deny",
+      "shell gh * deny",
+      "subagent * deny",
+      "question * deny",
+    ]);
   });
 
   test("commands load under their ids with their descriptions", async () => {

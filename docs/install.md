@@ -37,6 +37,20 @@ Choose models and the review policy at install time, or later by editing the set
 ./install.sh --profile anthropic --review always
 ```
 
+The settings file can also change one agent's model, effort or step limit. Effort is how
+hard a model thinks before it answers: `low`, `medium`, `high`, `xhigh` or `max`; more effort
+is slower and costs more. For example, to let the builder think harder:
+
+```jsonc
+{
+  "agents": { "builder": { "effort": "xhigh" } }
+}
+```
+
+Effort applies only to an agent that has a model, so under the `inherit` profile it needs a
+`model` in the same entry. Restart opencode after changing settings. `/guide` in opencode lists
+the defaults, and [the architecture](architecture.md#settings) has the full reference.
+
 The installer never overwrites a file it did not create. If one of your own files is in the
 way, for example your own `commands/plan.md`, it is left alone and reported, the rest is
 installed, and the installer exits with an error so you notice.

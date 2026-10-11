@@ -76,25 +76,6 @@ const readOnlyShell = shell(
   "tree *",
 );
 
-const scoutRules: Rule[] = [
-  { action: "edit", resource: "*", effect: "deny" },
-  { action: "shell", resource: "*", effect: "deny" },
-  ...readOnlyShell,
-  { action: "delegate", resource: "*", effect: "deny" },
-  { action: "question", resource: "*", effect: "deny" },
-  { action: "todo", resource: "*", effect: "deny" },
-  { action: "execute", resource: "*", effect: "deny" },
-  { action: "skill", resource: "ecmwf-multi-agents-*", effect: "deny" },
-];
-
-const builderRules: Rule[] = [
-  ...gitWrites,
-  { action: "shell", resource: "gh *", effect: "deny" },
-  { action: "delegate", resource: "*", effect: "deny" },
-  { action: "question", resource: "*", effect: "deny" },
-  { action: "skill", resource: "ecmwf-multi-agents-*", effect: "deny" },
-];
-
 export const LEAD_PROMPT = "You are lead, the coordinating agent.\n\n## Review\n\nReview policy: auto\n\nThe line above sets when the reviewer checks work.";
 
 const agents: ResolvedAgent[] = [
@@ -109,33 +90,29 @@ const agents: ResolvedAgent[] = [
     permissions: [
       { action: "question", resource: "*", effect: "allow" },
       { action: "delegate", resource: "*", effect: "deny" },
-      ...["scout", "scout-deep", "builder", "builder-deep", "reviewer"].map((resource): Rule => ({ action: "delegate", resource, effect: "allow" })),
+      ...["scout", "builder", "reviewer"].map((resource): Rule => ({ action: "delegate", resource, effect: "allow" })),
       ...approvalNeeded,
     ],
   },
   {
     id: "scout",
     mode: "subagent",
-    description: "Quick read-only lookup in code, docs or the web.",
+    description: "Read-only lookups and investigations in code, docs or the web.",
     prompt: "You are scout.",
-    steps: 15,
+    steps: 30,
     model: "anthropic/claude-sonnet-5-5",
     variant: "medium",
-    permissions: scoutRules,
-  },
-  {
-    id: "scout-deep",
-    mode: "subagent",
-    description: "Longer read-only investigation.",
-    prompt: "You are scout.\n\nDeep addendum.",
-    steps: 40,
-    model: "anthropic/claude-sonnet-5-5",
-    variant: "high",
     permissions: [
-      ...scoutRules,
       { action: "edit", resource: "*", effect: "deny" },
       { action: "edit", resource: ".ecmwf-multi-agents/notes/*", effect: "allow" },
       { action: "edit", resource: "*/.ecmwf-multi-agents/notes/*", effect: "allow" },
+      { action: "shell", resource: "*", effect: "deny" },
+      ...readOnlyShell,
+      { action: "delegate", resource: "*", effect: "deny" },
+      { action: "question", resource: "*", effect: "deny" },
+      { action: "todo", resource: "*", effect: "deny" },
+      { action: "execute", resource: "*", effect: "deny" },
+      { action: "skill", resource: "ecmwf-multi-agents-*", effect: "deny" },
     ],
   },
   {
@@ -143,20 +120,16 @@ const agents: ResolvedAgent[] = [
     mode: "subagent",
     description: "Makes one clearly specified change, runs its checks and reports.",
     prompt: "You are builder.",
-    steps: 40,
+    steps: 60,
     model: "anthropic/claude-sonnet-5-5",
     variant: "high",
-    permissions: builderRules,
-  },
-  {
-    id: "builder-deep",
-    mode: "subagent",
-    description: "Builder for hard changes.",
-    prompt: "You are builder.\n\nDeep addendum.",
-    steps: 80,
-    model: "anthropic/claude-opus-5-5",
-    variant: "high",
-    permissions: builderRules,
+    permissions: [
+      ...gitWrites,
+      { action: "shell", resource: "gh *", effect: "deny" },
+      { action: "delegate", resource: "*", effect: "deny" },
+      { action: "question", resource: "*", effect: "deny" },
+      { action: "skill", resource: "ecmwf-multi-agents-*", effect: "deny" },
+    ],
   },
   {
     id: "reviewer",
@@ -181,11 +154,9 @@ const agents: ResolvedAgent[] = [
 ];
 
 const anthropic = {
-  lead: { model: "anthropic/claude-opus-5-5", variant: "xhigh" },
-  scout: { model: "anthropic/claude-sonnet-5-5", variant: "medium" },
-  "scout-deep": { model: "anthropic/claude-sonnet-5-5", variant: "high" },
-  builder: { model: "anthropic/claude-sonnet-5-5", variant: "high" },
-  "builder-deep": { model: "anthropic/claude-opus-5-5", variant: "high" },
+  lead: { model: "anthropic/claude-opus-5-5", effort: "xhigh" },
+  scout: { model: "anthropic/claude-sonnet-5-5", effort: "medium" },
+  builder: { model: "anthropic/claude-sonnet-5-5", effort: "high" },
 };
 
 /** A fresh copy of the fixture harness (tests may change it). */
@@ -204,20 +175,18 @@ export function resolvedFixture(): ResolvedHarness {
     ],
     skills: [{ id: "ecmwf-multi-agents-plan", description: "Plan file format and rules.", body: "# Plan\n\nRules.", hidden: true }],
     profiles: [
-      { id: "anthropic", description: "Anthropic models only.", agents: { ...anthropic, reviewer: { model: "anthropic/claude-opus-5-5", variant: "high" } } },
+      { id: "anthropic", description: "Anthropic models only.", agents: { ...anthropic, reviewer: { model: "anthropic/claude-opus-5-5", effort: "high" } } },
       {
         id: "copilot",
         description: "GitHub Copilot models only.",
         agents: {
-          lead: { model: "github-copilot/claude-opus-5.5", variant: "xhigh" },
-          scout: { model: "github-copilot/claude-sonnet-5.5", variant: "medium" },
-          "scout-deep": { model: "github-copilot/claude-sonnet-5.5", variant: "high" },
-          builder: { model: "github-copilot/claude-sonnet-5.5", variant: "high" },
-          "builder-deep": { model: "github-copilot/claude-opus-5.5", variant: "high" },
-          reviewer: { model: "github-copilot/gpt-6.1-sol", variant: "medium" },
+          lead: { model: "github-copilot/claude-opus-5.5", effort: "xhigh" },
+          scout: { model: "github-copilot/claude-sonnet-5.5", effort: "medium" },
+          builder: { model: "github-copilot/claude-sonnet-5.5", effort: "high" },
+          reviewer: { model: "github-copilot/gpt-6.1-sol", effort: "medium" },
         },
       },
-      { id: "default", description: "Anthropic, with GPT for the reviewer.", agents: { ...anthropic, reviewer: { model: "github-copilot/gpt-6.1-sol", variant: "medium" } } },
+      { id: "default", description: "Anthropic, with GPT for the reviewer.", agents: { ...anthropic, reviewer: { model: "github-copilot/gpt-6.1-sol", effort: "medium" } } },
       { id: "inherit", description: "Every agent uses the session model.", agents: {} },
     ],
   } satisfies ResolvedHarness);

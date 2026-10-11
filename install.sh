@@ -367,7 +367,7 @@ remove_file() {
 }
 
 write_record() {
-	record_version=$(sed -n 's/^  "version": "\([^"]*\)".*/\1/p' "$SCRIPT_DIR/package.json" 2>/dev/null | sed -n '1p' || true)
+	record_version=$(sed -n '1p' "$SCRIPT_DIR/VERSION" 2>/dev/null || true)
 	mkdir -p -- "$CONFIG_DIR/$NAME"
 	{
 		say "# $NAME install record, written by install.sh. Do not edit."

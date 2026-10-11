@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
 // SPDX-License-Identifier: Apache-2.0
 //
-// Single source for the harness. The generator (tools/) reads this file and the Markdown it
-// names, and writes dist/opencode-v1/ and dist/opencode-v2/. Paths are relative to src/.
+// Single source for the harness. The generator (tools/) reads this file, the Markdown it
+// names and the VERSION file at the repository root, and writes dist/opencode-v1/ and
+// dist/opencode-v2/. Paths are relative to src/.
 // Permission actions are platform neutral; the emitters map them: shell to bash (v1) or shell
 // (v2), delegate to task or subagent, todo to todowrite (v1 only), execute to Code Mode (v2
 // only). Rules are ordered and the last match wins. Agent rules come after the user's own
 // rules, so allow and ask rules here override the user's policy: keep them few and deliberate.
 {
   "name": "ecmwf-multi-agents",
-  "version": "0.1.0",
   "defaultAgent": "lead",
   "defaultProfile": "default",
   "workDir": ".ecmwf-multi-agents",
@@ -105,9 +105,7 @@
         { "action": "question", "resource": "*", "effect": "allow" },
         { "action": "delegate", "resource": "*", "effect": "deny" },
         { "action": "delegate", "resource": "scout", "effect": "allow" },
-        { "action": "delegate", "resource": "scout-deep", "effect": "allow" },
         { "action": "delegate", "resource": "builder", "effect": "allow" },
-        { "action": "delegate", "resource": "builder-deep", "effect": "allow" },
         { "action": "delegate", "resource": "reviewer", "effect": "allow" },
         { "use": "approval-needed", "effect": "ask" }
       ]
@@ -115,12 +113,17 @@
 
     "scout": {
       "mode": "subagent",
-      "description": "Quick read-only lookup in code, docs or the web. Returns a short answer with file:line evidence.",
+      "description": "Read-only lookups and investigations in code, docs or the web. Returns a short answer with file:line evidence; long findings go to a notes file.",
       "prompt": ["agents/scout.md"],
       "budget": "helper",
-      "steps": 15,
+      "steps": 30,
+      // Edits are denied except the notes folder. Paths match relative to the repository root
+      // (v1) or the session directory (v2); the second pattern covers sessions started in a
+      // subdirectory.
       "permissions": [
         { "action": "edit", "resource": "*", "effect": "deny" },
+        { "action": "edit", "resource": ".ecmwf-multi-agents/notes/*", "effect": "allow" },
+        { "action": "edit", "resource": "*/.ecmwf-multi-agents/notes/*", "effect": "allow" },
         { "action": "shell", "resource": "*", "effect": "deny" },
         { "use": "read-only-shell", "effect": "allow" },
         { "action": "delegate", "resource": "*", "effect": "deny" },
@@ -131,26 +134,12 @@
       ]
     },
 
-    "scout-deep": {
-      "base": "scout",
-      "description": "Longer read-only investigation across many files or sources. Writes long findings to a notes file.",
-      "prompt": ["agents/scout-deep.md"],
-      "steps": 40,
-      // Paths match relative to the repository root (v1) or the session directory (v2); the
-      // second pattern covers sessions started in a subdirectory.
-      "permissions": [
-        { "action": "edit", "resource": "*", "effect": "deny" },
-        { "action": "edit", "resource": ".ecmwf-multi-agents/notes/*", "effect": "allow" },
-        { "action": "edit", "resource": "*/.ecmwf-multi-agents/notes/*", "effect": "allow" }
-      ]
-    },
-
     "builder": {
       "mode": "subagent",
       "description": "Makes one clearly specified change, runs its checks and reports. Never commits.",
       "prompt": ["agents/builder.md"],
       "budget": "helper",
-      "steps": 40,
+      "steps": 60,
       "permissions": [
         { "use": "git-writes", "effect": "deny" },
         { "action": "shell", "resource": "gh *", "effect": "deny" },
@@ -158,13 +147,6 @@
         { "action": "question", "resource": "*", "effect": "deny" },
         { "action": "skill", "resource": "ecmwf-multi-agents-*", "effect": "deny" }
       ]
-    },
-
-    "builder-deep": {
-      "base": "builder",
-      "description": "Builder for hard changes: subtle logic, numerics, concurrency, several modules, or a task builder could not finish.",
-      "prompt": ["agents/builder-deep.md"],
-      "steps": 80
     },
 
     "reviewer": {
@@ -206,7 +188,7 @@
       "template": "commands/go.md"
     },
     "review": {
-      "description": "Independent review of your changes, a branch, a pull request or a plan",
+      "description": "Independent review of your uncommitted changes, a branch, a commit, a pull request or a plan",
       "agent": "reviewer",
       "subtask": true,
       "template": "commands/review.md"

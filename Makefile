@@ -1,0 +1,112 @@
+# SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+# SPDX-License-Identifier: Apache-2.0
+#
+# Single entry point for developing this repository. `make help` lists every target.
+# Everything except `evals` is deterministic: no model is called, and only `setup` and the
+# first opencode start in `integration` use the network.
+
+.DEFAULT_GOAL := help
+SHELL := /bin/bash
+.SHELLFLAGS := -eu -o pipefail -c
+
+BUN        ?= bun
+REUSE      ?= reuse
+SHELLCHECK ?= shellcheck
+
+INTEGRATION_TESTS := tools/emit-v1.integration.test.ts tools/emit-v2.integration.test.ts \
+	plugin/plugin.integration.test.ts tests/install.integration.test.ts \
+	evals/run.integration.test.ts
+
+# `make version X.Y.Z` (positional) or `make version VERSION=X.Y.Z`. A VERSION inherited from
+# the environment is ignored so a stray shell variable can never bump the release.
+ifeq ($(origin VERSION),environment)
+VERSION :=
+endif
+ifeq (version,$(firstword $(MAKECMDGOALS)))
+ifneq ($(word 2,$(MAKECMDGOALS)),)
+VERSION := $(word 2,$(MAKECMDGOALS))
+$(eval $(VERSION):;@:)
+endif
+endif
+
+.PHONY: help setup build dist-check lint test check all integration evals version version-check \
+        release clean
+
+help: ## Show this help
+	@if [ -t 1 ]; then c='\033[36m'; r='\033[0m'; else c=''; r=''; fi; \
+	grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+		awk -v c="$$c" -v r="$$r" 'BEGIN {FS = ":.*?## "}; {printf "  %s%-14s%s %s\n", c, $$1, r, $$2}'
+
+setup: ## Install the development dependencies with Bun
+	$(BUN) install --frozen-lockfile
+
+# ── Gate ─────────────────────────────────────────────────────────────────────
+
+check: version-check dist-check lint test ## The gate before every commit: versions, dist/, lint, unit tests
+
+all: build check ## Regenerate dist/, then run the gate
+
+build: ## Regenerate dist/ from src/ and bundle the plugin
+	$(BUN) tools/build.ts
+
+dist-check: ## Fail if dist/ is out of date; also validates the manifest and prompt budgets
+	$(BUN) tools/build.ts --check
+
+lint: ## Typecheck, REUSE licence information, shellcheck
+	$(BUN) x tsc --noEmit -p .
+	$(REUSE) lint
+	$(SHELLCHECK) -s sh $$( { git ls-files --cached --others --exclude-standard '*.sh'; echo install.sh; } | sort -u)
+
+test: ## Unit tests (the integration suites skip themselves)
+	$(BUN) test
+
+# ── Beyond the gate ──────────────────────────────────────────────────────────
+
+integration: ## Suites against real opencode binaries, no models: OPENCODE_V1_BINS="a b" OPENCODE_V2_BIN=c
+	ECMWF_MULTI_AGENTS_INTEGRATION=1 \
+	$(if $(OPENCODE_V1_BINS),OPENCODE_V1_BINS="$(OPENCODE_V1_BINS)") \
+	$(if $(OPENCODE_V2_BIN),OPENCODE_V2_BIN="$(OPENCODE_V2_BIN)") \
+		$(BUN) test --timeout 600000 $(INTEGRATION_TESTS)
+
+evals: ## Scenario evals with REAL models (uses your provider quota): CASES="a b" REPEAT=1 VARIANT=both
+	$(BUN) evals/run.ts $(foreach c,$(CASES),--case $(c)) --repeat $(or $(REPEAT),1) \
+		--variant $(or $(VARIANT),both) $(if $(PROFILE),--profile $(PROFILE)) \
+		$(if $(JOBS),--jobs $(JOBS)) $(if $(MAX_COST),--max-cost $(MAX_COST))
+
+# ── Versioning and releases ──────────────────────────────────────────────────
+
+version: ## Print the version, or set it everywhere: make version X.Y.Z
+ifeq ($(VERSION),)
+	@$(BUN) tools/version.ts
+else
+	@[[ "$(VERSION)" =~ ^[0-9]+\.[0-9]+\.[0-9]+$$ ]] || { \
+		echo "error: version must be MAJOR.MINOR.MICRO without a 'v' prefix, got '$(VERSION)'" >&2; \
+		exit 2; }
+	$(BUN) tools/version.ts --set $(VERSION)
+	$(BUN) tools/build.ts
+	@echo "Next: review CHANGELOG.md, run make check, commit as 'chore: release $(VERSION)',"
+	@echo "push it, then run make release."
+endif
+
+version-check: ## Verify VERSION, package.json and CHANGELOG.md agree
+	$(BUN) tools/version.ts --check
+
+release: ## Tag VERSION and publish the GitHub release; run after the release commit is on origin/main. DRY_RUN=1 previews
+	$(BUN) tools/version.ts --preflight
+	$(MAKE) --no-print-directory check
+	@v=$$(cat VERSION); \
+	if [ -n "$(DRY_RUN)" ]; then \
+		echo "Would run:"; \
+		echo "  git tag -a $$v -m $$v"; \
+		echo "  git push origin $$v"; \
+		echo "  $(BUN) tools/version.ts --notes $$v | gh release create $$v --title $$v --notes-file -"; \
+	else \
+		git tag -a "$$v" -m "$$v"; \
+		git push origin "$$v"; \
+		$(BUN) tools/version.ts --notes "$$v" | gh release create "$$v" --title "$$v" --notes-file -; \
+	fi
+
+# ── Cleanup ──────────────────────────────────────────────────────────────────
+
+clean: ## Remove eval transcripts and scratch output (never sources or dist/)
+	rm -rf evals/runs

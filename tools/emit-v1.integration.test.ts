@@ -36,16 +36,6 @@ const readOnlyShell: Rule[] = ["git log *", "git status *", "ls *"].map((resourc
   effect: "allow",
 }));
 
-const scoutRules: Rule[] = [
-  { action: "edit", resource: "*", effect: "deny" },
-  { action: "shell", resource: "*", effect: "deny" },
-  ...readOnlyShell,
-  { action: "delegate", resource: "*", effect: "deny" },
-  { action: "question", resource: "*", effect: "deny" },
-  { action: "todo", resource: "*", effect: "deny" },
-  { action: "skill", resource: "ecmwf-multi-agents-*", effect: "deny" },
-];
-
 const agents: ResolvedAgent[] = [
   {
     id: "lead",
@@ -59,7 +49,6 @@ const agents: ResolvedAgent[] = [
       { action: "question", resource: "*", effect: "allow" },
       { action: "delegate", resource: "*", effect: "deny" },
       { action: "delegate", resource: "scout", effect: "allow" },
-      { action: "delegate", resource: "scout-deep", effect: "allow" },
       { action: "delegate", resource: "builder", effect: "allow" },
       { action: "delegate", resource: "reviewer", effect: "allow" },
       { action: "shell", resource: "git push *", effect: "ask" },
@@ -69,33 +58,30 @@ const agents: ResolvedAgent[] = [
   {
     id: "scout",
     mode: "subagent",
-    description: "Quick read-only lookup in code, docs or the web.",
+    description: "Read-only lookups and investigations in code, docs or the web. Long findings go to a notes file.",
     prompt: "You are scout.",
-    steps: 15,
+    steps: 30,
     model: "anthropic/claude-sonnet-5-5",
     variant: "medium",
-    permissions: scoutRules,
-  },
-  {
-    id: "scout-deep",
-    mode: "subagent",
-    description: "Longer read-only investigation. Writes long findings to a notes file.",
-    prompt: "You are scout.\n\nDeep addendum.",
-    steps: 40,
     permissions: [
-      ...scoutRules,
       { action: "edit", resource: "*", effect: "deny" },
       { action: "edit", resource: ".ecmwf-multi-agents/notes/*", effect: "allow" },
+      { action: "edit", resource: "*/.ecmwf-multi-agents/notes/*", effect: "allow" },
+      { action: "shell", resource: "*", effect: "deny" },
+      ...readOnlyShell,
+      { action: "delegate", resource: "*", effect: "deny" },
+      { action: "question", resource: "*", effect: "deny" },
+      { action: "todo", resource: "*", effect: "deny" },
+      { action: "skill", resource: "ecmwf-multi-agents-*", effect: "deny" },
     ],
   },
+  // No model of its own, so it runs on the session model.
   {
     id: "builder",
     mode: "subagent",
     description: "Makes one clearly specified change, runs its checks and reports.",
     prompt: "You are builder.",
-    steps: 40,
-    model: "anthropic/claude-sonnet-5-5",
-    variant: "high",
+    steps: 60,
     permissions: [
       { action: "shell", resource: "git push *", effect: "deny" },
       { action: "shell", resource: "git commit *", effect: "deny" },
@@ -276,8 +262,8 @@ for (const bin of bins) {
     test("tools disabled by a final '*' deny are removed; others stay", () => {
       const tools = (id: string) => loaded.get(id)!.tools;
       expect(tools("lead")).toMatchObject({ question: true, task: true, bash: true, edit: true });
-      expect(tools("scout")).toMatchObject({ question: false, task: false, todowrite: false, edit: false, write: false, bash: true });
-      expect(tools("scout-deep")).toMatchObject({ edit: true, write: true, task: false });
+      // The scout's last edit rules allow its notes folder, so its edit tools stay.
+      expect(tools("scout")).toMatchObject({ question: false, task: false, todowrite: false, edit: true, write: true, bash: true });
       expect(tools("builder")).toMatchObject({ question: false, task: false, edit: true, bash: true });
       // GPT models get apply_patch instead of edit and write; edit rules cover it too.
       expect(tools("reviewer")).toMatchObject({ apply_patch: false, webfetch: true });

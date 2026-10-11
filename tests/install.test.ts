@@ -29,16 +29,16 @@ const MARKER_JS = `// managed by ${NAME}`;
 // Only system folders, so the real opencode on the developer's PATH is never found.
 const SYSTEM_PATH = "/usr/local/bin:/usr/bin:/bin";
 
-const PROFILES: Record<string, Record<string, { model: string; variant: string }>> = {
+const PROFILES: Record<string, Record<string, { model: string; effort: string }>> = {
   default: {
-    lead: { model: "anthropic/claude-opus-5-5", variant: "xhigh" },
-    scout: { model: "anthropic/claude-sonnet-5-5", variant: "medium" },
-    reviewer: { model: "github-copilot/gpt-6.1-sol", variant: "medium" },
+    lead: { model: "anthropic/claude-opus-5-5", effort: "xhigh" },
+    scout: { model: "anthropic/claude-sonnet-5-5", effort: "medium" },
+    reviewer: { model: "github-copilot/gpt-6.1-sol", effort: "medium" },
   },
   anthropic: {
-    lead: { model: "anthropic/claude-opus-5-5", variant: "xhigh" },
-    scout: { model: "anthropic/claude-sonnet-5-5", variant: "medium" },
-    reviewer: { model: "anthropic/claude-opus-5-5", variant: "high" },
+    lead: { model: "anthropic/claude-opus-5-5", effort: "xhigh" },
+    scout: { model: "anthropic/claude-sonnet-5-5", effort: "medium" },
+    reviewer: { model: "anthropic/claude-opus-5-5", effort: "high" },
   },
   inherit: {},
 };

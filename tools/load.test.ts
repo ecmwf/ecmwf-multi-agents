@@ -5,7 +5,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { lineColumn, load, markdownProblem, parseJsonc, templateProblem } from "./load.ts";
+import { lineColumn, load, markdownProblem, parseJsonc, parseVersion, templateProblem } from "./load.ts";
 import { GeneratorError } from "./util.ts";
 
 // Fixtures are loose JSON on purpose: the tests break them in every way.
@@ -19,7 +19,6 @@ afterAll(async () => {
 function manifest(): Json {
   return {
     name: "test-harness",
-    version: "0.1.0",
     defaultAgent: "lead",
     defaultProfile: "default",
     workDir: ".work",
@@ -51,7 +50,7 @@ function manifest(): Json {
         steps: 10,
         permissions: [{ action: "edit", resource: "*", effect: "deny" }],
       },
-      "scout-deep": { base: "scout", description: "Looks deeper.", prompt: ["agents/scout-deep.md"], steps: 30 },
+      builder: { mode: "subagent", description: "Builds.", prompt: ["agents/builder.md"], budget: "helper", steps: 30 },
     },
     commands: { go: { description: "Go.", agent: "lead", template: "commands/go.md" } },
     skills: { "test-plan": { description: "Plan format.", body: "skills/test-plan/SKILL.md", hidden: true } },
@@ -61,19 +60,21 @@ function manifest(): Json {
 const MARKDOWN: Record<string, string> = {
   "agents/lead.md": "You are lead.\n\nReview policy: auto\n",
   "agents/scout.md": "You are scout.\n",
-  "agents/scout-deep.md": "Go deep.\n",
+  "agents/builder.md": "You are builder.\n",
   "commands/go.md": "Go: $ARGUMENTS\n",
   "skills/test-plan/SKILL.md": "# Plan\n\nRules.\n",
 };
 
 const DEFAULT_PROFILE = {
   description: "Default.",
-  agents: { lead: { model: "acme/big-1", variant: "high" }, scout: { model: "acme/small-1" } },
+  agents: { lead: { model: "acme/big-1", effort: "high" }, scout: { model: "acme/small-1" } },
 };
 
 interface Fixture {
   manifest?: Json;
   manifestText?: string;
+  /** Text of the VERSION file; null leaves the file out. */
+  version?: string | null;
   /** Profile id to content; a string is written as is. */
   profiles?: Record<string, Json>;
   /** Extra or replaced Markdown files under src/; null leaves a file out. */
@@ -86,6 +87,8 @@ async function fixture(options: Fixture = {}): Promise<string> {
   const files: Record<string, string> = {
     "src/manifest.jsonc": options.manifestText ?? JSON.stringify(options.manifest ?? manifest(), null, 2),
   };
+  const version = options.version === undefined ? "0.1.0\n" : options.version;
+  if (version !== null) files.VERSION = version;
   for (const [id, profile] of Object.entries(options.profiles ?? { default: DEFAULT_PROFILE })) {
     files[`src/profiles/${id}.jsonc`] = typeof profile === "string" ? profile : JSON.stringify(profile, null, 2);
   }
@@ -131,12 +134,14 @@ describe("valid source", () => {
     const root = await fixture({ profiles: { default: DEFAULT_PROFILE, alpha: { description: "A.", agents: {} } } });
     const source = await load(root);
     expect(source.root).toBe(root);
-    expect(source.manifest.agents.map((agent) => agent.id)).toEqual(["lead", "scout", "scout-deep"]);
+    expect(source.version).toBe("0.1.0");
+    expect(source.manifest.agents.map((agent) => agent.id)).toEqual(["lead", "scout", "builder"]);
     expect(source.manifest.agents[2]).toEqual({
-      id: "scout-deep",
-      base: "scout",
-      description: "Looks deeper.",
-      prompt: ["agents/scout-deep.md"],
+      id: "builder",
+      mode: "subagent",
+      description: "Builds.",
+      prompt: ["agents/builder.md"],
+      budget: "helper",
       steps: 30,
       permissions: [],
     });
@@ -183,20 +188,11 @@ describe("valid source", () => {
     expect(source.manifest.skills.map((skill) => skill.id)).toEqual(["zeta", "42"]);
     expect(source.manifest.skills[0]?.hidden).toBe(false);
   });
-
-  test("a derived default agent takes primary mode from its base", async () => {
-    const m = edited((m) => {
-      m.agents["lead-deep"] = { base: "lead", description: "Leads harder.", prompt: ["agents/lead-deep.md"] };
-      m.defaultAgent = "lead-deep";
-    });
-    const source = await load(await fixture({ manifest: m, markdown: { "agents/lead-deep.md": "More." } }));
-    expect(source.manifest.defaultAgent).toBe("lead-deep");
-  });
 });
 
 describe("JSONC", () => {
   test("syntax errors name the file, line and column", async () => {
-    const problems = await problemsOf({ manifestText: '{\n  "name": "x"\n  "version": "0.1.0"\n}' });
+    const problems = await problemsOf({ manifestText: '{\n  "name": "x"\n  "defaultAgent": "lead"\n}' });
     expect(problems).toEqual(["src/manifest.jsonc:3:3: expected a comma"]);
   });
 
@@ -238,7 +234,7 @@ describe("JSONC", () => {
     const manifestText = JSON.stringify(manifest(), null, 2).replace('"name"', '"__proto__": { "x": 1 },\n  "name"');
     const problems = await problemsOf({ manifestText });
     expect(problems).toEqual([
-      "src/manifest.jsonc: __proto__: unknown key; allowed keys are name, version, defaultAgent, defaultProfile, workDir, marker, budgets, ruleSets, agents, commands and skills",
+      "src/manifest.jsonc: __proto__: unknown key; allowed keys are name, defaultAgent, defaultProfile, workDir, marker, budgets, ruleSets, agents, commands and skills",
     ]);
   });
 });
@@ -258,32 +254,43 @@ describe("unknown keys", () => {
     const problems = await problemsOf({ manifest: m, profiles: { default: profile } });
     expectProblems(
       problems,
-      "src/manifest.jsonc: extra: unknown key; allowed keys are name, version,",
-      "src/manifest.jsonc: agents.lead.tools: unknown key; allowed keys are mode, base,",
+      "src/manifest.jsonc: extra: unknown key; allowed keys are name, defaultAgent,",
+      "src/manifest.jsonc: agents.lead.tools: unknown key; allowed keys are mode, description,",
       "src/manifest.jsonc: agents.lead.permissions[0].pattern: unknown key; allowed keys are action, resource and effect",
       "src/manifest.jsonc: agents.lead.permissions[1].resource: unknown key; allowed keys are use and effect",
       "src/manifest.jsonc: ruleSets.writes[0].effect: unknown key; allowed keys are action and resource",
       "src/manifest.jsonc: commands.go.model: unknown key",
       "src/manifest.jsonc: skills.test-plan.license: unknown key",
       "src/profiles/default.jsonc: models: unknown key; allowed keys are description and agents",
-      "src/profiles/default.jsonc: agents.lead.steps: unknown key; allowed keys are model and variant",
+      "src/profiles/default.jsonc: agents.lead.steps: unknown key; allowed keys are model and effort",
     );
     expect(problems).toHaveLength(9);
+  });
+
+  test("a version in the manifest, an agent base and a profile variant are unknown keys", async () => {
+    const m = edited((m) => {
+      m.version = "0.1.0";
+      m.agents.builder.base = "scout";
+    });
+    const profile = { description: "Default.", agents: { lead: { model: "acme/big-1", variant: "high" } } };
+    expect(await problemsOf({ manifest: m, profiles: { default: profile } })).toEqual([
+      "src/manifest.jsonc: version: unknown key; allowed keys are name, defaultAgent, defaultProfile, workDir, marker, budgets, ruleSets, agents, commands and skills",
+      "src/manifest.jsonc: agents.builder.base: unknown key; allowed keys are mode, description, prompt, budget, steps, color and permissions",
+      "src/profiles/default.jsonc: agents.lead.variant: unknown key; allowed keys are model and effort",
+    ]);
   });
 });
 
 describe("top level", () => {
-  test("required keys, version, workDir and marker", async () => {
+  test("required keys, workDir and marker", async () => {
     const m = edited((m) => {
       delete m.name;
-      m.version = "one";
       m.workDir = "../work";
       m.marker = "managed";
     });
     const problems = await problemsOf({ manifest: m });
     expect(problems).toEqual([
       "src/manifest.jsonc: name: required key is missing",
-      'src/manifest.jsonc: version: must be a version such as 1.2.3, not "one"',
       'src/manifest.jsonc: workDir: must be a normalised relative path without "." or ".." segments',
       'src/manifest.jsonc: marker: must start with "#", because it is written as a YAML comment',
     ]);
@@ -319,7 +326,7 @@ describe("top level", () => {
           m.defaultAgent = "boss";
         }),
       }),
-    ).toEqual(["src/manifest.jsonc: defaultAgent: names no agent; agents: lead, scout and scout-deep"]);
+    ).toEqual(["src/manifest.jsonc: defaultAgent: names no agent; agents: lead, scout and builder"]);
   });
 
   test("budgets need valid names and limits, and command and skill budgets when used", async () => {
@@ -370,8 +377,8 @@ describe("agents", () => {
       m.agents.lead.steps = 1.5;
       m.agents.lead.color = 7;
       m.agents.lead.description = " ";
-      m.agents["scout-deep"].steps = 0;
-      m.agents["scout-deep"].prompt = [];
+      m.agents.builder.steps = 0;
+      m.agents.builder.prompt = [];
     });
     expect(await problemsOf({ manifest: m })).toEqual([
       'src/manifest.jsonc: agents.lead.mode: must be "primary" or "subagent", not "boss"',
@@ -379,10 +386,25 @@ describe("agents", () => {
       "src/manifest.jsonc: agents.lead.budget: names no budget; budgets: lead, helper, command and skill",
       "src/manifest.jsonc: agents.lead.steps: must be a whole number of at least 1, not the number 1.5",
       "src/manifest.jsonc: agents.lead.color: must be a non-empty string, not the number 7",
-      'src/manifest.jsonc: agents.scout.mode: required key is missing; an agent without a base needs "primary" or "subagent"',
-      "src/manifest.jsonc: agents.scout.budget: required key is missing; an agent without a base needs a budget",
-      "src/manifest.jsonc: agents.scout-deep.prompt: must be a non-empty list of Markdown paths relative to src/, not an empty list",
-      "src/manifest.jsonc: agents.scout-deep.steps: must be a whole number of at least 1, not the number 0",
+      "src/manifest.jsonc: agents.scout.mode: required key is missing",
+      "src/manifest.jsonc: agents.scout.budget: required key is missing",
+      "src/manifest.jsonc: agents.builder.prompt: must be a non-empty list of Markdown paths relative to src/, not an empty list",
+      "src/manifest.jsonc: agents.builder.steps: must be a whole number of at least 1, not the number 0",
+    ]);
+  });
+
+  test("every agent needs mode, description, prompt and budget", async () => {
+    const m = edited((m) => {
+      m.agents.builder = {};
+      delete m.agents.lead.mode;
+    });
+    // The default agent's missing mode is reported once, not again as a mode that is not primary.
+    expect(await problemsOf({ manifest: m })).toEqual([
+      "src/manifest.jsonc: agents.lead.mode: required key is missing",
+      "src/manifest.jsonc: agents.builder.mode: required key is missing",
+      "src/manifest.jsonc: agents.builder.description: required key is missing",
+      "src/manifest.jsonc: agents.builder.prompt: required key is missing",
+      "src/manifest.jsonc: agents.builder.budget: required key is missing",
     ]);
   });
 
@@ -396,29 +418,6 @@ describe("agents", () => {
       'src/manifest.jsonc: agents.lead.prompt[2]: path "agents\\\\lead.md" uses "\\"; separate segments with "/"; paths are relative to src/',
       'src/manifest.jsonc: agents.lead.prompt[3]: path "agents/lead.txt" must name a Markdown file ending in .md',
       "src/manifest.jsonc: agents.lead.prompt[5]: lists agents/lead.md twice",
-    ]);
-  });
-
-  test("base must name another agent that has no base", async () => {
-    const m = edited((m) => {
-      m.agents.builder = { base: "scout-deep", description: "Builds.", prompt: ["agents/builder.md"] };
-      m.agents.ghost = { base: "nobody", description: "Haunts.", prompt: ["agents/ghost.md"] };
-      m.agents.loop = { base: "loop", description: "Loops.", prompt: ["agents/loop.md"] };
-    });
-    const markdown = { "agents/builder.md": "b", "agents/ghost.md": "g", "agents/loop.md": "l" };
-    expect(await problemsOf({ manifest: m, markdown })).toEqual([
-      "src/manifest.jsonc: agents.builder.base: agent scout-deep has a base itself; a base must be an agent without one",
-      "src/manifest.jsonc: agents.ghost.base: names no agent; agents: lead, scout, scout-deep, builder, ghost and loop",
-      "src/manifest.jsonc: agents.loop.base: an agent cannot be its own base",
-    ]);
-  });
-
-  test("a derived agent must not repeat a file of its base prompt", async () => {
-    const m = edited((m) => {
-      m.agents["scout-deep"].prompt = ["agents/scout.md", "agents/scout-deep.md"];
-    });
-    expect(await problemsOf({ manifest: m })).toEqual([
-      "src/manifest.jsonc: agents.scout-deep.prompt[0]: agents/scout.md is already part of the prompt of base agent scout",
     ]);
   });
 
@@ -454,7 +453,7 @@ describe("commands and skills", () => {
       m.commands.check = { description: "Check.", agent: "scout" };
     });
     expect(await problemsOf({ manifest: m })).toEqual([
-      "src/manifest.jsonc: commands.go.agent: names no agent; agents: lead, scout and scout-deep",
+      "src/manifest.jsonc: commands.go.agent: names no agent; agents: lead, scout and builder",
       'src/manifest.jsonc: commands.go.subtask: must be true or false, not "yes"',
       "src/manifest.jsonc: commands.Go: command id must match ^[a-z][a-z0-9-]*$",
       "src/manifest.jsonc: commands.check.template: required key is missing",
@@ -492,7 +491,7 @@ describe("Markdown files", () => {
         "agents/scout.md": "\n\n---\nmode: subagent\n---\nBody",
         // A licence header comment, split so that licence scanners do not read it as this file's.
         "commands/go.md": `<!--\n${"SPDX-"}License-Identifier: Apache-2.0\n-->\n\nGo.`,
-        "agents/scout-deep.md": " \n\n",
+        "agents/builder.md": " \n\n",
         "skills/test-plan/SKILL.md": null,
       },
     });
@@ -504,7 +503,7 @@ describe("Markdown files", () => {
     expect(problems).toEqual([
       'src/agents/lead.md: starts with "---": source Markdown carries no frontmatter; the generator writes it from the manifest (named at agents.lead.prompt[0] in src/manifest.jsonc)',
       'src/agents/scout.md: starts with "---": source Markdown carries no frontmatter; the generator writes it from the manifest (named at agents.scout.prompt[0] in src/manifest.jsonc)',
-      "src/agents/scout-deep.md: is empty (named at agents.scout-deep.prompt[0] in src/manifest.jsonc)",
+      "src/agents/builder.md: is empty (named at agents.builder.prompt[0] in src/manifest.jsonc)",
       'src/commands/go.md: starts with "<!--": the comment would reach the model; prompt files get their licence from REUSE.toml (named at commands.go.template in src/manifest.jsonc)',
       "src/manifest.jsonc: skills.test-plan.body: src/skills/test-plan/SKILL.md is a directory, not a file",
     ]);
@@ -528,30 +527,31 @@ describe("Markdown files", () => {
 });
 
 describe("profiles", () => {
-  test("models, variants and agent ids", async () => {
+  test("models, efforts and agent ids", async () => {
     const profile = {
       description: "Broken.",
       agents: {
-        lead: { model: "acme", variant: "high" },
-        scout: { model: "Acme/x" },
-        "scout-deep": { model: "acme/x#high" },
+        lead: { model: "acme", effort: "high" },
+        scout: { model: "Acme/x", effort: "hi#gh" },
+        builder: { model: "acme/x#high" },
         boss: { model: "acme/x" },
       },
     };
     const other = {
-      description: "Variants.",
-      agents: { lead: { variant: "high" }, scout: { model: "acme/has space", variant: "very high" }, "scout-deep": { model: "acme/x", variant: "" } },
+      description: "Efforts.",
+      agents: { lead: { effort: "high" }, scout: { model: "acme/has space", effort: "very high" }, builder: { model: "acme/x", effort: "" } },
     };
     const problems = await problemsOf({ profiles: { default: DEFAULT_PROFILE, broken: profile, other } });
     expect(problems).toEqual([
       'src/profiles/broken.jsonc: agents.lead.model: "acme" must look like provider/model, with a lowercase provider id and no spaces',
       'src/profiles/broken.jsonc: agents.scout.model: "Acme/x" must look like provider/model, with a lowercase provider id and no spaces',
-      'src/profiles/broken.jsonc: agents.scout-deep.model: "acme/x#high" must not contain "#"; set the variant separately',
-      "src/profiles/broken.jsonc: agents.boss: names no agent of the manifest; agents: lead, scout and scout-deep",
-      "src/profiles/other.jsonc: agents.lead.variant: a variant needs a model in the same entry",
+      'src/profiles/broken.jsonc: agents.scout.effort: "hi#gh" must be one word without "#", such as high',
+      'src/profiles/broken.jsonc: agents.builder.model: "acme/x#high" must not contain "#"; set the effort separately',
+      "src/profiles/broken.jsonc: agents.boss: names no agent of the manifest; agents: lead, scout and builder",
+      "src/profiles/other.jsonc: agents.lead.effort: an effort needs a model in the same entry",
       'src/profiles/other.jsonc: agents.scout.model: "acme/has space" must look like provider/model, with a lowercase provider id and no spaces',
-      'src/profiles/other.jsonc: agents.scout.variant: "very high" must be one word without "#"',
-      "src/profiles/other.jsonc: agents.scout-deep.variant: must be a non-empty string, not an empty string",
+      'src/profiles/other.jsonc: agents.scout.effort: "very high" must be one word without "#", such as high',
+      "src/profiles/other.jsonc: agents.builder.effort: must be a non-empty string, not an empty string",
     ]);
   });
 
@@ -563,6 +563,37 @@ describe("profiles", () => {
       'src/profiles/Bad_Name.jsonc: (file name): profile id "Bad_Name" must match ^[a-z0-9]+(-[a-z0-9]+)*$',
       "src/profiles/thin.jsonc: description: required key is missing",
       "src/profiles/thin.jsonc: agents: must be an object, not an empty list",
+    ]);
+  });
+});
+
+describe("VERSION", () => {
+  test("holds exactly one line with three whole numbers, with or without a final line break", () => {
+    expect(parseVersion("0.1.0\n")).toEqual({ version: "0.1.0" });
+    expect(parseVersion("12.30.4")).toEqual({ version: "12.30.4" });
+    const problems: [string, string][] = [
+      ["", "is empty; it must hold one line with the version, such as 1.2.3"],
+      ["\n", "is empty; it must hold one line with the version, such as 1.2.3"],
+      ["v0.1.0\n", '"v0.1.0" starts with "v"; write the version without it, as 0.1.0'],
+      ["V1.2.3", '"V1.2.3" starts with "V"; write the version without it, as 1.2.3'],
+      ["0.1.0\n0.2.0\n", "has 2 lines; it must hold exactly one, the version, such as 1.2.3"],
+      ["0.1.0\n\n", "has 2 lines; it must hold exactly one, the version, such as 1.2.3"],
+      ["0.1\n", '"0.1" is not a version such as 1.2.3: three whole numbers separated by dots, and nothing else'],
+      ["0.1.0-rc.1\n", '"0.1.0-rc.1" is not a version such as 1.2.3: three whole numbers separated by dots, and nothing else'],
+      [" 0.1.0\n", '" 0.1.0" is not a version such as 1.2.3: three whole numbers separated by dots, and nothing else'],
+      ["0.1.0\r\n", '"0.1.0\\r" is not a version such as 1.2.3: three whole numbers separated by dots, and nothing else'],
+    ];
+    for (const [text, problem] of problems) expect({ text, result: parseVersion(text) }).toEqual({ text, result: { problem } });
+  });
+
+  test("problems name the file and are reported with the others", async () => {
+    expect(await problemsOf({ version: null })).toEqual(["VERSION: does not exist; it must hold the harness version, such as 1.2.3"]);
+    const m = edited((m) => {
+      m.commands.go.agent = "nobody";
+    });
+    expect(await problemsOf({ manifest: m, version: "v0.2.0\n" })).toEqual([
+      "src/manifest.jsonc: commands.go.agent: names no agent; agents: lead, scout and builder",
+      'VERSION: "v0.2.0" starts with "v"; write the version without it, as 0.2.0',
     ]);
   });
 });

@@ -27,45 +27,32 @@ const lead: ResolvedAgent = {
     { action: "question", resource: "*", effect: "allow" },
     { action: "delegate", resource: "*", effect: "deny" },
     { action: "delegate", resource: "scout", effect: "allow" },
-    { action: "delegate", resource: "scout-deep", effect: "allow" },
+    { action: "delegate", resource: "builder", effect: "allow" },
+    { action: "delegate", resource: "reviewer", effect: "allow" },
     { action: "shell", resource: "git push *", effect: "ask" },
     { action: "shell", resource: "gh pr merge *", effect: "ask" },
   ],
 };
 
-const scoutRules: Rule[] = [
-  { action: "edit", resource: "*", effect: "deny" },
-  { action: "shell", resource: "*", effect: "deny" },
-  { action: "shell", resource: "git log *", effect: "allow" },
-  { action: "shell", resource: "ls *", effect: "allow" },
-  { action: "delegate", resource: "*", effect: "deny" },
-  { action: "question", resource: "*", effect: "deny" },
-  { action: "todo", resource: "*", effect: "deny" },
-  { action: "skill", resource: "ecmwf-multi-agents-*", effect: "deny" },
-];
-
 const scout: ResolvedAgent = {
   id: "scout",
   mode: "subagent",
-  description: "Quick read-only lookup in code, docs or the web.",
+  description: "Read-only lookups and investigations in code, docs or the web.",
   prompt: "You are scout.",
-  steps: 15,
+  steps: 30,
   model: "anthropic/claude-sonnet-5-5",
   variant: "medium",
-  permissions: scoutRules,
-};
-
-// Base rules first, then its own: "edit *" repeats, as rule-set expansion produces.
-const scoutDeep: ResolvedAgent = {
-  id: "scout-deep",
-  mode: "subagent",
-  description: "Longer read-only investigation. Writes long findings to a notes file.",
-  prompt: "You are scout.\n\nDeep addendum.",
-  steps: 40,
   permissions: [
-    ...scoutRules,
     { action: "edit", resource: "*", effect: "deny" },
     { action: "edit", resource: ".ecmwf-multi-agents/notes/*", effect: "allow" },
+    { action: "edit", resource: "*/.ecmwf-multi-agents/notes/*", effect: "allow" },
+    { action: "shell", resource: "*", effect: "deny" },
+    { action: "shell", resource: "git log *", effect: "allow" },
+    { action: "shell", resource: "ls *", effect: "allow" },
+    { action: "delegate", resource: "*", effect: "deny" },
+    { action: "question", resource: "*", effect: "deny" },
+    { action: "todo", resource: "*", effect: "deny" },
+    { action: "skill", resource: "ecmwf-multi-agents-*", effect: "deny" },
   ],
 };
 
@@ -75,7 +62,7 @@ const builder: ResolvedAgent = {
   mode: "subagent",
   description: "Makes one clearly specified change, runs its checks and reports.",
   prompt: "You are builder.",
-  steps: 40,
+  steps: 60,
   color: "accent",
   model: "anthropic/claude-sonnet-5-5",
   variant: "high",
@@ -92,6 +79,22 @@ const builder: ResolvedAgent = {
   ],
 };
 
+// No model of its own, so it runs on the session model: no model, variant or color is written.
+const reviewer: ResolvedAgent = {
+  id: "reviewer",
+  mode: "subagent",
+  description: "Independent review of a plan or a change.",
+  prompt: "You are reviewer.",
+  steps: 30,
+  permissions: [
+    { action: "edit", resource: "*", effect: "deny" },
+    { action: "shell", resource: "gh *", effect: "deny" },
+    { action: "shell", resource: "gh pr view *", effect: "allow" },
+    { action: "delegate", resource: "*", effect: "deny" },
+    { action: "execute", resource: "*", effect: "deny" },
+  ],
+};
+
 const harness: ResolvedHarness = {
   name: "ecmwf-multi-agents",
   version: "0.1.0",
@@ -99,10 +102,10 @@ const harness: ResolvedHarness = {
   defaultProfile: "default",
   workDir: ".ecmwf-multi-agents",
   marker: MARKER,
-  agents: [lead, scout, scoutDeep, builder],
+  agents: [lead, scout, builder, reviewer],
   commands: [
     { id: "plan", description: "Plan a piece of work with you", agent: "lead", subtask: false, template: "Plan: $ARGUMENTS" },
-    { id: "review", description: "Independent review of your changes", agent: "builder", subtask: true, template: "Review $ARGUMENTS" },
+    { id: "review", description: "Independent review of your changes", agent: "reviewer", subtask: true, template: "Review $ARGUMENTS" },
     { id: "status", description: "Show progress on the current plan", agent: "scout", subtask: false, template: "Status." },
   ],
   skills: [
@@ -180,12 +183,15 @@ const PROBES = [
   "gh pr view 12",
   "gh",
   ".ecmwf-multi-agents/notes/a.md",
-  ".ecmwf-multi-agents/notes/deep/b.md",
+  ".ecmwf-multi-agents/notes/sub/b.md",
+  "sub/.ecmwf-multi-agents/notes/c.md",
   ".ecmwf-multi-agents/plans/p.md",
   "src/main.ts",
   ".env",
   "scout",
-  "scout-deep",
+  "scoutx",
+  "builder",
+  "reviewer",
   "general",
   "ecmwf-multi-agents-plan",
   "other-skill",
@@ -199,7 +205,7 @@ describe("emitV1", () => {
     expect(files.map((item) => item.path)).toEqual([
       "agents/builder.md",
       "agents/lead.md",
-      "agents/scout-deep.md",
+      "agents/reviewer.md",
       "agents/scout.md",
       "commands/plan.md",
       "commands/review.md",
@@ -225,7 +231,7 @@ describe("emitV1", () => {
       color: "#0b5394",
       permission: {
         question: "allow",
-        task: { "*": "deny", scout: "allow", "scout-deep": "allow" },
+        task: { "*": "deny", scout: "allow", builder: "allow", reviewer: "allow" },
         bash: { "git push *": "ask", "gh pr merge *": "ask" },
       },
     });
@@ -237,13 +243,13 @@ describe("emitV1", () => {
       mode: "subagent",
       model: "anthropic/claude-sonnet-5-5",
       variant: "medium",
-      steps: 15,
+      steps: 30,
     });
-    const deep = file(files, "agents/scout-deep.md").data;
-    expect(deep.steps).toBe(40);
-    expect("model" in deep).toBe(false);
-    expect("variant" in deep).toBe(false);
-    expect("color" in deep).toBe(false);
+    const own = file(files, "agents/reviewer.md").data;
+    expect(own.steps).toBe(30);
+    expect("model" in own).toBe(false);
+    expect("variant" in own).toBe(false);
+    expect("color" in own).toBe(false);
   });
 
   test("maps every neutral action: shell to bash, delegate to task, todo to todowrite, others by name", () => {
@@ -286,11 +292,17 @@ describe("emitV1", () => {
     ];
     expect(JSON.stringify(v1Permission(rules))).toBe(JSON.stringify({ edit: { "*": "deny" } }));
     expect(v1Permission([{ action: "execute", resource: "*", effect: "deny" }])).toEqual({});
+    expect(file(files, "agents/reviewer.md").data.permission).toEqual({
+      edit: { "*": "deny" },
+      bash: { "gh *": "deny", "gh pr view *": "allow" },
+      task: { "*": "deny" },
+    });
   });
 
   test("groups rules per key in order of first appearance, keeping their order within a key", () => {
     const permission = file(files, "agents/scout.md").data.permission as Record<string, unknown>;
     expect(Object.keys(permission)).toEqual(["edit", "bash", "task", "question", "todowrite", "skill"]);
+    expect(Object.keys(permission.edit as object)).toEqual(["*", ".ecmwf-multi-agents/notes/*", "*/.ecmwf-multi-agents/notes/*"]);
     expect(Object.keys(permission.bash as object)).toEqual(["*", "git log *", "ls *"]);
     const interleaved: Rule[] = [
       { action: "edit", resource: "*", effect: "deny" },
@@ -310,8 +322,6 @@ describe("emitV1", () => {
       { action: "shell", resource: "git *", effect: "deny" },
     ];
     expect(JSON.stringify(v1Permission(rules))).toBe(JSON.stringify({ bash: { "git log *": "allow", "git *": "deny" } }));
-    const deep = file(files, "agents/scout-deep.md").data.permission as Record<string, Record<string, string>>;
-    expect(Object.keys(deep.edit!)).toEqual(["*", ".ecmwf-multi-agents/notes/*"]);
   });
 
   test("emitted maps decide every probe exactly as the neutral rule lists do", () => {
@@ -399,7 +409,7 @@ describe("emitV1", () => {
     expect(plan.body).toBe("\nPlan: $ARGUMENTS\n");
     expect(file(files, "commands/review.md").data).toEqual({
       description: "Independent review of your changes",
-      agent: "builder",
+      agent: "reviewer",
       subtask: true,
     });
   });

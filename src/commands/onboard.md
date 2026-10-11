@@ -8,7 +8,7 @@ Focus area (may be empty): $ARGUMENTS
    - Purpose and intent from README, AGENTS.md, CONTRIBUTING and docs; rules for contributors; docs that look stale.
    - Layout, entry points and main flow; the exact build, test and lint commands.
    - Conventions, recent direction from the changelog, open work and recent commits.
-4. With a focus area, send one scout-deep to study it, after any scouts have finished.
+4. With a focus area, send one more scout to study it in depth, after any other scouts have finished (at most three helpers run at once).
 5. After the git exclude check in your instructions, write or update `.ecmwf-multi-agents/context/onboard.md`. First line: `Commit: <hash> (<date>)` from `git log -1 --format='%H (%cs)'`, or `Commit: none` outside git or before the first commit. Then these sections, each short, with `path:line` evidence where useful:
    1. Purpose
    2. Architecture

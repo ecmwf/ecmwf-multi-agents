@@ -24,7 +24,7 @@
     },
     "profile": {
       "title": "Model profile",
-      "description": "Which models the agents use. Default: default. anthropic: Anthropic models only. The reviewer uses the strongest model, since a different family is not available. copilot: GitHub Copilot models only, with the same split as the default profile. default: Anthropic for lead, builders and scouts; GitHub Copilot GPT for the reviewer, so reviews come from a different model family. inherit: Every agent uses the model selected in the session. Helpers still differ by step limit.",
+      "description": "Which models the agents use. Default: default. anthropic: Anthropic models only. The reviewer uses the strongest model, since a different family is not available. copilot: GitHub Copilot models only, with the same split as the default profile. default: Anthropic for lead, scout and builder; GitHub Copilot GPT for the reviewer, so reviews come from a different model family. inherit: Every agent uses the model selected in the session. Helpers still differ by step limit.",
       "type": "string",
       "enum": [
         "anthropic",
@@ -42,7 +42,7 @@
     },
     "agents": {
       "title": "Per-agent settings",
-      "description": "Model, variant and step limit for single agents, applied after the profile.",
+      "description": "Model, reasoning effort and step limit for single agents, applied after the profile.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -58,9 +58,9 @@
               "type": "string",
               "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
             },
-            "variant": {
-              "title": "Variant",
-              "description": "Model variant, usually the reasoning effort, such as \"high\". No \"#\". Leave it out to use the profile's choice.",
+            "effort": {
+              "title": "Reasoning effort",
+              "description": "Reasoning effort for the model of lead. Common values: low, medium, high, xhigh and max; some models also take none. Default: xhigh, from the default profile. It applies only when lead has a model, from the profile or from this entry, so it has no effect under the inherit profile unless this entry also names a model. No \"#\" and no spaces. Leave it out to use the profile's choice.",
               "type": "string",
               "minLength": 1,
               "pattern": "^[^#\\s]+$"
@@ -75,7 +75,7 @@
         },
         "scout": {
           "title": "scout",
-          "description": "Quick read-only lookup in code, docs or the web. Returns a short answer with file:line evidence. Settings here override the profile for scout.",
+          "description": "Read-only lookups and investigations in code, docs or the web. Returns a short answer with file:line evidence; long findings go to a notes file. Settings here override the profile for scout.",
           "type": "object",
           "additionalProperties": false,
           "properties": {
@@ -85,43 +85,16 @@
               "type": "string",
               "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
             },
-            "variant": {
-              "title": "Variant",
-              "description": "Model variant, usually the reasoning effort, such as \"high\". No \"#\". Leave it out to use the profile's choice.",
+            "effort": {
+              "title": "Reasoning effort",
+              "description": "Reasoning effort for the model of scout. Common values: low, medium, high, xhigh and max; some models also take none. Default: medium, from the default profile. It applies only when scout has a model, from the profile or from this entry, so it has no effect under the inherit profile unless this entry also names a model. No \"#\" and no spaces. Leave it out to use the profile's choice.",
               "type": "string",
               "minLength": 1,
               "pattern": "^[^#\\s]+$"
             },
             "steps": {
               "title": "Step limit",
-              "description": "Most model turns scout may take before it stops and reports. A whole number of at least 1. Default: 15.",
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        },
-        "scout-deep": {
-          "title": "scout-deep",
-          "description": "Longer read-only investigation across many files or sources. Writes long findings to a notes file. Settings here override the profile for scout-deep.",
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "model": {
-              "title": "Model",
-              "description": "Model for scout-deep, written as provider/model, for example anthropic/claude-sonnet-5-5. No \"#\" and no spaces. Leave it out to use the profile's choice.",
-              "type": "string",
-              "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
-            },
-            "variant": {
-              "title": "Variant",
-              "description": "Model variant, usually the reasoning effort, such as \"high\". No \"#\". Leave it out to use the profile's choice.",
-              "type": "string",
-              "minLength": 1,
-              "pattern": "^[^#\\s]+$"
-            },
-            "steps": {
-              "title": "Step limit",
-              "description": "Most model turns scout-deep may take before it stops and reports. A whole number of at least 1. Default: 40.",
+              "description": "Most model turns scout may take before it stops and reports. A whole number of at least 1. Default: 30.",
               "type": "integer",
               "minimum": 1
             }
@@ -139,43 +112,16 @@
               "type": "string",
               "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
             },
-            "variant": {
-              "title": "Variant",
-              "description": "Model variant, usually the reasoning effort, such as \"high\". No \"#\". Leave it out to use the profile's choice.",
+            "effort": {
+              "title": "Reasoning effort",
+              "description": "Reasoning effort for the model of builder. Common values: low, medium, high, xhigh and max; some models also take none. Default: high, from the default profile. It applies only when builder has a model, from the profile or from this entry, so it has no effect under the inherit profile unless this entry also names a model. No \"#\" and no spaces. Leave it out to use the profile's choice.",
               "type": "string",
               "minLength": 1,
               "pattern": "^[^#\\s]+$"
             },
             "steps": {
               "title": "Step limit",
-              "description": "Most model turns builder may take before it stops and reports. A whole number of at least 1. Default: 40.",
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        },
-        "builder-deep": {
-          "title": "builder-deep",
-          "description": "Builder for hard changes: subtle logic, numerics, concurrency, several modules, or a task builder could not finish. Settings here override the profile for builder-deep.",
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "model": {
-              "title": "Model",
-              "description": "Model for builder-deep, written as provider/model, for example anthropic/claude-opus-5-5. No \"#\" and no spaces. Leave it out to use the profile's choice.",
-              "type": "string",
-              "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
-            },
-            "variant": {
-              "title": "Variant",
-              "description": "Model variant, usually the reasoning effort, such as \"high\". No \"#\". Leave it out to use the profile's choice.",
-              "type": "string",
-              "minLength": 1,
-              "pattern": "^[^#\\s]+$"
-            },
-            "steps": {
-              "title": "Step limit",
-              "description": "Most model turns builder-deep may take before it stops and reports. A whole number of at least 1. Default: 80.",
+              "description": "Most model turns builder may take before it stops and reports. A whole number of at least 1. Default: 60.",
               "type": "integer",
               "minimum": 1
             }
@@ -193,9 +139,9 @@
               "type": "string",
               "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
             },
-            "variant": {
-              "title": "Variant",
-              "description": "Model variant, usually the reasoning effort, such as \"high\". No \"#\". Leave it out to use the profile's choice.",
+            "effort": {
+              "title": "Reasoning effort",
+              "description": "Reasoning effort for the model of reviewer. Common values: low, medium, high, xhigh and max; some models also take none. Default: medium, from the default profile. It applies only when reviewer has a model, from the profile or from this entry, so it has no effect under the inherit profile unless this entry also names a model. No \"#\" and no spaces. Leave it out to use the profile's choice.",
               "type": "string",
               "minLength": 1,
               "pattern": "^[^#\\s]+$"

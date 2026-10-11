@@ -22,11 +22,13 @@ export const SETTINGS_FILE = "ecmwf-multi-agents.jsonc";
 
 /** `provider/model`, split at the first "/", with no "#" (opencode 2 reads "#" as a variant) and no spaces. */
 export const MODEL_PATTERN = /^[^/#\s]+\/[^#\s]+$/;
-/** A non-empty variant name without "#". */
-export const VARIANT_PATTERN = /^[^#\s]+$/;
+/** A non-empty effort name, such as "high", without "#" or spaces. opencode calls it the model variant. */
+export const EFFORT_PATTERN = /^[^#\s]+$/;
 
 const TOP_KEYS = ["$schema", "review", "profile", "default_agent", "agents"];
-const AGENT_KEYS = ["model", "variant", "steps"];
+const AGENT_KEYS = ["model", "effort", "steps"];
+/** Agent keys that were renamed, to the name they have now. */
+const RENAMED_AGENT_KEYS: Readonly<Record<string, string>> = { variant: "effort" };
 
 /** "a, b or c" */
 export function listWords(words: readonly string[], last = "or"): string {
@@ -133,16 +135,22 @@ function validateAgent(id: string, entry: Record<string, unknown>, problems: str
         if (typeof item === "string" && MODEL_PATTERN.test(item)) out.model = item;
         else problems.push(`${name} must look like provider/model, without "#" or spaces, not ${shown(item)}`);
         break;
-      case "variant":
-        if (typeof item === "string" && VARIANT_PATTERN.test(item)) out.variant = item;
-        else problems.push(`${name} must be a non-empty name without "#", not ${shown(item)}`);
+      case "effort":
+        if (typeof item === "string" && EFFORT_PATTERN.test(item)) out.effort = item;
+        else problems.push(`${name} must be a non-empty name such as "high", without "#" or spaces, not ${shown(item)}`);
         break;
       case "steps":
         if (typeof item === "number" && Number.isInteger(item) && item >= 1) out.steps = item;
         else problems.push(`${name} must be a whole number of at least 1, not ${shown(item)}`);
         break;
-      default:
-        problems.push(`"agents.${id}" has the unknown setting ${shown(key)}; an agent takes ${listWords(AGENT_KEYS)}`);
+      default: {
+        const renamed = has(RENAMED_AGENT_KEYS, key) ? RENAMED_AGENT_KEYS[key] : undefined;
+        problems.push(
+          renamed === undefined
+            ? `"agents.${id}" has the unknown setting ${shown(key)}; an agent takes ${listWords(AGENT_KEYS)}`
+            : `"agents.${id}" has the unknown key ${shown(key)}; it is now called ${shown(renamed)}`,
+        );
+      }
     }
   }
   return out;

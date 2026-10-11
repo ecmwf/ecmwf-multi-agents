@@ -17,7 +17,9 @@ answers land in `docs/research/` and `docs/adr/`.
    `lead` more context or a more expensive model than the hand-off costs.
 3. Every hand-off is an explicit brief. A helper starts with no memory of the conversation; the
    brief is all it knows.
-4. Cheapest suitable agent first; escalate on failure.
+4. Few agents, each with one job. How hard an agent thinks is a setting, its model and effort,
+   not a separate agent. A failed task gets one more try with the gap stated, then goes to the
+   user.
 5. Reads run in parallel freely. Writes run in parallel only on disjoint files.
 6. Memory lives in files. Plans, notes and summaries survive compaction and new sessions.
    Long findings go to a file; only a path and a short summary come back.
@@ -32,34 +34,35 @@ answers land in `docs/research/` and `docs/adr/`.
 | Agent | Mode | Job | Steps |
 |---|---|---|---|
 | `lead` | primary, default | Talk to the user, size the work, plan, brief helpers, verify, commit when asked | no limit |
-| `scout` | subagent | Quick read-only lookup: where is X, what calls Y, what does this doc say | 15 |
-| `scout-deep` | subagent | Investigation across many files or sources, root causes, unfamiliar code | 40 |
-| `builder` | subagent | One clearly specified change to a few files, then its checks | 40 |
-| `builder-deep` | subagent | Subtle logic, numerics, concurrency, changes across modules, or a task `builder` failed | 80 |
+| `scout` | subagent | Read-only lookups and investigations in code, docs and the web, from "where is X" to "why does X happen"; long findings go to a notes file | 30 |
+| `builder` | subagent | One clearly specified change, from a small edit to a hard fix, then its checks; never commits | 60 |
 | `reviewer` | subagent | Independent APPROVE or REJECT on a plan or a change | 30 |
 
-Steps cap the number of model turns a helper may take. They act as a cost limit.
+Steps cap the number of model turns a helper may take. They act as a cost limit. Each agent
+also gets a model and an effort from the active profile (see Profiles), and users can change
+`model`, `effort` and `steps` per agent in the settings file.
 
 ### Permissions
 
 Rules are ordered and the last matching rule wins. opencode places agent rules after the
 user's own rules, so an agent rule overrides the user's policy in both directions. The harness
 therefore adds mostly `deny` rules, and only these deliberate `allow` and `ask` rules: `lead`
-may ask questions and delegate to the five helpers; `lead` asks before publishing or
-destructive git commands; scouts may run a short list of read-only inspection commands;
-`scout-deep` may write its notes folder; the reviewer may read pull requests. One consequence:
-a user who denies `git push` globally gets an approval prompt in `lead` instead.
+may ask questions and delegate to the three helpers; `lead` asks before publishing or
+destructive git commands; `scout` may run a short list of read-only inspection commands and
+write its notes folder; the reviewer may read pull requests. One consequence: a user who
+denies `git push` globally gets an approval prompt in `lead` instead.
 
-| Capability | lead | scout | scout-deep | builder, builder-deep | reviewer |
-|---|---|---|---|---|---|
-| Read, search | user policy | user policy | user policy | user policy | user policy |
-| Edit files | user policy | deny | only `.ecmwf-multi-agents/notes/` | user policy | deny |
-| Shell | user policy, with approval for push, PR, merge and history rewrites | read-only commands only | read-only commands only | user policy, git and `gh` writes denied | user policy, git and `gh` writes denied |
-| Web fetch and search | user policy | user policy | user policy | user policy | user policy |
-| Delegate | the five helpers only | deny | deny | deny | deny |
-| Ask the user | allow | deny | deny | deny | deny |
-| Todo list (opencode 1.x) | user policy | deny | deny | platform default (denied) | deny |
-| Code Mode (opencode 2) | user policy | deny | deny | user policy | deny |
+| Capability | lead | scout | builder | reviewer |
+|---|---|---|---|---|
+| Read, search | user policy | user policy | user policy | user policy |
+| Edit files | user policy | only `.ecmwf-multi-agents/notes/` | user policy | deny |
+| Shell | user policy, with approval for push, PR, merge and history rewrites | read-only commands only | user policy, git and `gh` writes denied | user policy, git and `gh` writes denied |
+| Web fetch and search | user policy | user policy | user policy | user policy |
+| Delegate | the three helpers only | deny | deny | deny |
+| Ask the user | allow | deny | deny | deny |
+| Harness skills (`ecmwf-multi-agents-*`) | user policy | deny | deny | deny |
+| Todo list (opencode 1.x) | user policy | deny | platform default (denied) | deny |
+| Code Mode (opencode 2) | user policy | deny | user policy | deny |
 
 opencode 1.x denies the todo list to every subagent by default, and opencode 2 has none.
 Code Mode is the opencode 2 `execute` tool through which MCP tools and a few others are
@@ -73,7 +76,7 @@ index, branches, remotes or the working tree, in all its forms: `git branch` is 
 for listing, so helpers use `git rev-parse` and `git show` instead, and `git -C` is denied
 whole. They are also denied all `gh` commands except reading pull requests (reviewer only).
 
-Read-only commands for scouts: `git log`, `git show`, `git diff`, `git blame`, `git status`,
+Read-only commands for `scout`: `git log`, `git show`, `git diff`, `git blame`, `git status`,
 `git grep`, `git ls-files`, `git rev-parse`, `ls`, `wc`, `file`, `tree`.
 
 Permissions are a guard rail, not a sandbox. Shell patterns match command text, so wrappers
@@ -101,17 +104,20 @@ can bypass them. The prompts state the same rules. Two platform caveats:
 
 Choosing a helper:
 
-- `scout`: about ten tool calls or fewer; a precise question.
-- `scout-deep`: unfamiliar code, several sources to combine, "why does X happen".
-- `builder`: a well-specified change; files and checks known.
-- `builder-deep`: subtle logic, numerics, concurrency, cross-module change, or `builder` failed.
+- `scout`: any read-only question, from a precise lookup (where is X, what calls Y) to an
+  investigation of unfamiliar code or several sources (why does X happen).
+- `builder`: any change whose files and checks are known, from a small edit to a hard fix.
+- `reviewer`: a verdict on a plan or a change, as the review policy says.
 
-Escalation on a failed or partial task: `builder` again with the gap stated exactly, then
-`builder-deep`, then ask the user. Each retry's CONTEXT says what the earlier attempt changed
-and why it fell short; the next builder may build on or replace that attempt. A check that
-already failed before the change is not a failed task: `lead` tells the user instead of
-escalating. Scouts cannot run code; when an answer needs code run, `lead` runs it or briefs a
-builder to run it without changing anything.
+Escalation on a failed or partial task: `builder` again with the gap stated exactly, then the
+user. The retry's CONTEXT says what the earlier attempt changed and why it fell short; the
+builder may build on or replace that attempt. When the second attempt fails too, `lead` stops
+and takes the task to the user with what was tried. The user may raise the builder's effort
+in the settings file, or ask `lead` to take the task over. A scout that cannot answer is
+briefed again with what it missed and a wider scope; if that fails too, `lead` asks the user.
+A check that already failed before the change is not a failed task: `lead` tells the user
+instead of retrying. Scouts cannot run code; when an answer needs code run, `lead` runs it or
+briefs a builder to run it without changing anything.
 
 Parallelism: at most three helpers at once. Scouts in parallel whenever their questions are
 independent. Builders in parallel only when their file sets do not overlap.
@@ -133,16 +139,20 @@ LIMITS: what not to touch; when to stop and report instead.
 
 Helpers reply in a fixed format so `lead` can act without re-reading their work.
 
-Scouts:
+Scout:
 
 ```text
 ANSWER: the direct answer, at most five lines.
 EVIDENCE: up to eight items, each `path:line` or URL, with what it shows.
-NOTES: path to a notes file, if one was written (scout-deep only).
+NOTES: path to a notes file, if one was written.
 NOT CHECKED: what was out of reach or skipped.
 ```
 
-Builders:
+When findings do not fit this format, the scout writes them to
+`.ecmwf-multi-agents/notes/<slug>.md`, starting with the question and the commit it looked at,
+keeps ANSWER short and gives the path under NOTES.
+
+Builder:
 
 ```text
 STATUS: DONE, PARTIAL or BLOCKED.
@@ -185,10 +195,12 @@ and waits; it acts on a REJECT or a plan's state only when the user asks.
 `/go` carries out an approved plan:
 
 1. Read the plan file; start with the first open task whose dependencies are done.
-2. Brief the task's agent with the task's files, criteria and checks.
+2. Brief the task's agent (`builder` or `scout`) with the task's files, criteria and checks.
 3. Check the report against the criteria; re-run cheap checks.
-4. Tick the task and add a line to the plan's log.
-5. Repeat until all tasks are done, a task is blocked, or three reports in a row fail.
+4. On success, tick the task and add a line to the plan's log. On failure, log it and brief
+   the same agent again with the gap stated exactly.
+5. Repeat until all tasks are done, a task is blocked or fails twice, or three reports in a
+   row fail.
 6. Run the plan's final verification, then one review of the whole change if the policy
    calls for it. Tasks get no review of their own.
 
@@ -218,7 +230,7 @@ All harness files in a project live under `.ecmwf-multi-agents/` at the top of t
 |---|---|
 | `plans/<slug>.md` | Plans with task checklists and a log |
 | `context/onboard.md` | Onboarding summary, stamped with the commit it describes |
-| `notes/<slug>.md` | Long findings from `scout-deep` |
+| `notes/<slug>.md` | Long findings from `scout` |
 
 Before writing the first file, `lead` makes sure `.ecmwf-multi-agents/` is listed in the file
 that `git rev-parse --git-path info/exclude` names. The folder then never shows up in
@@ -228,8 +240,9 @@ by exact path.
 ## Onboarding summary
 
 `/onboard` sends three scouts in parallel (docs and intent; layout and the build, test and
-lint commands; conventions and current direction) and, with a focus argument, one
-`scout-deep` on that area. `lead` writes `context/onboard.md`:
+lint commands; conventions and current direction). With a focus argument, one more scout
+studies that area in depth after the others have finished, to keep within three helpers at
+once. `lead` writes `context/onboard.md`:
 
 1. Purpose
 2. Architecture
@@ -241,9 +254,8 @@ lint commands; conventions and current direction) and, with a focus argument, on
 
 The summary starts with `Commit: <hash> (<date>)`, or `Commit: none` outside git or before
 the first commit. While the hash matches `HEAD` (or both have none), later sessions reuse it
-instead of surveying again. A focus argument on a current summary sends only the
-`scout-deep`, after any scouts, to keep within three helpers at once, and its findings are
-added to the existing sections.
+instead of surveying again. A focus argument on a current summary sends only the focus scout,
+and its findings are added to the existing sections.
 
 ## Settings
 
@@ -263,10 +275,16 @@ Changes take effect when opencode restarts.
   "profile": "default",       // a profile name from src/profiles/
   "default_agent": true,      // make lead the default agent
   "agents": {                 // per-agent overrides, applied after the profile
-    "reviewer": { "model": "openai/gpt-6.1-sol", "variant": "high", "steps": 40 }
+    "builder": { "effort": "xhigh" },
+    "reviewer": { "model": "openai/gpt-6.1-sol", "effort": "high", "steps": 40 }
   }
 }
 ```
+
+An `agents` entry may set `model` (`provider/model`), `effort` and `steps`. An override
+`model` replaces the profile's model and effort together, so the agent runs at the effort the
+entry names, or at the model's own default when it names none. An override `effort` alone
+applies to the profile's model. `steps` replaces the agent's step limit.
 
 The generator writes a JSON Schema for this file; the plugin validates with the same patterns.
 A file with unknown keys or invalid values is ignored as a whole and reported: on opencode 1.x
@@ -277,14 +295,35 @@ all agents.
 
 ## Profiles
 
-A profile maps each agent to a model and an optional variant (reasoning effort). Agents left
-out of a profile use the session model. The generator bakes the `default` profile into the
-agent files, so a fresh install works without the plugin. The plugin applies the chosen
-profile and the per-agent overrides at startup: in opencode 1.x through the `config` hook,
-which sees the Markdown agents; in opencode 2 through an agent transform registered after the
-plugin is active, because transforms registered during setup run before agent files load. The
-plugin registers that transform again on every `plugin.updated` event (with a timer as a
-fallback for a missed first event), so it stays last after reloads.
+A profile gives every agent a model and an effort, except `inherit`, which gives none, so
+every agent uses the model chosen in the session. Effort is how hard the model thinks before
+it answers: `low`, `medium`, `high`, `xhigh` or `max`, and on some models `none`. More effort
+is slower and costs more. opencode calls it the model's variant, and the generator and the
+plugin write it under that name.
+
+| Profile | `lead` | `scout` | `builder` | `reviewer` |
+|---|---|---|---|---|
+| `default` | Claude Opus 5.5, xhigh | Claude Sonnet 5.5, medium | Claude Sonnet 5.5, high | GPT 6.1 Sol through GitHub Copilot, medium |
+| `anthropic` | Claude Opus 5.5, xhigh | Claude Sonnet 5.5, medium | Claude Sonnet 5.5, high | Claude Opus 5.5, high |
+| `copilot` | Claude Opus 5.5, xhigh | Claude Sonnet 5.5, medium | Claude Sonnet 5.5, high | GPT 6.1 Sol, medium |
+| `inherit` | session model | session model | session model | session model |
+
+`lead` runs on the strongest model with the most effort, `scout` and `builder` on cheaper
+ones. The reviewer runs on a different model family, to catch mistakes the others share,
+except in `anthropic`, which has no other family and gives it the strongest model instead.
+`copilot` reaches every model through GitHub Copilot.
+
+Per-agent overrides from the settings file apply after the profile. An effort applies only
+while the agent has a model, from the profile or from the same settings entry, so under
+`inherit` an effort alone has no effect; the plugin reports it and leaves it out.
+
+The generator bakes the `default` profile into the agent files, so a fresh install works
+without the plugin. The plugin applies the chosen profile and the per-agent overrides at
+startup: in opencode 1.x through the `config` hook, which sees the Markdown agents; in
+opencode 2 through an agent transform registered after the plugin is active, because
+transforms registered during setup run before agent files load. The plugin registers that
+transform again on every `plugin.updated` event (with a timer as a fallback for a missed first
+event), so it stays last after reloads.
 
 The plugin also makes `lead` the default agent unless `default_agent` is false in the settings.
 Without the plugin, opencode starts on its own `build` agent and the user switches with Tab.
@@ -292,8 +331,9 @@ Without the plugin, opencode starts on its own `build` agent and the user switch
 ## Source and output
 
 ```text
+VERSION                   the harness version
 src/manifest.jsonc        agents, permissions, commands, skills, budgets
-src/agents/*.md           prompt bodies; deep tiers add an addendum to the base prompt
+src/agents/*.md           agent prompt bodies
 src/commands/*.md         command templates
 src/skills/<id>/SKILL.md  skill bodies
 src/profiles/*.jsonc      model profiles
@@ -302,6 +342,9 @@ dist/opencode-v1/         output for opencode 1.x
 dist/opencode-v2/         output for opencode 2.0.16
 plugin/                   runtime plugin sources
 ```
+
+The harness version comes from the root `VERSION` file: one line, `x.y.z`, without a `v`. The
+generator reads it from there.
 
 Source Markdown carries no frontmatter: the generator writes frontmatter from the manifest in
 each platform's format. Prompts are platform neutral; they never name tools by their
@@ -326,7 +369,7 @@ Prompt budgets, checked by the generator at about four characters per token:
 | Kind | Budget |
 |---|---|
 | `lead` prompt | 1,800 tokens |
-| Helper prompt (base plus addendum) | 700 tokens |
+| Helper prompt | 700 tokens |
 | Command template | 500 tokens |
 | Skill | 1,200 tokens |
 

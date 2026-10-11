@@ -12,13 +12,13 @@ SPDX-License-Identifier = "Apache-2.0"
 [[annotations]]
 path = [
     "src/agents/**",
-    "src/fragments/**",
     "src/commands/**",
     "src/skills/**",
     "dist/**",
     "**/*.json",
     "bun.lock",
     "CLAUDE.md",
+    "VERSION",
 ]
 precedence = "closest"
 SPDX-FileCopyrightText = "2026 European Centre for Medium-Range Weather Forecasts (ECMWF)"

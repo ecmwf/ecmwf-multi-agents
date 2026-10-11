@@ -3,11 +3,9 @@
 {
   "description": "Anthropic models only. The reviewer uses the strongest model, since a different family is not available.",
   "agents": {
-    "lead": { "model": "anthropic/claude-opus-5-5", "variant": "xhigh" },
-    "scout": { "model": "anthropic/claude-sonnet-5-5", "variant": "medium" },
-    "scout-deep": { "model": "anthropic/claude-sonnet-5-5", "variant": "high" },
-    "builder": { "model": "anthropic/claude-sonnet-5-5", "variant": "high" },
-    "builder-deep": { "model": "anthropic/claude-opus-5-5", "variant": "high" },
-    "reviewer": { "model": "anthropic/claude-opus-5-5", "variant": "high" }
+    "lead": { "model": "anthropic/claude-opus-5-5", "effort": "xhigh" },
+    "scout": { "model": "anthropic/claude-sonnet-5-5", "effort": "medium" },
+    "builder": { "model": "anthropic/claude-sonnet-5-5", "effort": "high" },
+    "reviewer": { "model": "anthropic/claude-opus-5-5", "effort": "high" }
   }
 }

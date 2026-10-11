@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
 // SPDX-License-Identifier: Apache-2.0
 
-// Turns a validated Source into a ResolvedHarness: derived agents merged with their base, rule
-// sets expanded, prompt files joined, the default profile baked in. Also holds the checks that
-// run on the resolved text: prompt budgets and the review policy line of the default agent.
+// Turns a validated Source into a ResolvedHarness: rule sets expanded, prompt files joined, the
+// default profile baked in, with each profile effort written as opencode's model variant. Also
+// holds the checks that run on the resolved text: prompt budgets and the review policy line of
+// the default agent.
 
 import { REVIEW_POLICIES } from "../plugin/types.ts";
 import { MANIFEST_FILE, type PermissionEntry, type RuleSetItem, type Source, type SourceAgent } from "./load.ts";
@@ -54,25 +55,6 @@ export function expandPermissions(
   return out;
 }
 
-function baseOf(source: Source, agent: SourceAgent): SourceAgent | undefined {
-  if (agent.base === undefined) return undefined;
-  const base = source.manifest.agents.find((other) => other.id === agent.base);
-  if (base === undefined) throw new GeneratorError(`${MANIFEST_FILE}: agents.${agent.id}.base: names no agent`);
-  return base;
-}
-
-/** The prompt files of an agent, relative to src/: its base's files, then its own. */
-export function promptFiles(source: Source, agent: SourceAgent): string[] {
-  return [...(baseOf(source, agent)?.prompt ?? []), ...agent.prompt];
-}
-
-/** The name of the budget that applies to an agent: its own, or its base's. */
-export function agentBudget(source: Source, agent: SourceAgent): string {
-  const budget = agent.budget ?? baseOf(source, agent)?.budget;
-  if (budget === undefined) throw new GeneratorError(`${MANIFEST_FILE}: agents.${agent.id}.budget: required key is missing`);
-  return budget;
-}
-
 /** A source Markdown file with LF line endings, trimmed. */
 function sourceText(source: Source, file: string): string {
   const text = source.markdown.get(file);
@@ -88,7 +70,7 @@ function orderedProfile(profile: Profile, agents: readonly SourceAgent[]): Profi
     if (choice === undefined) continue;
     const entry: ProfileAgent = {};
     if (choice.model !== undefined) entry.model = choice.model;
-    if (choice.variant !== undefined) entry.variant = choice.variant;
+    if (choice.effort !== undefined) entry.effort = choice.effort;
     out[agent.id] = entry;
   }
   return { id: profile.id, description: profile.description, agents: out };
@@ -101,27 +83,19 @@ export function resolveHarness(source: Source): ResolvedHarness {
   if (profile === undefined) throw new GeneratorError(`${MANIFEST_FILE}: defaultProfile: names no profile`);
 
   const agents = manifest.agents.map((agent): ResolvedAgent => {
-    const base = baseOf(source, agent);
-    const mode = agent.mode ?? base?.mode;
-    if (mode === undefined) throw new GeneratorError(`${MANIFEST_FILE}: agents.${agent.id}.mode: required key is missing`);
     const resolved: ResolvedAgent = {
       id: agent.id,
-      mode,
+      mode: agent.mode,
       description: agent.description,
-      prompt: promptFiles(source, agent)
-        .map((file) => sourceText(source, file))
-        .join("\n\n"),
-      permissions: [
-        ...(base === undefined ? [] : expandPermissions(base.permissions, manifest.ruleSets)),
-        ...expandPermissions(agent.permissions, manifest.ruleSets),
-      ],
+      prompt: agent.prompt.map((file) => sourceText(source, file)).join("\n\n"),
+      permissions: expandPermissions(agent.permissions, manifest.ruleSets),
     };
     if (agent.steps !== undefined) resolved.steps = agent.steps;
-    const color = agent.color ?? base?.color;
-    if (color !== undefined) resolved.color = color;
+    if (agent.color !== undefined) resolved.color = agent.color;
     const choice = own(profile.agents, agent.id);
     if (choice?.model !== undefined) resolved.model = choice.model;
-    if (choice?.variant !== undefined) resolved.variant = choice.variant;
+    // opencode calls the reasoning effort the model variant.
+    if (choice?.effort !== undefined) resolved.variant = choice.effort;
     return resolved;
   });
 
@@ -145,7 +119,7 @@ export function resolveHarness(source: Source): ResolvedHarness {
 
   return {
     name: manifest.name,
-    version: manifest.version,
+    version: source.version,
     defaultAgent: manifest.defaultAgent,
     defaultProfile: manifest.defaultProfile,
     workDir: manifest.workDir,
@@ -163,7 +137,7 @@ export function resolveHarness(source: Source): ResolvedHarness {
 export interface SizeRow {
   kind: "agent" | "command" | "skill";
   id: string;
-  /** Manifest key path of the measured text, such as `agents.scout-deep.prompt`. */
+  /** Manifest key path of the measured text, such as `agents.scout.prompt`. */
   key: string;
   /** Source files of the text, relative to the repository root. */
   files: string[];
@@ -198,7 +172,7 @@ export function sizeTable(source: Source, harness: ResolvedHarness): SizeRow[] {
     const resolved = harness.agents.find((candidate) => candidate.id === agent.id);
     if (resolved === undefined) throw new GeneratorError(`agent ${agent.id} was not resolved`);
     const key = formatKeyPath(["agents", agent.id, "prompt"]);
-    rows.push(row("agent", agent.id, key, promptFiles(source, agent), resolved.prompt, agentBudget(source, agent)));
+    rows.push(row("agent", agent.id, key, agent.prompt, resolved.prompt, agent.budget));
   }
   for (const command of manifest.commands) {
     const resolved = harness.commands.find((candidate) => candidate.id === command.id);
@@ -246,7 +220,7 @@ export function reviewPolicyProblems(source: Source, harness: ResolvedHarness): 
   const agent = harness.agents.find((candidate) => candidate.id === id);
   const sourceAgent = source.manifest.agents.find((candidate) => candidate.id === id);
   if (agent === undefined || sourceAgent === undefined) return [`${MANIFEST_FILE}: defaultAgent: names no agent`];
-  const files = promptFiles(source, sourceAgent).map((file) => `src/${file}`);
+  const files = sourceAgent.prompt.map((file) => `src/${file}`);
   const where = `${files.join(", ")}: ${formatKeyPath(["agents", id, "prompt"])}`;
   const expected = `"${REVIEW_PREFIX}${DEFAULT_REVIEW_POLICY}"`;
   const lines = agent.prompt.split("\n");

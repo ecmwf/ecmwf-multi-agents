@@ -1,8 +1,6 @@
-agents/builder-deep.md
 agents/builder.md
 agents/lead.md
 agents/reviewer.md
-agents/scout-deep.md
 agents/scout.md
 commands/go.md
 commands/guide.md

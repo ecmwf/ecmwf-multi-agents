@@ -41,15 +41,16 @@ export interface ResolvedAgent {
   id: string;
   mode: AgentMode;
   description: string;
-  /** Final prompt body: base files then the agent's own files, joined by a blank line. */
+  /** Final prompt body: the agent's prompt files in order, joined by a blank line. */
   prompt: string;
   /** Maximum model turns; undefined means no limit. */
   steps?: number;
   color?: string;
-  /** Expanded, ordered rules (rule sets resolved; base agent rules first). */
+  /** Expanded, ordered rules (rule sets resolved). */
   permissions: Rule[];
   /** From the default profile; undefined means the session model. */
   model?: string;
+  /** opencode's model variant: the profile's effort for this agent. Only set with a model. */
   variant?: string;
 }
 
@@ -72,7 +73,8 @@ export interface ResolvedSkill {
 
 export interface ProfileAgent {
   model?: string;
-  variant?: string;
+  /** Reasoning effort, written to opencode as the model variant. Only set with a model. */
+  effort?: string;
 }
 
 export interface Profile {

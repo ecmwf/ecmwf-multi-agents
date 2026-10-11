@@ -133,8 +133,22 @@ describe("commandParts", () => {
 });
 
 describe("checkShellCommand", () => {
-  test("builders and the reviewer may not change git state or use gh; reads are fine", () => {
-    for (const agent of ["builder", "builder-deep", "reviewer"]) {
+  test("the helpers it checks are the embedded harness's subagents", () => {
+    const helpers = harness.agents.filter((agent) => agent.mode === "subagent").map((agent) => agent.id);
+    expect(helpers).toEqual(["scout", "builder", "reviewer"]);
+    for (const agent of helpers) expect(blocked(agent, "git push")).toBe("git push");
+    expect(blocked("lead", "git push")).toBeUndefined();
+
+    // A subagent added to the harness is checked with its own rules, without code changes.
+    const extended = embeddedFixture();
+    extended.agents.push({ id: "tester", mode: "subagent", shell: [{ resource: "git push *", effect: "deny" }] });
+    expect(checkShellCommand(extended, "tester", "git push origin main", "linux")?.part).toBe("git push origin main");
+    expect(checkShellCommand(extended, "tester", "git status", "linux")).toBeUndefined();
+    expect(blocked("tester", "git push origin main")).toBeUndefined();
+  });
+
+  test("the builder and the reviewer may not change git state or use gh; reads are fine", () => {
+    for (const agent of ["builder", "reviewer"]) {
       expect(blocked(agent, "git push")).toBe("git push");
       expect(blocked(agent, "git push --force origin main")).toBe("git push --force origin main");
       expect(blocked(agent, "git commit -am wip")).toBe("git commit -am wip");
@@ -180,7 +194,7 @@ describe("checkShellCommand", () => {
     expect(blocked("scout", "for f in a b; do wc -l $f; done")).toBeUndefined();
     expect(blocked("scout", "git log | head -3")).toBe("head -3");
     expect(blocked("scout", "rm -rf build")).toBe("rm -rf build");
-    expect(blocked("scout-deep", "git push")).toBe("git push");
+    expect(blocked("scout", "git push")).toBe("git push");
     expect(blocked("scout", "FOO=1 ls")).toBe("FOO=1 ls");
   });
 

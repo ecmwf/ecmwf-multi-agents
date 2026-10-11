@@ -3,14 +3,15 @@
 
 // JSON Schema (draft 2020-12) for the settings file ecmwf-multi-agents.jsonc, described in
 // docs/architecture.md, "Settings". It is generated from the resolved harness, so profile and
-// agent names stay current, and it shares the model and variant patterns with the plugin's own
-// settings check (plugin/settings.ts), so an editor and the plugin accept the same files.
+// agent names and the default models and efforts stay current, and it shares the model and
+// effort patterns with the plugin's own settings check (plugin/settings.ts), so an editor and
+// the plugin accept the same files.
 
-import { MODEL_PATTERN, SETTINGS_FILE, VARIANT_PATTERN } from "../plugin/settings.ts";
+import { EFFORT_PATTERN, MODEL_PATTERN, SETTINGS_FILE } from "../plugin/settings.ts";
 import { REVIEW_POLICIES } from "../plugin/types.ts";
 import { DEFAULT_REVIEW_POLICY } from "./resolve.ts";
 import type { ResolvedAgent, ResolvedHarness } from "./types.ts";
-import { own } from "./util.ts";
+import { listWords, own } from "./util.ts";
 
 export const SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema";
 
@@ -23,6 +24,32 @@ const REVIEW_HELP: Readonly<Record<(typeof REVIEW_POLICIES)[number], string>> = 
   always: "every plan and every change is reviewed",
   never: "nothing is reviewed unless you ask with /review",
 };
+
+/**
+ * Plain-language help for an agent's effort setting: common values, the default from the default
+ * profile, and the profiles under which it does nothing because they give the agent no model.
+ */
+function effortHelp(agent: ResolvedAgent, harness: ResolvedHarness): string {
+  const sentences = [
+    `Reasoning effort for the model of ${agent.id}.`,
+    "Common values: low, medium, high, xhigh and max; some models also take none.",
+  ];
+  const profile = harness.profiles.find((candidate) => candidate.id === harness.defaultProfile);
+  const choice = profile === undefined ? undefined : own(profile.agents, agent.id);
+  if (choice?.effort !== undefined) sentences.push(`Default: ${choice.effort}, from the ${harness.defaultProfile} profile.`);
+  else if (choice?.model !== undefined) sentences.push(`The ${harness.defaultProfile} profile sets none, so the model's own default applies.`);
+  const modelless = harness.profiles
+    .filter((candidate) => own(candidate.agents, agent.id)?.model === undefined)
+    .map((candidate) => candidate.id);
+  const applies = `It applies only when ${agent.id} has a model, from the profile or from this entry`;
+  if (modelless.length === 0) sentences.push(`${applies}.`);
+  else {
+    const profiles = `${listWords(modelless)} profile${modelless.length === 1 ? "" : "s"}`;
+    sentences.push(`${applies}, so it has no effect under the ${profiles} unless this entry also names a model.`);
+  }
+  sentences.push('No "#" and no spaces. Leave it out to use the profile\'s choice.');
+  return sentences.join(" ");
+}
 
 function agentSchema(agent: ResolvedAgent, harness: ResolvedHarness): JsonSchema {
   const profile = harness.profiles.find((candidate) => candidate.id === harness.defaultProfile);
@@ -43,12 +70,12 @@ function agentSchema(agent: ResolvedAgent, harness: ResolvedHarness): JsonSchema
         type: "string",
         pattern: MODEL_PATTERN.source,
       },
-      variant: {
-        title: "Variant",
-        description: 'Model variant, usually the reasoning effort, such as "high". No "#". Leave it out to use the profile\'s choice.',
+      effort: {
+        title: "Reasoning effort",
+        description: effortHelp(agent, harness),
         type: "string",
         minLength: 1,
-        pattern: VARIANT_PATTERN.source,
+        pattern: EFFORT_PATTERN.source,
       },
       steps: {
         title: "Step limit",
@@ -108,7 +135,7 @@ export function settingsSchema(harness: ResolvedHarness): JsonSchema {
       },
       agents: {
         title: "Per-agent settings",
-        description: "Model, variant and step limit for single agents, applied after the profile.",
+        description: "Model, reasoning effort and step limit for single agents, applied after the profile.",
         type: "object",
         additionalProperties: false,
         properties: agents,

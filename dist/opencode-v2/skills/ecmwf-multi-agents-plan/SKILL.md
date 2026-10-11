@@ -58,7 +58,7 @@ Parallel: T1 and T2.
 - 2026-10-11: Plan written. Reviewer: APPROVE.
 ```
 
-Status is one of draft, approved, in progress, done, stopped. Context holds decisions, constraints, findings with `path:line` and assumptions. Agent is builder, builder-deep, scout or scout-deep. Files are the paths the task may change (for scouts, the paths to read). Parallel lists tasks that share no files and do not depend on each other.
+Status is one of draft, approved, in progress, done, stopped. Context holds decisions, constraints, findings with `path:line` and assumptions. Agent is builder or scout. Files are the paths the task may change (for scouts, the paths to read). Parallel lists tasks that share no files and do not depend on each other.
 
 ## Carrying out a plan
 
@@ -66,8 +66,8 @@ Status is one of draft, approved, in progress, done, stopped. Context holds deci
 2. Take the open tasks whose dependencies are ticked. Start parallel ones together, at most three helpers.
 3. Brief each task's agent from the task's own lines plus the plan's context and goal. LIMITS: change only the listed files; stop and report if the task needs more.
 4. Check the report against each DONE WHEN item and re-run cheap checks yourself.
-5. On success, tick the task and add a dated log line; put a scout task's findings in the context. On failure, log it and go one step up from the task's agent: builder again with the gap stated exactly, then builder-deep, then the user. For a scout task: scout-deep, then the user.
-6. Stop when all tasks are done, when a task is blocked or still fails after builder-deep, or after three failed reports in a row.
+5. On success, tick the task and add a dated log line; put a scout task's findings in the context. On failure, log it and brief the same agent again with the gap stated exactly; for a builder, also say what the earlier attempt changed. If it fails again, stop and take it to the user.
+6. Stop when all tasks are done, when a task is blocked or fails twice, or after three failed reports in a row.
 7. When all tasks are done, run the final verification (if it fails, add a fix task and carry it out as above), then one review of the whole change, as the policy calls for; tasks get no review of their own.
 8. Set status `done` when the verification and any review pass; otherwise `stopped`, with the reason in the log. Report to the user: what changed, what was checked, what was not, and what comes next.
 

@@ -3,44 +3,47 @@
 
 // What the settings mean for each agent, and how that lands in each platform's agent shape:
 // opencode 1.x config agents (`model` string plus `variant`, `steps`, `prompt`) and opencode
-// 2.0.16 agent info (`model` as {id, providerID, variant}, `steps`, `system`). Every function
-// works out all changes before making any, so an unexpected shape changes nothing.
+// 2.0.16 agent info (`model` as {id, providerID, variant}, `steps`, `system`). The settings and
+// profiles call the reasoning effort `effort`; opencode calls it the model variant, so the
+// effort is written as `variant`. Every function works out all changes before making any, so an
+// unexpected shape changes nothing.
 
 import type { EmbeddedHarness, Problem, ReviewPolicy, Settings, V1Config, V2AgentEditor, V2ModelRef } from "./types.ts";
 
-/** The model, variant and step limit one agent ends up with. */
+/** The model, reasoning effort and step limit one agent ends up with. */
 export interface AgentPlan {
   id: string;
-  /** undefined: no model of its own, so the agent uses the session model (and no variant). */
+  /** undefined: no model of its own, so the agent uses the session model (and no effort). */
   model?: string;
-  variant?: string;
+  /** Written to opencode as the model variant. */
+  effort?: string;
   /** undefined: keep the agent's own step limit. */
   steps?: number;
 }
 
 /**
- * The chosen profile, then the per-agent overrides. Model and variant go together: an override
- * model replaces the profile's model and variant; an override variant alone applies to the
+ * The chosen profile, then the per-agent overrides. Model and effort go together: an override
+ * model replaces the profile's model and effort; an override effort alone applies to the
  * profile's model, and is reported and ignored when there is no model at all.
  */
 export function planAgents(harness: EmbeddedHarness, settings: Settings): { plans: AgentPlan[]; problems: Problem[] } {
   const profile = harness.profiles.find((item) => item.id === settings.profile);
   const problems: Problem[] = [];
   const plans = harness.agents.map((agent): AgentPlan => {
-    const base = profile?.agents[agent.id];
+    const fromProfile = profile?.agents[agent.id];
     const override = settings.agents[agent.id] ?? {};
     const plan: AgentPlan = { id: agent.id };
     if (override.model !== undefined) {
       plan.model = override.model;
-      if (override.variant !== undefined) plan.variant = override.variant;
-    } else if (base?.model !== undefined) {
-      plan.model = base.model;
-      const variant = override.variant ?? base.variant;
-      if (variant !== undefined) plan.variant = variant;
-    } else if (override.variant !== undefined) {
+      if (override.effort !== undefined) plan.effort = override.effort;
+    } else if (fromProfile?.model !== undefined) {
+      plan.model = fromProfile.model;
+      const effort = override.effort ?? fromProfile.effort;
+      if (effort !== undefined) plan.effort = effort;
+    } else if (override.effort !== undefined) {
       problems.push({
         message:
-          `${harness.name}: the variant ${JSON.stringify(override.variant)} for ${agent.id} was ignored: ` +
+          `${harness.name}: the effort ${JSON.stringify(override.effort)} for ${agent.id} was ignored: ` +
           `profile ${JSON.stringify(settings.profile)} gives ${agent.id} no model and the settings name none, ` +
           `so it uses the session model`,
         notify: true,
@@ -77,8 +80,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /**
  * Apply plans, the review policy and the default agent to the opencode 1.x config seen by the
- * `config` hook. Agents keep `model` as "provider/model" and `variant` beside it; deleting both
- * makes the agent use the session model. Returns problems to report.
+ * `config` hook. Agents keep `model` as "provider/model" and the effort as `variant` beside it;
+ * deleting both makes the agent use the session model. Returns problems to report.
  */
 export function applyToV1Config(config: V1Config, harness: EmbeddedHarness, settings: Settings, plans: readonly AgentPlan[]): Problem[] {
   const problems: Problem[] = [];
@@ -94,8 +97,8 @@ export function applyToV1Config(config: V1Config, harness: EmbeddedHarness, sett
         delete agent.variant;
       } else {
         agent.model = plan.model;
-        if (plan.variant === undefined) delete agent.variant;
-        else agent.variant = plan.variant;
+        if (plan.effort === undefined) delete agent.variant;
+        else agent.variant = plan.effort;
       }
       if (plan.steps !== undefined) agent.steps = plan.steps;
     });
@@ -122,17 +125,18 @@ export function applyToV1Config(config: V1Config, harness: EmbeddedHarness, sett
   return problems;
 }
 
-function modelRef(model: string, variant: string | undefined): V2ModelRef {
+function modelRef(model: string, effort: string | undefined): V2ModelRef {
   // Split at the first "/", as opencode does (Model.Ref.parse in @opencode/schema 2.0.16).
   const slash = model.indexOf("/");
   const ref: V2ModelRef = { id: model.slice(slash + 1), providerID: model.slice(0, slash) };
-  if (variant !== undefined) ref.variant = variant;
+  if (effort !== undefined) ref.variant = effort;
   return ref;
 }
 
 /**
- * Apply plans and the review policy through an opencode 2.0.16 agent editor. Only agents that
- * already exist are touched: `update` would create a missing one. Returns problems to report.
+ * Apply plans and the review policy through an opencode 2.0.16 agent editor. The effort goes to
+ * `model.variant`. Only agents that already exist are touched: `update` would create a missing
+ * one. Returns problems to report.
  */
 export function applyToV2Agents(editor: V2AgentEditor, harness: EmbeddedHarness, settings: Settings, plans: readonly AgentPlan[]): Problem[] {
   const problems: Problem[] = [];
@@ -140,7 +144,7 @@ export function applyToV2Agents(editor: V2AgentEditor, harness: EmbeddedHarness,
 
   for (const plan of plans) {
     if (editor.get(plan.id) === undefined) continue;
-    const model = plan.model === undefined ? undefined : modelRef(plan.model, plan.variant);
+    const model = plan.model === undefined ? undefined : modelRef(plan.model, plan.effort);
     changes.push(() =>
       editor.update(plan.id, (agent) => {
         if (model === undefined) delete agent.model;

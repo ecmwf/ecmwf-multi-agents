@@ -4,27 +4,19 @@
   "agents": {
     "lead": {
       "model": "anthropic/claude-opus-5-5",
-      "variant": "xhigh"
+      "effort": "xhigh"
     },
     "scout": {
       "model": "anthropic/claude-sonnet-5-5",
-      "variant": "medium"
-    },
-    "scout-deep": {
-      "model": "anthropic/claude-sonnet-5-5",
-      "variant": "high"
+      "effort": "medium"
     },
     "builder": {
       "model": "anthropic/claude-sonnet-5-5",
-      "variant": "high"
-    },
-    "builder-deep": {
-      "model": "anthropic/claude-opus-5-5",
-      "variant": "high"
+      "effort": "high"
     },
     "reviewer": {
       "model": "anthropic/claude-opus-5-5",
-      "variant": "high"
+      "effort": "high"
     }
   }
 }

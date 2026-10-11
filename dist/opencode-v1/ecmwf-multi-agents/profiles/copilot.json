@@ -4,27 +4,19 @@
   "agents": {
     "lead": {
       "model": "github-copilot/claude-opus-5.5",
-      "variant": "xhigh"
+      "effort": "xhigh"
     },
     "scout": {
       "model": "github-copilot/claude-sonnet-5.5",
-      "variant": "medium"
-    },
-    "scout-deep": {
-      "model": "github-copilot/claude-sonnet-5.5",
-      "variant": "high"
+      "effort": "medium"
     },
     "builder": {
       "model": "github-copilot/claude-sonnet-5.5",
-      "variant": "high"
-    },
-    "builder-deep": {
-      "model": "github-copilot/claude-opus-5.5",
-      "variant": "high"
+      "effort": "high"
     },
     "reviewer": {
       "model": "github-copilot/gpt-6.1-sol",
-      "variant": "medium"
+      "effort": "medium"
     }
   }
 }

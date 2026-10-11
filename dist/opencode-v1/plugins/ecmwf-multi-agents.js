@@ -4,21 +4,21 @@ function planAgents(harness, settings) {
   const profile = harness.profiles.find((item) => item.id === settings.profile);
   const problems = [];
   const plans = harness.agents.map((agent) => {
-    const base = profile?.agents[agent.id];
+    const fromProfile = profile?.agents[agent.id];
     const override = settings.agents[agent.id] ?? {};
     const plan = { id: agent.id };
     if (override.model !== undefined) {
       plan.model = override.model;
-      if (override.variant !== undefined)
-        plan.variant = override.variant;
-    } else if (base?.model !== undefined) {
-      plan.model = base.model;
-      const variant = override.variant ?? base.variant;
-      if (variant !== undefined)
-        plan.variant = variant;
-    } else if (override.variant !== undefined) {
+      if (override.effort !== undefined)
+        plan.effort = override.effort;
+    } else if (fromProfile?.model !== undefined) {
+      plan.model = fromProfile.model;
+      const effort = override.effort ?? fromProfile.effort;
+      if (effort !== undefined)
+        plan.effort = effort;
+    } else if (override.effort !== undefined) {
       problems.push({
-        message: `${harness.name}: the variant ${JSON.stringify(override.variant)} for ${agent.id} was ignored: ` + `profile ${JSON.stringify(settings.profile)} gives ${agent.id} no model and the settings name none, ` + `so it uses the session model`,
+        message: `${harness.name}: the effort ${JSON.stringify(override.effort)} for ${agent.id} was ignored: ` + `profile ${JSON.stringify(settings.profile)} gives ${agent.id} no model and the settings name none, ` + `so it uses the session model`,
         notify: true
       });
     }
@@ -57,10 +57,10 @@ function applyToV1Config(config, harness, settings, plans) {
         delete agent.variant;
       } else {
         agent.model = plan.model;
-        if (plan.variant === undefined)
+        if (plan.effort === undefined)
           delete agent.variant;
         else
-          agent.variant = plan.variant;
+          agent.variant = plan.effort;
       }
       if (plan.steps !== undefined)
         agent.steps = plan.steps;
@@ -85,11 +85,11 @@ function applyToV1Config(config, harness, settings, plans) {
     change();
   return problems;
 }
-function modelRef(model, variant) {
+function modelRef(model, effort) {
   const slash = model.indexOf("/");
   const ref = { id: model.slice(slash + 1), providerID: model.slice(0, slash) };
-  if (variant !== undefined)
-    ref.variant = variant;
+  if (effort !== undefined)
+    ref.variant = effort;
   return ref;
 }
 function applyToV2Agents(editor, harness, settings, plans) {
@@ -98,7 +98,7 @@ function applyToV2Agents(editor, harness, settings, plans) {
   for (const plan of plans) {
     if (editor.get(plan.id) === undefined)
       continue;
-    const model = plan.model === undefined ? undefined : modelRef(plan.model, plan.variant);
+    const model = plan.model === undefined ? undefined : modelRef(plan.model, plan.effort);
     changes.push(() => editor.update(plan.id, (agent) => {
       if (model === undefined)
         delete agent.model;
@@ -738,9 +738,10 @@ var REVIEW_POLICIES = ["auto", "ask", "always", "never"];
 // plugin/settings.ts
 var SETTINGS_FILE = "ecmwf-multi-agents.jsonc";
 var MODEL_PATTERN = /^[^/#\s]+\/[^#\s]+$/;
-var VARIANT_PATTERN = /^[^#\s]+$/;
+var EFFORT_PATTERN = /^[^#\s]+$/;
 var TOP_KEYS = ["$schema", "review", "profile", "default_agent", "agents"];
-var AGENT_KEYS = ["model", "variant", "steps"];
+var AGENT_KEYS = ["model", "effort", "steps"];
+var RENAMED_AGENT_KEYS = { variant: "effort" };
 function listWords(words, last = "or") {
   if (words.length <= 1)
     return words.join("");
@@ -752,6 +753,9 @@ function shown(value) {
 }
 function isObject(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function has(value, key) {
+  return Object.prototype.hasOwnProperty.call(value, key);
 }
 function settingsPaths(environment, projectRoot) {
   const { env, home } = environment;
@@ -842,11 +846,11 @@ function validateAgent(id, entry, problems) {
         else
           problems.push(`${name} must look like provider/model, without "#" or spaces, not ${shown(item)}`);
         break;
-      case "variant":
-        if (typeof item === "string" && VARIANT_PATTERN.test(item))
-          out.variant = item;
+      case "effort":
+        if (typeof item === "string" && EFFORT_PATTERN.test(item))
+          out.effort = item;
         else
-          problems.push(`${name} must be a non-empty name without "#", not ${shown(item)}`);
+          problems.push(`${name} must be a non-empty name such as "high", without "#" or spaces, not ${shown(item)}`);
         break;
       case "steps":
         if (typeof item === "number" && Number.isInteger(item) && item >= 1)
@@ -854,8 +858,10 @@ function validateAgent(id, entry, problems) {
         else
           problems.push(`${name} must be a whole number of at least 1, not ${shown(item)}`);
         break;
-      default:
-        problems.push(`"agents.${id}" has the unknown setting ${shown(key)}; an agent takes ${listWords(AGENT_KEYS)}`);
+      default: {
+        const renamed = has(RENAMED_AGENT_KEYS, key) ? RENAMED_AGENT_KEYS[key] : undefined;
+        problems.push(renamed === undefined ? `"agents.${id}" has the unknown setting ${shown(key)}; an agent takes ${listWords(AGENT_KEYS)}` : `"agents.${id}" has the unknown key ${shown(key)}; it is now called ${shown(renamed)}`);
+      }
     }
   }
   return out;
@@ -1161,7 +1167,7 @@ function createPlugin(harness, options = {}) {
 }
 
 // plugin/index.ts
-var plugin_default = createPlugin({ name: "ecmwf-multi-agents", version: "0.1.0", defaultAgent: "lead", defaultProfile: "default", profiles: [{ id: "anthropic", description: "Anthropic models only. The reviewer uses the strongest model, since a different family is not available.", agents: { lead: { model: "anthropic/claude-opus-5-5", variant: "xhigh" }, scout: { model: "anthropic/claude-sonnet-5-5", variant: "medium" }, "scout-deep": { model: "anthropic/claude-sonnet-5-5", variant: "high" }, builder: { model: "anthropic/claude-sonnet-5-5", variant: "high" }, "builder-deep": { model: "anthropic/claude-opus-5-5", variant: "high" }, reviewer: { model: "anthropic/claude-opus-5-5", variant: "high" } } }, { id: "copilot", description: "GitHub Copilot models only, with the same split as the default profile.", agents: { lead: { model: "github-copilot/claude-opus-5.5", variant: "xhigh" }, scout: { model: "github-copilot/claude-sonnet-5.5", variant: "medium" }, "scout-deep": { model: "github-copilot/claude-sonnet-5.5", variant: "high" }, builder: { model: "github-copilot/claude-sonnet-5.5", variant: "high" }, "builder-deep": { model: "github-copilot/claude-opus-5.5", variant: "high" }, reviewer: { model: "github-copilot/gpt-6.1-sol", variant: "medium" } } }, { id: "default", description: "Anthropic for lead, builders and scouts; GitHub Copilot GPT for the reviewer, so reviews come from a different model family.", agents: { lead: { model: "anthropic/claude-opus-5-5", variant: "xhigh" }, scout: { model: "anthropic/claude-sonnet-5-5", variant: "medium" }, "scout-deep": { model: "anthropic/claude-sonnet-5-5", variant: "high" }, builder: { model: "anthropic/claude-sonnet-5-5", variant: "high" }, "builder-deep": { model: "anthropic/claude-opus-5-5", variant: "high" }, reviewer: { model: "github-copilot/gpt-6.1-sol", variant: "medium" } } }, { id: "inherit", description: "Every agent uses the model selected in the session. Helpers still differ by step limit.", agents: {} }], agents: [{ id: "lead", mode: "primary", shell: [{ resource: "git push *", effect: "ask" }, { resource: "git -C * push *", effect: "ask" }, { resource: "git commit --amend *", effect: "ask" }, { resource: "git reset --hard *", effect: "ask" }, { resource: "git clean *", effect: "ask" }, { resource: "git rebase *", effect: "ask" }, { resource: "git branch -D *", effect: "ask" }, { resource: "git restore *", effect: "ask" }, { resource: "git checkout -- *", effect: "ask" }, { resource: "git stash drop *", effect: "ask" }, { resource: "git stash clear *", effect: "ask" }, { resource: "gh pr create *", effect: "ask" }, { resource: "gh pr merge *", effect: "ask" }, { resource: "gh pr close *", effect: "ask" }, { resource: "gh release *", effect: "ask" }, { resource: "gh repo delete *", effect: "ask" }] }, { id: "scout", mode: "subagent", shell: [{ resource: "*", effect: "deny" }, { resource: "git log *", effect: "allow" }, { resource: "git show *", effect: "allow" }, { resource: "git diff *", effect: "allow" }, { resource: "git blame *", effect: "allow" }, { resource: "git status *", effect: "allow" }, { resource: "git grep *", effect: "allow" }, { resource: "git ls-files *", effect: "allow" }, { resource: "git rev-parse *", effect: "allow" }, { resource: "ls *", effect: "allow" }, { resource: "wc *", effect: "allow" }, { resource: "file *", effect: "allow" }, { resource: "tree *", effect: "allow" }] }, { id: "scout-deep", mode: "subagent", shell: [{ resource: "*", effect: "deny" }, { resource: "git log *", effect: "allow" }, { resource: "git show *", effect: "allow" }, { resource: "git diff *", effect: "allow" }, { resource: "git blame *", effect: "allow" }, { resource: "git status *", effect: "allow" }, { resource: "git grep *", effect: "allow" }, { resource: "git ls-files *", effect: "allow" }, { resource: "git rev-parse *", effect: "allow" }, { resource: "ls *", effect: "allow" }, { resource: "wc *", effect: "allow" }, { resource: "file *", effect: "allow" }, { resource: "tree *", effect: "allow" }] }, { id: "builder", mode: "subagent", shell: [{ resource: "git add *", effect: "deny" }, { resource: "git commit *", effect: "deny" }, { resource: "git push *", effect: "deny" }, { resource: "git pull *", effect: "deny" }, { resource: "git fetch *", effect: "deny" }, { resource: "git reset *", effect: "deny" }, { resource: "git rebase *", effect: "deny" }, { resource: "git merge *", effect: "deny" }, { resource: "git cherry-pick *", effect: "deny" }, { resource: "git revert *", effect: "deny" }, { resource: "git am *", effect: "deny" }, { resource: "git checkout *", effect: "deny" }, { resource: "git switch *", effect: "deny" }, { resource: "git restore *", effect: "deny" }, { resource: "git stash *", effect: "deny" }, { resource: "git clean *", effect: "deny" }, { resource: "git rm *", effect: "deny" }, { resource: "git mv *", effect: "deny" }, { resource: "git tag *", effect: "deny" }, { resource: "git branch *", effect: "deny" }, { resource: "git remote *", effect: "deny" }, { resource: "git worktree *", effect: "deny" }, { resource: "git update-ref *", effect: "deny" }, { resource: "git config *", effect: "deny" }, { resource: "git -C *", effect: "deny" }, { resource: "gh *", effect: "deny" }] }, { id: "builder-deep", mode: "subagent", shell: [{ resource: "git add *", effect: "deny" }, { resource: "git commit *", effect: "deny" }, { resource: "git push *", effect: "deny" }, { resource: "git pull *", effect: "deny" }, { resource: "git fetch *", effect: "deny" }, { resource: "git reset *", effect: "deny" }, { resource: "git rebase *", effect: "deny" }, { resource: "git merge *", effect: "deny" }, { resource: "git cherry-pick *", effect: "deny" }, { resource: "git revert *", effect: "deny" }, { resource: "git am *", effect: "deny" }, { resource: "git checkout *", effect: "deny" }, { resource: "git switch *", effect: "deny" }, { resource: "git restore *", effect: "deny" }, { resource: "git stash *", effect: "deny" }, { resource: "git clean *", effect: "deny" }, { resource: "git rm *", effect: "deny" }, { resource: "git mv *", effect: "deny" }, { resource: "git tag *", effect: "deny" }, { resource: "git branch *", effect: "deny" }, { resource: "git remote *", effect: "deny" }, { resource: "git worktree *", effect: "deny" }, { resource: "git update-ref *", effect: "deny" }, { resource: "git config *", effect: "deny" }, { resource: "git -C *", effect: "deny" }, { resource: "gh *", effect: "deny" }] }, { id: "reviewer", mode: "subagent", shell: [{ resource: "git add *", effect: "deny" }, { resource: "git commit *", effect: "deny" }, { resource: "git push *", effect: "deny" }, { resource: "git pull *", effect: "deny" }, { resource: "git fetch *", effect: "deny" }, { resource: "git reset *", effect: "deny" }, { resource: "git rebase *", effect: "deny" }, { resource: "git merge *", effect: "deny" }, { resource: "git cherry-pick *", effect: "deny" }, { resource: "git revert *", effect: "deny" }, { resource: "git am *", effect: "deny" }, { resource: "git checkout *", effect: "deny" }, { resource: "git switch *", effect: "deny" }, { resource: "git restore *", effect: "deny" }, { resource: "git stash *", effect: "deny" }, { resource: "git clean *", effect: "deny" }, { resource: "git rm *", effect: "deny" }, { resource: "git mv *", effect: "deny" }, { resource: "git tag *", effect: "deny" }, { resource: "git branch *", effect: "deny" }, { resource: "git remote *", effect: "deny" }, { resource: "git worktree *", effect: "deny" }, { resource: "git update-ref *", effect: "deny" }, { resource: "git config *", effect: "deny" }, { resource: "git -C *", effect: "deny" }, { resource: "gh *", effect: "deny" }, { resource: "gh pr view *", effect: "allow" }, { resource: "gh pr diff *", effect: "allow" }, { resource: "gh pr checks *", effect: "allow" }] }] });
+var plugin_default = createPlugin({ name: "ecmwf-multi-agents", version: "0.1.0", defaultAgent: "lead", defaultProfile: "default", profiles: [{ id: "anthropic", description: "Anthropic models only. The reviewer uses the strongest model, since a different family is not available.", agents: { lead: { model: "anthropic/claude-opus-5-5", effort: "xhigh" }, scout: { model: "anthropic/claude-sonnet-5-5", effort: "medium" }, builder: { model: "anthropic/claude-sonnet-5-5", effort: "high" }, reviewer: { model: "anthropic/claude-opus-5-5", effort: "high" } } }, { id: "copilot", description: "GitHub Copilot models only, with the same split as the default profile.", agents: { lead: { model: "github-copilot/claude-opus-5.5", effort: "xhigh" }, scout: { model: "github-copilot/claude-sonnet-5.5", effort: "medium" }, builder: { model: "github-copilot/claude-sonnet-5.5", effort: "high" }, reviewer: { model: "github-copilot/gpt-6.1-sol", effort: "medium" } } }, { id: "default", description: "Anthropic for lead, scout and builder; GitHub Copilot GPT for the reviewer, so reviews come from a different model family.", agents: { lead: { model: "anthropic/claude-opus-5-5", effort: "xhigh" }, scout: { model: "anthropic/claude-sonnet-5-5", effort: "medium" }, builder: { model: "anthropic/claude-sonnet-5-5", effort: "high" }, reviewer: { model: "github-copilot/gpt-6.1-sol", effort: "medium" } } }, { id: "inherit", description: "Every agent uses the model selected in the session. Helpers still differ by step limit.", agents: {} }], agents: [{ id: "lead", mode: "primary", shell: [{ resource: "git push *", effect: "ask" }, { resource: "git -C * push *", effect: "ask" }, { resource: "git commit --amend *", effect: "ask" }, { resource: "git reset --hard *", effect: "ask" }, { resource: "git clean *", effect: "ask" }, { resource: "git rebase *", effect: "ask" }, { resource: "git branch -D *", effect: "ask" }, { resource: "git restore *", effect: "ask" }, { resource: "git checkout -- *", effect: "ask" }, { resource: "git stash drop *", effect: "ask" }, { resource: "git stash clear *", effect: "ask" }, { resource: "gh pr create *", effect: "ask" }, { resource: "gh pr merge *", effect: "ask" }, { resource: "gh pr close *", effect: "ask" }, { resource: "gh release *", effect: "ask" }, { resource: "gh repo delete *", effect: "ask" }] }, { id: "scout", mode: "subagent", shell: [{ resource: "*", effect: "deny" }, { resource: "git log *", effect: "allow" }, { resource: "git show *", effect: "allow" }, { resource: "git diff *", effect: "allow" }, { resource: "git blame *", effect: "allow" }, { resource: "git status *", effect: "allow" }, { resource: "git grep *", effect: "allow" }, { resource: "git ls-files *", effect: "allow" }, { resource: "git rev-parse *", effect: "allow" }, { resource: "ls *", effect: "allow" }, { resource: "wc *", effect: "allow" }, { resource: "file *", effect: "allow" }, { resource: "tree *", effect: "allow" }] }, { id: "builder", mode: "subagent", shell: [{ resource: "git add *", effect: "deny" }, { resource: "git commit *", effect: "deny" }, { resource: "git push *", effect: "deny" }, { resource: "git pull *", effect: "deny" }, { resource: "git fetch *", effect: "deny" }, { resource: "git reset *", effect: "deny" }, { resource: "git rebase *", effect: "deny" }, { resource: "git merge *", effect: "deny" }, { resource: "git cherry-pick *", effect: "deny" }, { resource: "git revert *", effect: "deny" }, { resource: "git am *", effect: "deny" }, { resource: "git checkout *", effect: "deny" }, { resource: "git switch *", effect: "deny" }, { resource: "git restore *", effect: "deny" }, { resource: "git stash *", effect: "deny" }, { resource: "git clean *", effect: "deny" }, { resource: "git rm *", effect: "deny" }, { resource: "git mv *", effect: "deny" }, { resource: "git tag *", effect: "deny" }, { resource: "git branch *", effect: "deny" }, { resource: "git remote *", effect: "deny" }, { resource: "git worktree *", effect: "deny" }, { resource: "git update-ref *", effect: "deny" }, { resource: "git config *", effect: "deny" }, { resource: "git -C *", effect: "deny" }, { resource: "gh *", effect: "deny" }] }, { id: "reviewer", mode: "subagent", shell: [{ resource: "git add *", effect: "deny" }, { resource: "git commit *", effect: "deny" }, { resource: "git push *", effect: "deny" }, { resource: "git pull *", effect: "deny" }, { resource: "git fetch *", effect: "deny" }, { resource: "git reset *", effect: "deny" }, { resource: "git rebase *", effect: "deny" }, { resource: "git merge *", effect: "deny" }, { resource: "git cherry-pick *", effect: "deny" }, { resource: "git revert *", effect: "deny" }, { resource: "git am *", effect: "deny" }, { resource: "git checkout *", effect: "deny" }, { resource: "git switch *", effect: "deny" }, { resource: "git restore *", effect: "deny" }, { resource: "git stash *", effect: "deny" }, { resource: "git clean *", effect: "deny" }, { resource: "git rm *", effect: "deny" }, { resource: "git mv *", effect: "deny" }, { resource: "git tag *", effect: "deny" }, { resource: "git branch *", effect: "deny" }, { resource: "git remote *", effect: "deny" }, { resource: "git worktree *", effect: "deny" }, { resource: "git update-ref *", effect: "deny" }, { resource: "git config *", effect: "deny" }, { resource: "git -C *", effect: "deny" }, { resource: "gh *", effect: "deny" }, { resource: "gh pr view *", effect: "allow" }, { resource: "gh pr diff *", effect: "allow" }, { resource: "gh pr checks *", effect: "allow" }] }] });
 export {
   plugin_default as default
 };

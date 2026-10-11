@@ -25,9 +25,9 @@ support waits in `TODO.md` until approved.
 | Topic | Decision |
 |---|---|
 | Name | `ecmwf-multi-agents` |
-| Agents | `lead` (primary, default), `scout`, `scout-deep`, `builder`, `builder-deep`, `reviewer` |
+| Agents | Four: `lead` (primary, default), `scout`, `builder`, `reviewer`. No separate deep tiers: each agent has a default effort, which users change per agent in the settings file |
 | Default models | `lead`: `anthropic/claude-opus-5-5` xhigh. `builder`: `anthropic/claude-sonnet-5-5` high. `scout`: `anthropic/claude-sonnet-5-5` medium. `reviewer`: `github-copilot/gpt-6.1-sol` medium |
-| Deep tiers (inferred, to confirm) | `builder-deep`: `anthropic/claude-opus-5-5` high. `scout-deep`: `anthropic/claude-sonnet-5-5` high |
+| Versions | `MAJOR.MINOR.MICRO` without a `v`, single source in `VERSION`, tag equals version; `make version X.Y.Z` and `make release` |
 | Profiles | `default` (above), `anthropic` (Anthropic API only), `copilot` (GitHub Copilot only), `inherit` (session model everywhere). ECMWF's internal endpoint deferred, see `TODO.md` |
 | Planning | `lead` interviews the user, sends scouts, writes the plan, has it reviewed, waits for approval |
 | Review policy | `auto` (default), `ask`, `always`, `never`, set in the settings file |
@@ -39,7 +39,7 @@ support waits in `TODO.md` until approved.
 | opencode v2 | Pinned to 2.0.16, the version weave's v2 adapter uses. Moves only after a deliberate re-test |
 | Tooling | TypeScript on Bun for the generator and plugin; POSIX sh installer; generated `dist/` is committed |
 | Distribution | git clone + `install.sh`; central install through environment variables; npm plugin |
-| Evals | Small scenario suite before the first release |
+| Evals | Scenario suite against real models; results feed 0.2.0 (0.1.0 released before the first eval run, at the owner's choice) |
 
 ## Dependencies between phases
 
@@ -62,17 +62,18 @@ flowchart LR
 ```
 
 Source content and generator code are written in parallel against the contracts in
-`docs/architecture.md` and `tools/types.ts`; they meet when `bun run build` produces `dist/`.
+`docs/architecture.md` and `tools/types.ts`; they meet when `make build` produces `dist/`.
 
 ## Parallel waves
 
 | Wave | Runs in parallel | Joins on | State |
 |---|---|---|---|
 | 1 | Command clash check; v1 check + v1 emitter; v2 check + v2 emitter | Three research notes, ADR 0001 | done |
-| 2 | Generator core; `lead` prompt + `onboard`, `plan`, `go` + plan skill; helper prompts + `review`, `progress`, `guide` + guide skill; plugin + bundler; installer + install guide | `bun run build` and `bun run check` green | done |
+| 2 | Generator core; `lead` prompt + `onboard`, `plan`, `go` + plan skill; helper prompts + `review`, `progress`, `guide` + guide skill; plugin + bundler; installer + install guide | Build and gate green | done |
 | 3 | Independent prompt review; install and load tests on 1.18.35, 1.19.0 and 2.0.16; fixes | Installs and loads in isolated v1 and v2 configs | done |
-| 4 | Eval fixtures, eval cases, eval runner | Baseline numbers per profile | next |
-| 5 | npm package, CI, v2 central install, docs polish | Release 0.1.0 | |
+| 4 | Four agents with per-agent effort (generator and plugin; prompts and docs); Makefile and version tool; eval harness | Release 0.1.0 | done |
+| 5 | Eval runs, baseline, prompt fixes from the results | Release 0.2.0 | next |
+| 6 | npm package, CI, v2 central install, docs polish | | |
 
 Ownership rule for parallel work: every task owns a disjoint set of files; shared contracts
 (`docs/architecture.md`, `docs/adr/`, `src/manifest.jsonc`, `tools/types.ts`, this plan) change
@@ -109,9 +110,10 @@ Exit: every check question has an answer backed by a command run or a source ref
 
 - [x] **(par)** `lead` prompt; commands `onboard`, `plan`, `go`; skill `ecmwf-multi-agents-plan`
   (planning and execution procedure, plan file format)
-- [x] **(par)** Helper prompts: `scout`, `scout-deep` (addendum), `builder`, `builder-deep`
-  (addendum), `reviewer`; commands `review`, `progress`, `guide`; skill
-  `ecmwf-multi-agents-guide` (user guide)
+- [x] **(par)** Helper prompts: `scout`, `builder`, `reviewer`; commands `review`, `progress`,
+  `guide`; skill `ecmwf-multi-agents-guide` (user guide)
+- [x] Four agents: the deep tiers merged into `scout` (investigations, notes file) and
+  `builder` (hard fixes); per-agent effort in profiles and settings
 - [x] Command names final: `onboard`, `plan`, `go`, `review` (replaces the built-in), `progress`
   (instead of `status`, a TUI built-in), `guide`
 - [x] Profiles: `default`, `anthropic`, `copilot`, `inherit`
@@ -119,7 +121,7 @@ Exit: every check question has an answer backed by a command run or a source ref
   nine blockers and six improvements applied, contract updated to match
 
 Exit: every prompt within its budget; review verdict APPROVE. Budgets are nearly full:
-`lead` 1,789 of 1,800, plan skill 1,197 of 1,200, guide skill 1,192 of 1,200.
+`lead` 1,792 of 1,800, plan skill 1,186 of 1,200, guide skill 1,198 of 1,200.
 
 ## Phase 2: generator
 
@@ -127,8 +129,10 @@ Exit: every prompt within its budget; review verdict APPROVE. Budgets are nearly
   `dist/` writer with support files (`schema.json`, `profiles/`, `files.txt`), `--check` mode
 - [x] **(par)** v1 emitter: agents, commands, skills in v1 format (unit and integration tests)
 - [x] **(par)** v2 emitter: agents, commands, skills in v2 format (unit and integration tests)
-- [x] `bun run check`: build, typecheck, tests, budgets, `dist/` up to date, `reuse lint`,
-  `shellcheck`
+- [x] The gate, now `make check`: versions, `dist/` up to date (with manifest validation and
+  budgets), typecheck, `reuse lint`, `shellcheck`, unit tests
+- [x] Makefile (`help`, `setup`, `build`, `check`, `lint`, `test`, `integration`, `evals`,
+  `version`, `release`, `clean`) and `tools/version.ts`; `VERSION` is the single source
 
 Exit: `dist/` loads in v1 (`opencode debug agent`) and v2 in isolated configs.
 
@@ -155,31 +159,30 @@ Integration suites (opt-in, `ECMWF_MULTI_AGENTS_INTEGRATION=1`): 49 tests pass o
 
 ## Phase 5: evals
 
-- [ ] **(par)** Fixture repositories
-- [ ] **(par)** About 12 scenarios: direct answer, trivial edit, bounded fix, cross-module
-  feature, quick vs deep investigation, parallel lookups, reject-and-fix loop, ambiguous
-  brief (helper must not ask), approval gate, no push, `/onboard` accuracy, `/progress`
-  accuracy
-- [ ] **(par)** Runner: agents used, commands run, hidden-test pass, cost per agent, `lead`
-  peak context
+- [x] **(par)** Fixture repository (`evals/fixtures/stations`, standard-library Python)
+- [x] **(par)** Twelve cases: answer, trivial edit, bug fix, feature, investigate, inventory,
+  review reject and approve, no push, `/onboard`, plan and go, `/progress`
+- [x] **(par)** Runner: sandboxed `opencode serve`, permission and question answering, per-agent
+  cost, tokens and child sessions, `lead` peak context, checks, summary
+- [ ] First real-model runs. Blocked on sandbox logins: Anthropic needs the user's login
+  plugin named in `ECMWF_MULTI_AGENTS_EVAL_PLUGINS`
 - [ ] Baseline against the plain `build` agent per profile; set targets
 
 ## Phase 6: release
 
 - [ ] npm package (plugin that also carries agents, commands and skills)
 - [ ] Central install on opencode 2 (generated `opencode.json` through `OPENCODE_CONFIG`)
-- [ ] CI: `bun run check` plus the integration suites in containers per opencode version
+- [ ] CI: `make check` plus the integration suites in containers per opencode version
 - [ ] README quickstart for scientists; `/guide` content final
-- [ ] Version 0.1.0
+- [x] Version 0.1.0
 
 ## Open questions
 
-- Deep-tier default models were inferred, not specified. Confirm or change.
-- Repository home (GitHub organisation, npm scope) for the README and the npm package.
+- npm scope for the plugin package (the repository is github.com/ecmwf/ecmwf-multi-agents).
 - Prompt budgets (`lead` 1,800 tokens, helpers 700, commands 500, skills 1,200) are nearly
   full; raise them or trim prompts, informed by eval results.
-- `/onboard` is shadowed in projects that define their own `onboard` command (three of the
-  owner's repositories do). Kept as requested; renaming to `survey` would avoid it.
+- `/onboard` is shadowed in projects that define their own `onboard` command (some local
+  projects do). Kept as requested; renaming to `survey` would avoid it.
 
 ## Log
 
@@ -189,5 +192,8 @@ Integration suites (opt-in, `ECMWF_MULTI_AGENTS_INTEGRATION=1`): 49 tests pass o
   `status` renamed `progress`; `execute` (Code Mode) action added and denied to read-only
   helpers. The generator core and helper prompt tasks produced no output and were restarted.
 - 2026-10-11: Generator core, all prompts, plugin and installer done. Independent prompt review
-  applied. `bun run check` green (297 tests); 49 integration tests green on all three opencode
+  applied. Gate green (297 tests); 49 integration tests green on all three opencode
   versions. Central install verified read-only on opencode 1.x. Next: evals.
+- 2026-10-11: Repository published at github.com/ecmwf/ecmwf-multi-agents. Simplified to four
+  agents with per-agent effort. Makefile and version tooling added; 0.1.0 released. Eval
+  harness built; its first real-model run needs the Anthropic login plugin in the sandbox.

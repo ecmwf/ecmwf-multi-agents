@@ -24,7 +24,8 @@ export interface EmbeddedHarness {
 export interface EmbeddedProfile {
   id: string;
   description: string;
-  agents: Record<string, { model?: string; variant?: string }>;
+  /** Model and reasoning effort per agent; the effort goes to opencode as the model variant. */
+  agents: Record<string, { model?: string; effort?: string }>;
 }
 
 export interface EmbeddedAgent {
@@ -45,7 +46,8 @@ export type ReviewPolicy = (typeof REVIEW_POLICIES)[number];
 /** Per-agent settings, as written in a settings file. */
 export interface AgentOverride {
   model?: string;
-  variant?: string;
+  /** Reasoning effort, applied as opencode's model variant. */
+  effort?: string;
   steps?: number;
 }
 

@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
 // SPDX-License-Identifier: Apache-2.0
 
-// Reads src/manifest.jsonc, src/profiles/*.jsonc and the Markdown files the manifest names,
-// and validates them strictly. Unknown keys, wrong types, broken references and Markdown that
-// would leak frontmatter or comments into a prompt are errors. Every problem names its file
-// and key path, and all problems are reported together.
+// Reads src/manifest.jsonc, src/profiles/*.jsonc, the Markdown files the manifest names and the
+// VERSION file at the repository root, and validates them strictly. Unknown keys, wrong types,
+// broken references and Markdown that would leak frontmatter or comments into a prompt are
+// errors. Every problem names its file and key path, and all problems are reported together.
 
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { type Node, type ParseError, parseTree, printParseErrorCode } from "jsonc-parser";
-import { MODEL_PATTERN, VARIANT_PATTERN } from "../plugin/settings.ts";
+import { EFFORT_PATTERN, MODEL_PATTERN } from "../plugin/settings.ts";
 import { ACTIONS, type Action, type AgentMode, type Effect, type Profile, type ProfileAgent } from "./types.ts";
 import {
   compareBytes,
@@ -23,6 +23,8 @@ import {
 
 export const MANIFEST_FILE = "src/manifest.jsonc";
 export const PROFILES_DIR = "src/profiles";
+/** One line with the harness version, relative to the repository root. */
+export const VERSION_FILE = "VERSION";
 
 export const MODES = ["primary", "subagent"] as const;
 export const EFFECTS = ["allow", "ask", "deny"] as const;
@@ -35,7 +37,8 @@ export const SKILL_ID_MAX = 64;
 export const PROFILE_ID = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 /** A lowercase provider id, "/", then the model id. Profile models must also match MODEL_PATTERN. */
 export const PROFILE_MODEL = /^[a-z0-9][a-z0-9._-]*\/.+$/;
-const VERSION = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?$/;
+/** The harness version: three whole numbers separated by dots, such as 1.2.3, with no "v". */
+export const VERSION_PATTERN = /^\d+\.\d+\.\d+$/;
 
 export interface RuleSetItem {
   action: Action;
@@ -58,12 +61,12 @@ export type PermissionEntry = RuleEntry | UseEntry;
 
 export interface SourceAgent {
   id: string;
-  base?: string;
-  mode?: AgentMode;
+  mode: AgentMode;
   description: string;
-  /** Prompt files, relative to src/. */
+  /** Prompt files, relative to src/, joined in this order. */
   prompt: string[];
-  budget?: string;
+  /** Name of the budget the prompt is checked against. */
+  budget: string;
   steps?: number;
   color?: string;
   permissions: PermissionEntry[];
@@ -88,7 +91,6 @@ export interface SourceSkill {
 
 export interface Manifest {
   name: string;
-  version: string;
   defaultAgent: string;
   defaultProfile: string;
   workDir: string;
@@ -104,6 +106,8 @@ export interface Manifest {
 export interface Source {
   /** Repository root: the directory that holds src/ and dist/. */
   root: string;
+  /** From the VERSION file. */
+  version: string;
   manifest: Manifest;
   /** In byte order of their ids. */
   profiles: Profile[];
@@ -113,7 +117,6 @@ export interface Source {
 
 const TOP_KEYS = [
   "name",
-  "version",
   "defaultAgent",
   "defaultProfile",
   "workDir",
@@ -124,9 +127,9 @@ const TOP_KEYS = [
   "commands",
   "skills",
 ];
-const TOP_REQUIRED = ["name", "version", "defaultAgent", "defaultProfile", "workDir", "marker", "budgets", "agents"];
-const AGENT_KEYS = ["mode", "base", "description", "prompt", "budget", "steps", "color", "permissions"];
-const AGENT_REQUIRED = ["description", "prompt"];
+const TOP_REQUIRED = ["name", "defaultAgent", "defaultProfile", "workDir", "marker", "budgets", "agents"];
+const AGENT_KEYS = ["mode", "description", "prompt", "budget", "steps", "color", "permissions"];
+const AGENT_REQUIRED = ["mode", "description", "prompt", "budget"];
 const RULE_KEYS = ["action", "resource", "effect"];
 const USE_KEYS = ["use", "effect"];
 const RULE_SET_ITEM_KEYS = ["action", "resource"];
@@ -135,7 +138,7 @@ const COMMAND_REQUIRED = ["description", "agent", "template"];
 const SKILL_KEYS = ["description", "body", "hidden"];
 const SKILL_REQUIRED = ["description", "body"];
 const PROFILE_KEYS = ["description", "agents"];
-const PROFILE_AGENT_KEYS = ["model", "variant"];
+const PROFILE_AGENT_KEYS = ["model", "effort"];
 
 // ---------------------------------------------------------------------------------------------
 // JSONC
@@ -450,62 +453,33 @@ function readAgents(
   if (value === undefined) return [];
   const map = c.object(value, ["agents"]);
   if (map === undefined) return [];
-  const raw = new Map<string, Record<string, unknown>>();
-  for (const [id, entry] of entries(map)) {
-    if (!AGENT_ID.test(id)) c.fail(["agents", id], `agent id must match ${AGENT_ID.source}`);
-    const agent = c.object(entry, ["agents", id]);
-    if (agent !== undefined) raw.set(id, agent);
-  }
   if (keysOf(map).length === 0) c.fail(["agents"], "must define at least one agent");
 
   const out: SourceAgent[] = [];
-  for (const [id, entry] of raw) {
+  for (const [id, item] of entries(map)) {
     const at: KeyPath = ["agents", id];
+    if (!AGENT_ID.test(id)) c.fail(at, `agent id must match ${AGENT_ID.source}`);
+    const entry = c.object(item, at);
+    if (entry === undefined) continue;
     c.keys(entry, at, AGENT_KEYS, AGENT_REQUIRED);
-    const base = c.text(entry.base, [...at, "base"]);
-    if (base !== undefined) {
-      const baseEntry = raw.get(base);
-      if (base === id) c.fail([...at, "base"], "an agent cannot be its own base");
-      else if (baseEntry === undefined) c.fail([...at, "base"], `names no agent; agents: ${known([...raw.keys()])}`);
-      else if (baseEntry.base !== undefined) {
-        c.fail([...at, "base"], `agent ${base} has a base itself; a base must be an agent without one`);
-      }
-    }
     const mode = c.choice(entry.mode, [...at, "mode"], MODES);
-    if (entry.mode === undefined && entry.base === undefined) {
-      c.fail([...at, "mode"], 'required key is missing; an agent without a base needs "primary" or "subagent"');
-    }
     const description = c.text(entry.description, [...at, "description"]) ?? "";
     const prompt = readPromptList(entry.prompt, c, [...at, "prompt"], refs);
     const budget = c.text(entry.budget, [...at, "budget"]);
     if (budget !== undefined && !budgets.has(budget)) {
       c.fail([...at, "budget"], `names no budget; budgets: ${known([...budgets.keys()])}`);
     }
-    if (entry.budget === undefined && entry.base === undefined) {
-      c.fail([...at, "budget"], "required key is missing; an agent without a base needs a budget");
-    }
     const steps = c.positiveInteger(entry.steps, [...at, "steps"]);
     const color = c.text(entry.color, [...at, "color"]);
     const permissions = readPermissions(entry.permissions, c, [...at, "permissions"], ruleSets);
 
-    const agent: SourceAgent = { id, description, prompt, permissions };
-    if (base !== undefined) agent.base = base;
-    if (mode !== undefined) agent.mode = mode;
-    if (budget !== undefined) agent.budget = budget;
+    // A missing or invalid mode or budget has been reported, so load() fails and these stand-ins
+    // are never used. The agent is still listed, so references to it raise no second problem,
+    // and "primary" keeps the default agent check quiet about a mode that is already reported.
+    const agent: SourceAgent = { id, mode: mode ?? "primary", description, prompt, budget: budget ?? "", permissions };
     if (steps !== undefined) agent.steps = steps;
     if (color !== undefined) agent.color = color;
     out.push(agent);
-  }
-
-  // A file the base prompt already holds would appear twice in the resolved prompt.
-  for (const agent of out) {
-    const base = out.find((other) => other.id === agent.base);
-    if (base === undefined || base.base !== undefined) continue;
-    agent.prompt.forEach((file, index) => {
-      if (base.prompt.includes(file)) {
-        c.fail(["agents", agent.id, "prompt", index], `${file} is already part of the prompt of base agent ${base.id}`);
-      }
-    });
   }
   return out;
 }
@@ -562,18 +536,12 @@ function workDirReason(dir: string): string | undefined {
   return undefined;
 }
 
-function modeOf(agent: SourceAgent, agents: readonly SourceAgent[]): AgentMode | undefined {
-  return agent.mode ?? agents.find((other) => other.id === agent.base)?.mode;
-}
-
 function readManifest(value: unknown, c: Checker, refs: MarkdownRef[]): Manifest | undefined {
   const top = c.object(value, []);
   if (top === undefined) return undefined;
   c.keys(top, [], TOP_KEYS, TOP_REQUIRED);
 
   const name = c.text(top.name, ["name"]) ?? "";
-  const version = c.text(top.version, ["version"]) ?? "";
-  if (version !== "" && !VERSION.test(version)) c.fail(["version"], `must be a version such as 1.2.3, not ${kind(version)}`);
   const workDir = c.text(top.workDir, ["workDir"]) ?? "";
   const workDirProblem = workDir === "" ? undefined : workDirReason(workDir);
   if (workDirProblem !== undefined) c.fail(["workDir"], workDirProblem);
@@ -599,16 +567,48 @@ function readManifest(value: unknown, c: Checker, refs: MarkdownRef[]): Manifest
   const defaultAgent = c.text(top.defaultAgent, ["defaultAgent"]) ?? "";
   if (defaultAgent !== "" && isObject(top.agents)) {
     const agent = agents.find((candidate) => candidate.id === defaultAgent);
-    const mode = agent === undefined ? undefined : modeOf(agent, agents);
     if (agent === undefined) c.fail(["defaultAgent"], `names no agent; agents: ${known([...agentIds])}`);
-    else if (mode !== undefined && mode !== "primary") {
-      c.fail(["defaultAgent"], `agent ${defaultAgent} is a ${mode}; the default agent must be primary`);
+    else if (agent.mode !== "primary") {
+      c.fail(["defaultAgent"], `agent ${defaultAgent} is a ${agent.mode}; the default agent must be primary`);
     }
   }
   // Checked against the profile files by load().
   const defaultProfile = c.text(top.defaultProfile, ["defaultProfile"]) ?? "";
 
-  return { name, version, defaultAgent, defaultProfile, workDir, marker, budgets, ruleSets, agents, commands, skills };
+  return { name, defaultAgent, defaultProfile, workDir, marker, budgets, ruleSets, agents, commands, skills };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Version
+
+/**
+ * The version in the text of the VERSION file, or why it is not one. The file holds exactly one
+ * line, such as "1.2.3", with or without a final line break.
+ */
+export function parseVersion(text: string): { version: string } | { problem: string } {
+  const body = text.endsWith("\n") ? text.slice(0, -1) : text;
+  if (body.trim() === "") return { problem: "is empty; it must hold one line with the version, such as 1.2.3" };
+  const lines = body.split("\n");
+  if (lines.length > 1) return { problem: `has ${lines.length} lines; it must hold exactly one, the version, such as 1.2.3` };
+  if (VERSION_PATTERN.test(body)) return { version: body };
+  if (/^[vV]/.test(body) && VERSION_PATTERN.test(body.slice(1))) {
+    return { problem: `${JSON.stringify(body)} starts with "${body[0]}"; write the version without it, as ${body.slice(1)}` };
+  }
+  return { problem: `${JSON.stringify(body)} is not a version such as 1.2.3: three whole numbers separated by dots, and nothing else` };
+}
+
+async function readVersion(root: string, problems: string[]): Promise<string> {
+  const read = await readSource(path.join(root, VERSION_FILE));
+  if ("error" in read) {
+    problems.push(`${VERSION_FILE}: ${read.error}; it must hold the harness version, such as 1.2.3`);
+    return "";
+  }
+  const parsed = parseVersion(read.text);
+  if ("problem" in parsed) {
+    problems.push(`${VERSION_FILE}: ${parsed.problem}`);
+    return "";
+  }
+  return parsed.version;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -618,7 +618,7 @@ function readProfileModel(value: unknown, c: Checker, at: KeyPath): string | und
   const model = c.text(value, at);
   if (model === undefined) return undefined;
   if (model.includes("#")) {
-    c.fail(at, `${JSON.stringify(model)} must not contain "#"; set the variant separately`);
+    c.fail(at, `${JSON.stringify(model)} must not contain "#"; set the effort separately`);
     return undefined;
   }
   if (!PROFILE_MODEL.test(model) || !MODEL_PATTERN.test(model)) {
@@ -628,15 +628,15 @@ function readProfileModel(value: unknown, c: Checker, at: KeyPath): string | und
   return model;
 }
 
-function readProfileVariant(value: unknown, c: Checker, at: KeyPath): string | undefined {
-  const variant = c.text(value, at);
-  if (variant === undefined) return undefined;
-  // opencode 1.x takes a single word here.
-  if (!VARIANT_PATTERN.test(variant) || /\s/.test(variant)) {
-    c.fail(at, `${JSON.stringify(variant)} must be one word without "#"`);
+function readProfileEffort(value: unknown, c: Checker, at: KeyPath): string | undefined {
+  const effort = c.text(value, at);
+  if (effort === undefined) return undefined;
+  // Written as opencode's model variant: one word on 1.x, and 2 reads "#" as a separator.
+  if (!EFFORT_PATTERN.test(effort)) {
+    c.fail(at, `${JSON.stringify(effort)} must be one word without "#", such as high`);
     return undefined;
   }
-  return variant;
+  return effort;
 }
 
 function readProfile(
@@ -659,13 +659,13 @@ function readProfile(
     if (entry === undefined) continue;
     c.keys(entry, at, PROFILE_AGENT_KEYS, []);
     const model = readProfileModel(entry.model, c, [...at, "model"]);
-    const variant = readProfileVariant(entry.variant, c, [...at, "variant"]);
-    if (entry.variant !== undefined && entry.model === undefined) {
-      c.fail([...at, "variant"], "a variant needs a model in the same entry");
+    const effort = readProfileEffort(entry.effort, c, [...at, "effort"]);
+    if (entry.effort !== undefined && entry.model === undefined) {
+      c.fail([...at, "effort"], "an effort needs a model in the same entry");
     }
     const agent: ProfileAgent = {};
     if (model !== undefined) agent.model = model;
-    if (variant !== undefined) agent.variant = variant;
+    if (effort !== undefined) agent.effort = effort;
     // Only manifest agent ids are stored, so a key such as "__proto__" never reaches the record.
     if (knownAgent) agents[agentId] = agent;
   }
@@ -776,8 +776,8 @@ async function readMarkdown(root: string, refs: readonly MarkdownRef[], problems
 // ---------------------------------------------------------------------------------------------
 
 /**
- * Load and validate the harness source under `root`/src. Throws a GeneratorError that lists
- * every problem when anything is wrong.
+ * Load and validate the harness source: `root`/src and `root`/VERSION. Throws a GeneratorError
+ * that lists every problem when anything is wrong.
  */
 export async function load(root: string): Promise<Source> {
   const problems: string[] = [];
@@ -791,6 +791,7 @@ export async function load(root: string): Promise<Source> {
     if (value !== undefined) manifest = readManifest(value, new Checker(MANIFEST_FILE, problems), refs);
   }
 
+  const version = await readVersion(root, problems);
   const agentIds = manifest === undefined ? undefined : new Set(manifest.agents.map((agent) => agent.id));
   const { profiles, ids } = await loadProfiles(root, agentIds, problems);
   if (manifest !== undefined && manifest.defaultProfile !== "" && !ids.includes(manifest.defaultProfile)) {
@@ -799,7 +800,7 @@ export async function load(root: string): Promise<Source> {
   const markdown = await readMarkdown(root, refs, problems);
 
   if (problems.length > 0 || manifest === undefined) {
-    throw new GeneratorError(`src/ has ${problems.length} problem${problems.length === 1 ? "" : "s"}:`, problems);
+    throw new GeneratorError(`the harness source has ${problems.length} problem${problems.length === 1 ? "" : "s"}:`, problems);
   }
-  return { root, manifest, profiles, markdown };
+  return { root, version, manifest, profiles, markdown };
 }

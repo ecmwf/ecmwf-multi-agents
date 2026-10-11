@@ -9,31 +9,31 @@ A multi-agent harness for [opencode](https://opencode.ai), made for ECMWF scient
 and developers.
 
 You talk to one agent, `lead`. It works out what you need, asks questions when your request is
-unclear, and hands the reading, building and checking to helpers. Each helper runs on a model
-suited to its job, so routine work goes to cheaper models and `lead` keeps a small context for
-the conversation with you.
+unclear, and hands the reading, building and checking to three helpers. Each helper runs on a
+model and effort suited to its job, so routine work goes to cheaper models and `lead` keeps a
+small context for the conversation with you.
 
-> Status: in development, not yet released. See `PLAN.md` for progress.
+> Status: early releases (0.x). See `CHANGELOG.md` for what changed and `PLAN.md` for what
+> comes next.
 
 ## The agents
 
-| Agent | What it does | Default model |
+| Agent | What it does | Default model and effort |
 |---|---|---|
-| `lead` | Talks to you, plans, hands out work, checks results, commits when asked | Claude Opus 5.5, extra-high effort |
-| `scout` | Quick read-only lookups in code, docs and the web | Claude Sonnet 5.5, medium effort |
-| `scout-deep` | Longer investigations across a codebase | Claude Sonnet 5.5, high effort |
-| `builder` | Makes one clearly specified change and runs its checks | Claude Sonnet 5.5, high effort |
-| `builder-deep` | Hard changes: subtle logic, numerics, several modules | Claude Opus 5.5, high effort |
-| `reviewer` | Independent review of plans and changes, answers APPROVE or REJECT | GPT 6.1 Sol through GitHub Copilot, medium effort |
+| `lead` | Talks to you, plans, hands out work, checks results, commits when asked | Claude Opus 5.5, xhigh |
+| `scout` | Read-only lookups and investigations in code, docs and the web | Claude Sonnet 5.5, medium |
+| `builder` | Makes one clearly specified change, from a small edit to a hard fix, and runs its checks | Claude Sonnet 5.5, high |
+| `reviewer` | Independent review of plans and changes, answers APPROVE or REJECT | GPT 6.1 Sol through GitHub Copilot, medium |
 
-The reviewer uses a different model family on purpose: it is more likely to catch mistakes
-the other agents share.
+Effort is how hard a model thinks before it answers: more effort is slower and costs more.
+You can change each agent's effort, and its model, in the settings file. The reviewer uses a
+different model family on purpose: it is more likely to catch mistakes the other agents share.
 
 ```mermaid
 flowchart LR
   U((You)) <--> L[lead]
-  L -->|look up| S[scout / scout-deep]
-  L -->|change| B[builder / builder-deep]
+  L -->|look up| S[scout]
+  L -->|change| B[builder]
   L -->|check| R[reviewer]
   S -.->|findings| L
   B -.->|report| L
@@ -71,10 +71,13 @@ kept out of git through `.git/info/exclude`, so nothing extra appears in your co
 Clone this repository anywhere, then run the installer:
 
 ```sh
-git clone <repository-url> ~/.local/share/ecmwf-multi-agents
+git clone https://github.com/ecmwf/ecmwf-multi-agents.git ~/.local/share/ecmwf-multi-agents
 cd ~/.local/share/ecmwf-multi-agents
 ./install.sh
 ```
+
+To stay on a release, check out its tag (for example `git checkout 0.1.0`) before running the
+installer. Versions are `MAJOR.MINOR.MICRO` without a `v`.
 
 The installer finds your opencode version, links the agents, commands, skills and plugin into
 `~/.config/opencode/`, and writes a settings file. Restart opencode afterwards. To update, run
@@ -103,12 +106,18 @@ in `.opencode/ecmwf-multi-agents.jsonc`.
   "review": "auto",
   // Which models the agents use: default, anthropic, copilot or inherit.
   "profile": "default",
-  // Optional per-agent overrides, applied after the profile.
+  // Optional per-agent overrides, applied after the profile: model, effort and steps.
   "agents": {
-    "reviewer": { "model": "openai/gpt-6.1-sol", "variant": "high" }
+    "builder": { "effort": "xhigh" },
+    "reviewer": { "model": "openai/gpt-6.1-sol", "effort": "high" }
   }
 }
 ```
+
+Effort values are `low`, `medium`, `high`, `xhigh` and `max` (some models also offer `none`).
+The defaults are `lead` xhigh, `builder` high, `scout` and `reviewer` medium. An effort needs a
+model to apply to, so with the `inherit` profile give the agent a `model` as well. `steps`
+caps how many turns an agent may take, which limits its cost.
 
 | Review policy | Effect |
 |---|---|
@@ -119,7 +128,7 @@ in `.opencode/ecmwf-multi-agents.jsonc`.
 
 | Profile | Models |
 |---|---|
-| `default` | Anthropic for `lead`, builders and scouts; GitHub Copilot GPT for the reviewer |
+| `default` | Anthropic for `lead`, `scout` and `builder`; GitHub Copilot GPT for the reviewer |
 | `anthropic` | Anthropic models only |
 | `copilot` | GitHub Copilot models only |
 | `inherit` | Every agent uses the model you pick in the session |
@@ -139,14 +148,20 @@ default settings.
 
 ## Development
 
-See `AGENTS.md` for the rules and `PLAN.md` for progress. With [Bun](https://bun.sh)
-installed:
+See `AGENTS.md` for the rules and `PLAN.md` for progress. With [Bun](https://bun.sh), `reuse`
+and `shellcheck` installed:
 
 ```sh
-bun install
-bun run build   # writes dist/ from src/
-bun run check   # build, tests and lints; must pass before every commit
+make setup      # install the development dependencies
+make build      # regenerate dist/ from src/
+make check      # the gate before every commit: versions, dist/, lint, unit tests
+make help       # every target
 ```
+
+`make integration` runs the suites against real opencode binaries without calling a model.
+`make evals` runs scenario evals with real models and uses your provider quota; see
+`evals/README.md`. `make version X.Y.Z` sets a new version everywhere, and `make release`
+publishes it.
 
 ## Licence
 

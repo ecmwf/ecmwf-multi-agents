@@ -22,7 +22,6 @@ afterAll(async () => {
 function manifest(): Json {
   return {
     name: "test-harness",
-    version: "0.1.0",
     defaultAgent: "lead",
     defaultProfile: "default",
     workDir: ".work",
@@ -38,7 +37,7 @@ function manifest(): Json {
         permissions: [{ use: "writes", effect: "ask" }],
       },
       scout: { mode: "subagent", description: "Looks.", prompt: ["agents/scout.md"], budget: "helper", steps: 10 },
-      "scout-deep": { base: "scout", description: "Looks deeper.", prompt: ["agents/scout-deep.md"] },
+      builder: { mode: "subagent", description: "Builds.", prompt: ["agents/builder.md", "fragments/helper.md"], budget: "helper" },
     },
     commands: { go: { description: "Go.", agent: "lead", template: "commands/go.md" } },
     skills: { "test-plan": { description: "Plan format.", body: "skills/test-plan/SKILL.md", hidden: true } },
@@ -48,16 +47,17 @@ function manifest(): Json {
 const MARKDOWN: Record<string, string> = {
   "agents/lead.md": "You are lead.\n\nReview policy: auto\n",
   "agents/scout.md": "You are scout.\n",
-  "agents/scout-deep.md": "Go deep.\n",
+  "agents/builder.md": "You build.\n",
+  "fragments/helper.md": "Helpers never ask.\n",
   "commands/go.md": "Go: $ARGUMENTS\n",
   "skills/test-plan/SKILL.md": "# Plan\n",
 };
 
-// Agents out of manifest order and variant before model: the output must reorder both.
+// Agents out of manifest order and effort before model: the output must reorder both.
 const PROFILES: Record<string, Json> = {
   default: {
     description: "Default.",
-    agents: { scout: { model: "acme/small" }, lead: { variant: "max", model: "acme/big" } },
+    agents: { scout: { model: "acme/small" }, lead: { effort: "max", model: "acme/big" } },
   },
   other: { description: "Other.", agents: {} },
 };
@@ -65,7 +65,10 @@ const PROFILES: Record<string, Json> = {
 async function fixture(options: { manifest?: Json; markdown?: Record<string, string> } = {}): Promise<string> {
   const root = await mkdtemp(path.join(tmpdir(), "ecmwf-multi-agents-build-"));
   roots.push(root);
-  const files: Record<string, string> = { "src/manifest.jsonc": JSON.stringify(options.manifest ?? manifest(), null, 2) };
+  const files: Record<string, string> = {
+    "src/manifest.jsonc": JSON.stringify(options.manifest ?? manifest(), null, 2),
+    VERSION: "0.4.2\n",
+  };
   for (const [id, profile] of Object.entries(PROFILES)) files[`src/profiles/${id}.jsonc`] = JSON.stringify(profile);
   for (const [file, text] of Object.entries({ ...MARKDOWN, ...options.markdown })) files[`src/${file}`] = text;
   for (const [file, text] of Object.entries(files)) await put(root, file, text);
@@ -131,8 +134,8 @@ describe("output", () => {
     expect(Object.keys(one).sort()).toEqual(
       [
         "Zeta.md",
+        "agents/builder.md",
         "agents/lead.md",
-        "agents/scout-deep.md",
         "agents/scout.md",
         "commands/go.md",
         "plugins/test.js",
@@ -141,11 +144,12 @@ describe("output", () => {
       ].sort(),
     );
     expect(Object.keys(two).sort()).toEqual(
-      ["agents/lead.md", "agents/scout-deep.md", "agents/scout.md", "plugins/test.js", ...SUPPORT].sort(),
+      ["agents/builder.md", "agents/lead.md", "agents/scout.md", "plugins/test.js", ...SUPPORT].sort(),
     );
+    expect(result.harness.version).toBe("0.4.2");
     expect(one["plugins/test.js"]).toBe("export default {};\n");
     expect(two["plugins/test.js"]).toBe("export default {};\n");
-    expect(one["agents/scout-deep.md"]).toBe("one scout-deep\nYou are scout.\n\nGo deep.\n");
+    expect(one["agents/builder.md"]).toBe("one builder\nYou build.\n\nHelpers never ask.\n");
     expect(two["agents/lead.md"]).toBe("two lead\n");
     expect(one["ecmwf-multi-agents/schema.json"]).toBe(`${JSON.stringify(settingsSchema(result.harness), null, 2)}\n`);
     expect(two["ecmwf-multi-agents/schema.json"]).toBe(one["ecmwf-multi-agents/schema.json"]);
@@ -167,7 +171,7 @@ describe("output", () => {
         '  "agents": {',
         '    "lead": {',
         '      "model": "acme/big",',
-        '      "variant": "max"',
+        '      "effort": "max"',
         "    },",
         '    "scout": {',
         '      "model": "acme/small"',
@@ -195,7 +199,7 @@ describe("output", () => {
       expect(lines).toEqual([...lines].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b))));
     }
     const one = (await readFile(path.join(root, "dist/p1", FILES_LIST), "utf8")).split("\n");
-    expect(one.slice(0, 2)).toEqual(["Zeta.md", "agents/lead.md"]);
+    expect(one.slice(0, 2)).toEqual(["Zeta.md", "agents/builder.md"]);
   });
 
   test("content gets LF line endings and exactly one trailing newline", async () => {
@@ -233,12 +237,12 @@ describe("output", () => {
     const run = options(root);
     await build(run);
     expect(run.lines).toEqual([
-      "kind     id         tokens budget",
-      "agent    lead            9   1000 lead",
-      "agent    scout           4    500 helper",
-      "agent    scout-deep      6    500 helper",
-      "command  go              4    300 command",
-      "skill    test-plan       2    400 skill",
+      "kind     id        tokens budget",
+      "agent    lead           9   1000 lead",
+      "agent    scout          4    500 helper",
+      "agent    builder        8    500 helper",
+      "command  go             4    300 command",
+      "skill    test-plan      2    400 skill",
       "dist/p1: 11 files (11 written, 0 removed)",
       "dist/p2: 8 files (8 written, 0 removed)",
     ]);
@@ -417,9 +421,9 @@ describe("checks", () => {
     const run = options(root);
     const problems = await failure(build(run));
     expect(problems).toEqual([
-      "src/agents/scout.md, src/agents/scout-deep.md: agents.scout-deep.prompt: about 6 tokens (24 characters), over the helper budget of 5 tokens by 1",
+      "src/agents/builder.md, src/fragments/helper.md: agents.builder.prompt: about 8 tokens (30 characters), over the helper budget of 5 tokens by 3",
     ]);
-    expect(run.lines).toContain("agent    scout-deep      6      5 helper  OVER");
+    expect(run.lines).toContain("agent    builder        8      5 helper  OVER");
     expect(existsSync(path.join(root, "dist"))).toBe(false);
   });
 
@@ -430,12 +434,19 @@ describe("checks", () => {
     ]);
   });
 
+  test("a VERSION that is not one version line stops the build before anything is written", async () => {
+    const root = await fixture();
+    await writeFile(path.join(root, "VERSION"), "v0.4.2\n");
+    expect(await failure(build(options(root)))).toEqual(['VERSION: "v0.4.2" starts with "v"; write the version without it, as 0.4.2']);
+    expect(existsSync(path.join(root, "dist"))).toBe(false);
+  });
+
   test("source problems stop the build", async () => {
     const m = manifest();
     m.agents.lead.extra = true;
     const root = await fixture({ manifest: m });
     expect(await failure(build(options(root)))).toEqual([
-      "src/manifest.jsonc: agents.lead.extra: unknown key; allowed keys are mode, base, description, prompt, budget, steps, color and permissions",
+      "src/manifest.jsonc: agents.lead.extra: unknown key; allowed keys are mode, description, prompt, budget, steps, color and permissions",
     ]);
   });
 });

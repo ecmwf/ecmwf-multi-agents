@@ -66,50 +66,49 @@ function v2Editor(): V2AgentEditor & { agents: Map<string, V2AgentInfo>; selecte
 }
 
 describe("planAgents", () => {
-  test("the default profile gives each agent its model and variant; steps stay unless overridden", () => {
+  test("the default profile gives each agent its model and effort; steps stay unless overridden", () => {
     const { plans, problems } = planAgents(harness, settingsOf());
     expect(problems).toEqual([]);
     expect(plans).toEqual([
-      { id: "lead", model: "anthropic/claude-opus-5-5", variant: "xhigh" },
-      { id: "scout", model: "anthropic/claude-sonnet-5-5", variant: "medium" },
-      { id: "scout-deep", model: "anthropic/claude-sonnet-5-5", variant: "high" },
-      { id: "builder", model: "anthropic/claude-sonnet-5-5", variant: "high" },
-      { id: "builder-deep", model: "anthropic/claude-opus-5-5", variant: "high" },
-      { id: "reviewer", model: "github-copilot/gpt-6.1-sol", variant: "medium" },
+      { id: "lead", model: "anthropic/claude-opus-5-5", effort: "xhigh" },
+      { id: "scout", model: "anthropic/claude-sonnet-5-5", effort: "medium" },
+      { id: "builder", model: "anthropic/claude-sonnet-5-5", effort: "high" },
+      { id: "reviewer", model: "github-copilot/gpt-6.1-sol", effort: "medium" },
     ]);
   });
 
   test("inherit leaves every agent without a model", () => {
     const { plans } = planAgents(harness, settingsOf({ profile: "inherit" }));
-    expect(plans.every((plan) => plan.model === undefined && plan.variant === undefined)).toBe(true);
+    expect(plans.every((plan) => plan.model === undefined && plan.effort === undefined)).toBe(true);
   });
 
-  test("an override model replaces the profile's model and variant together", () => {
-    const { plans } = planAgents(harness, settingsOf({ agents: { reviewer: { model: "openai/gpt-x" }, scout: { model: "openai/gpt-y", variant: "low" } } }));
+  test("an override model replaces the profile's model and effort together", () => {
+    const { plans } = planAgents(harness, settingsOf({ agents: { reviewer: { model: "openai/gpt-x" }, scout: { model: "openai/gpt-y", effort: "low" } } }));
     expect(plans.find((plan) => plan.id === "reviewer")).toEqual({ id: "reviewer", model: "openai/gpt-x" });
-    expect(plans.find((plan) => plan.id === "scout")).toEqual({ id: "scout", model: "openai/gpt-y", variant: "low" });
+    expect(plans.find((plan) => plan.id === "scout")).toEqual({ id: "scout", model: "openai/gpt-y", effort: "low" });
   });
 
-  test("an override variant alone applies to the profile's model", () => {
-    const { plans } = planAgents(harness, settingsOf({ agents: { reviewer: { variant: "high" } } }));
-    expect(plans.find((plan) => plan.id === "reviewer")).toEqual({ id: "reviewer", model: "github-copilot/gpt-6.1-sol", variant: "high" });
+  test("an override effort alone applies to the profile's model", () => {
+    const { plans } = planAgents(harness, settingsOf({ agents: { builder: { effort: "xhigh" }, reviewer: { effort: "high" } } }));
+    expect(plans.find((plan) => plan.id === "builder")).toEqual({ id: "builder", model: "anthropic/claude-sonnet-5-5", effort: "xhigh" });
+    expect(plans.find((plan) => plan.id === "reviewer")).toEqual({ id: "reviewer", model: "github-copilot/gpt-6.1-sol", effort: "high" });
   });
 
-  test("an override variant without any model is reported and ignored", () => {
-    const { plans, problems } = planAgents(harness, settingsOf({ profile: "inherit", agents: { scout: { variant: "high", steps: 9 } } }));
+  test("an override effort without any model is reported and ignored", () => {
+    const { plans, problems } = planAgents(harness, settingsOf({ profile: "inherit", agents: { scout: { effort: "high", steps: 9 } } }));
     expect(plans.find((plan) => plan.id === "scout")).toEqual({ id: "scout", steps: 9 });
     expect(problems).toEqual([
       {
         message:
-          'ecmwf-multi-agents: the variant "high" for scout was ignored: profile "inherit" gives scout no model and the settings name none, so it uses the session model',
+          'ecmwf-multi-agents: the effort "high" for scout was ignored: profile "inherit" gives scout no model and the settings name none, so it uses the session model',
         notify: true,
       },
     ]);
   });
 
   test("inherit with an override model sets just that agent", () => {
-    const { plans } = planAgents(harness, settingsOf({ profile: "inherit", agents: { reviewer: { model: "openai/gpt-x", variant: "high", steps: 40 } } }));
-    expect(plans.find((plan) => plan.id === "reviewer")).toEqual({ id: "reviewer", model: "openai/gpt-x", variant: "high", steps: 40 });
+    const { plans } = planAgents(harness, settingsOf({ profile: "inherit", agents: { reviewer: { model: "openai/gpt-x", effort: "high", steps: 40 } } }));
+    expect(plans.find((plan) => plan.id === "reviewer")).toEqual({ id: "reviewer", model: "openai/gpt-x", effort: "high", steps: 40 });
     expect(plans.find((plan) => plan.id === "lead")).toEqual({ id: "lead" });
   });
 });
@@ -165,15 +164,23 @@ describe("applyToV1Config", () => {
     expect(agent.build).toEqual({ model: "other/model", steps: 3 });
   });
 
+  test("an effort override is written as the agent's variant", () => {
+    const config = v1Config();
+    const settings = settingsOf({ agents: { builder: { effort: "xhigh" } } });
+    applyToV1Config(config, harness, settings, planAgents(harness, settings).plans);
+    expect(config.agent!.builder).toMatchObject({ model: "anthropic/claude-sonnet-5-5", variant: "xhigh", steps: 60 });
+    expect("effort" in config.agent!.builder!).toBe(false);
+  });
+
   test("inherit removes model and variant so agents use the session model", () => {
     const config = v1Config();
     const settings = settingsOf({ profile: "inherit" });
     applyToV1Config(config, harness, settings, planAgents(harness, settings).plans);
-    for (const id of ["lead", "scout", "reviewer"]) {
+    for (const id of ["lead", "scout", "builder", "reviewer"]) {
       expect("model" in config.agent![id]!).toBe(false);
       expect("variant" in config.agent![id]!).toBe(false);
     }
-    expect(config.agent!.scout!.steps).toBe(15);
+    expect(config.agent!.scout!.steps).toBe(30);
   });
 
   test("agents missing from the config are left alone", () => {
@@ -239,11 +246,18 @@ describe("applyToV2Agents", () => {
     expect(editor.get("build")!.model).toEqual({ id: "m", providerID: "p" });
   });
 
+  test("an effort override is written as model.variant", () => {
+    const editor = v2Editor();
+    const settings = settingsOf({ agents: { builder: { effort: "xhigh" } } });
+    applyToV2Agents(editor, harness, settings, planAgents(harness, settings).plans);
+    expect(editor.get("builder")!.model).toEqual({ id: "claude-sonnet-5-5", providerID: "anthropic", variant: "xhigh" });
+  });
+
   test("inherit deletes the model", () => {
     const editor = v2Editor();
     const settings = settingsOf({ profile: "inherit" });
     applyToV2Agents(editor, harness, settings, planAgents(harness, settings).plans);
-    for (const id of ["lead", "scout", "scout-deep", "builder", "builder-deep", "reviewer"]) expect("model" in editor.get(id)!).toBe(false);
+    for (const id of ["lead", "scout", "builder", "reviewer"]) expect("model" in editor.get(id)!).toBe(false);
   });
 
   test("never creates an agent that is not there", () => {
