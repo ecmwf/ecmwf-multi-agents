@@ -1,0 +1,5 @@
+{
+  "id": "inherit",
+  "description": "Every agent uses the model selected in the session. Helpers still differ by step limit.",
+  "agents": {}
+}

@@ -1,0 +1,13 @@
+// SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+// SPDX-License-Identifier: Apache-2.0
+{
+  "description": "GitHub Copilot models only, with the same split as the default profile.",
+  "agents": {
+    "lead": { "model": "github-copilot/claude-opus-5.5", "variant": "xhigh" },
+    "scout": { "model": "github-copilot/claude-sonnet-5.5", "variant": "medium" },
+    "scout-deep": { "model": "github-copilot/claude-sonnet-5.5", "variant": "high" },
+    "builder": { "model": "github-copilot/claude-sonnet-5.5", "variant": "high" },
+    "builder-deep": { "model": "github-copilot/claude-opus-5.5", "variant": "high" },
+    "reviewer": { "model": "github-copilot/gpt-6.1-sol", "variant": "medium" }
+  }
+}

@@ -1,0 +1,239 @@
+// SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+// SPDX-License-Identifier: Apache-2.0
+//
+// Single source for the harness. The generator (tools/) reads this file and the Markdown it
+// names, and writes dist/opencode-v1/ and dist/opencode-v2/. Paths are relative to src/.
+// Permission actions are platform neutral; the emitters map them: shell to bash (v1) or shell
+// (v2), delegate to task or subagent, todo to todowrite (v1 only), execute to Code Mode (v2
+// only). Rules are ordered and the last match wins. Agent rules come after the user's own
+// rules, so allow and ask rules here override the user's policy: keep them few and deliberate.
+{
+  "name": "ecmwf-multi-agents",
+  "version": "0.1.0",
+  "defaultAgent": "lead",
+  "defaultProfile": "default",
+  "workDir": ".ecmwf-multi-agents",
+  "marker": "# managed by ecmwf-multi-agents",
+
+  // Approximate tokens, counted as characters / 4.
+  "budgets": { "lead": 1800, "helper": 700, "command": 500, "skill": 1200 },
+
+  // Named lists of {action, resource}. A permission entry {"use": name, "effect": e}
+  // expands to one rule per item, all with effect e.
+  "ruleSets": {
+    // Commands that publish work or destroy uncommitted or committed work.
+    "approval-needed": [
+      { "action": "shell", "resource": "git push *" },
+      { "action": "shell", "resource": "git -C * push *" },
+      { "action": "shell", "resource": "git commit --amend *" },
+      { "action": "shell", "resource": "git reset --hard *" },
+      { "action": "shell", "resource": "git clean *" },
+      { "action": "shell", "resource": "git rebase *" },
+      { "action": "shell", "resource": "git branch -D *" },
+      { "action": "shell", "resource": "git restore *" },
+      { "action": "shell", "resource": "git checkout -- *" },
+      { "action": "shell", "resource": "git stash drop *" },
+      { "action": "shell", "resource": "git stash clear *" },
+      { "action": "shell", "resource": "gh pr create *" },
+      { "action": "shell", "resource": "gh pr merge *" },
+      { "action": "shell", "resource": "gh pr close *" },
+      { "action": "shell", "resource": "gh release *" },
+      { "action": "shell", "resource": "gh repo delete *" }
+    ],
+    // Git commands that change history, the index, branches, remotes or the working tree
+    // state that lead manages. Helpers never run these, not even their read-only forms such
+    // as listing branches: they use `git rev-parse` and `git show` instead. `git -C` is
+    // denied whole, because it would run any of these on another path.
+    "git-writes": [
+      { "action": "shell", "resource": "git add *" },
+      { "action": "shell", "resource": "git commit *" },
+      { "action": "shell", "resource": "git push *" },
+      { "action": "shell", "resource": "git pull *" },
+      { "action": "shell", "resource": "git fetch *" },
+      { "action": "shell", "resource": "git reset *" },
+      { "action": "shell", "resource": "git rebase *" },
+      { "action": "shell", "resource": "git merge *" },
+      { "action": "shell", "resource": "git cherry-pick *" },
+      { "action": "shell", "resource": "git revert *" },
+      { "action": "shell", "resource": "git am *" },
+      { "action": "shell", "resource": "git checkout *" },
+      { "action": "shell", "resource": "git switch *" },
+      { "action": "shell", "resource": "git restore *" },
+      { "action": "shell", "resource": "git stash *" },
+      { "action": "shell", "resource": "git clean *" },
+      { "action": "shell", "resource": "git rm *" },
+      { "action": "shell", "resource": "git mv *" },
+      { "action": "shell", "resource": "git tag *" },
+      { "action": "shell", "resource": "git branch *" },
+      { "action": "shell", "resource": "git remote *" },
+      { "action": "shell", "resource": "git worktree *" },
+      { "action": "shell", "resource": "git update-ref *" },
+      { "action": "shell", "resource": "git config *" },
+      { "action": "shell", "resource": "git -C *" }
+    ],
+    // Inspection commands scouts may run. Everything else in the shell is denied for them.
+    "read-only-shell": [
+      { "action": "shell", "resource": "git log *" },
+      { "action": "shell", "resource": "git show *" },
+      { "action": "shell", "resource": "git diff *" },
+      { "action": "shell", "resource": "git blame *" },
+      { "action": "shell", "resource": "git status *" },
+      { "action": "shell", "resource": "git grep *" },
+      { "action": "shell", "resource": "git ls-files *" },
+      { "action": "shell", "resource": "git rev-parse *" },
+      { "action": "shell", "resource": "ls *" },
+      { "action": "shell", "resource": "wc *" },
+      { "action": "shell", "resource": "file *" },
+      { "action": "shell", "resource": "tree *" }
+    ],
+    // Reading pull requests, for the reviewer.
+    "gh-read": [
+      { "action": "shell", "resource": "gh pr view *" },
+      { "action": "shell", "resource": "gh pr diff *" },
+      { "action": "shell", "resource": "gh pr checks *" }
+    ]
+  },
+
+  "agents": {
+    "lead": {
+      "mode": "primary",
+      "description": "Talks to you, plans, hands work to helpers and checks the results. Start here.",
+      "prompt": ["agents/lead.md"],
+      "budget": "lead",
+      "color": "#0b5394",
+      "permissions": [
+        { "action": "question", "resource": "*", "effect": "allow" },
+        { "action": "delegate", "resource": "*", "effect": "deny" },
+        { "action": "delegate", "resource": "scout", "effect": "allow" },
+        { "action": "delegate", "resource": "scout-deep", "effect": "allow" },
+        { "action": "delegate", "resource": "builder", "effect": "allow" },
+        { "action": "delegate", "resource": "builder-deep", "effect": "allow" },
+        { "action": "delegate", "resource": "reviewer", "effect": "allow" },
+        { "use": "approval-needed", "effect": "ask" }
+      ]
+    },
+
+    "scout": {
+      "mode": "subagent",
+      "description": "Quick read-only lookup in code, docs or the web. Returns a short answer with file:line evidence.",
+      "prompt": ["agents/scout.md"],
+      "budget": "helper",
+      "steps": 15,
+      "permissions": [
+        { "action": "edit", "resource": "*", "effect": "deny" },
+        { "action": "shell", "resource": "*", "effect": "deny" },
+        { "use": "read-only-shell", "effect": "allow" },
+        { "action": "delegate", "resource": "*", "effect": "deny" },
+        { "action": "question", "resource": "*", "effect": "deny" },
+        { "action": "todo", "resource": "*", "effect": "deny" },
+        { "action": "execute", "resource": "*", "effect": "deny" },
+        { "action": "skill", "resource": "ecmwf-multi-agents-*", "effect": "deny" }
+      ]
+    },
+
+    "scout-deep": {
+      "base": "scout",
+      "description": "Longer read-only investigation across many files or sources. Writes long findings to a notes file.",
+      "prompt": ["agents/scout-deep.md"],
+      "steps": 40,
+      // Paths match relative to the repository root (v1) or the session directory (v2); the
+      // second pattern covers sessions started in a subdirectory.
+      "permissions": [
+        { "action": "edit", "resource": "*", "effect": "deny" },
+        { "action": "edit", "resource": ".ecmwf-multi-agents/notes/*", "effect": "allow" },
+        { "action": "edit", "resource": "*/.ecmwf-multi-agents/notes/*", "effect": "allow" }
+      ]
+    },
+
+    "builder": {
+      "mode": "subagent",
+      "description": "Makes one clearly specified change, runs its checks and reports. Never commits.",
+      "prompt": ["agents/builder.md"],
+      "budget": "helper",
+      "steps": 40,
+      "permissions": [
+        { "use": "git-writes", "effect": "deny" },
+        { "action": "shell", "resource": "gh *", "effect": "deny" },
+        { "action": "delegate", "resource": "*", "effect": "deny" },
+        { "action": "question", "resource": "*", "effect": "deny" },
+        { "action": "skill", "resource": "ecmwf-multi-agents-*", "effect": "deny" }
+      ]
+    },
+
+    "builder-deep": {
+      "base": "builder",
+      "description": "Builder for hard changes: subtle logic, numerics, concurrency, several modules, or a task builder could not finish.",
+      "prompt": ["agents/builder-deep.md"],
+      "steps": 80
+    },
+
+    "reviewer": {
+      "mode": "subagent",
+      "description": "Independent review of a plan or a change. Answers APPROVE or REJECT with at most three blockers.",
+      "prompt": ["agents/reviewer.md"],
+      "budget": "helper",
+      "steps": 30,
+      "permissions": [
+        { "action": "edit", "resource": "*", "effect": "deny" },
+        { "use": "git-writes", "effect": "deny" },
+        { "action": "shell", "resource": "gh *", "effect": "deny" },
+        { "use": "gh-read", "effect": "allow" },
+        { "action": "delegate", "resource": "*", "effect": "deny" },
+        { "action": "question", "resource": "*", "effect": "deny" },
+        { "action": "todo", "resource": "*", "effect": "deny" },
+        { "action": "execute", "resource": "*", "effect": "deny" },
+        { "action": "skill", "resource": "ecmwf-multi-agents-*", "effect": "deny" }
+      ]
+    }
+  },
+
+  // Names checked against opencode's built-in commands in docs/research/command-clashes.md.
+  // `review` deliberately replaces opencode's built-in review command.
+  "commands": {
+    "onboard": {
+      "description": "Survey this repository and keep a short summary for later sessions",
+      "agent": "lead",
+      "template": "commands/onboard.md"
+    },
+    "plan": {
+      "description": "Plan a piece of work with you, then wait for your approval",
+      "agent": "lead",
+      "template": "commands/plan.md"
+    },
+    "go": {
+      "description": "Carry out an approved plan task by task",
+      "agent": "lead",
+      "template": "commands/go.md"
+    },
+    "review": {
+      "description": "Independent review of your changes, a branch, a pull request or a plan",
+      "agent": "reviewer",
+      "subtask": true,
+      "template": "commands/review.md"
+    },
+    "progress": {
+      "description": "Show progress on the current plan",
+      "agent": "scout",
+      "subtask": true,
+      "template": "commands/progress.md"
+    },
+    "guide": {
+      "description": "How this harness works, in plain words",
+      "agent": "lead",
+      "template": "commands/guide.md"
+    }
+  },
+
+  "skills": {
+    "ecmwf-multi-agents-plan": {
+      "description": "Plan file format and rules for ecmwf-multi-agents. Use when writing, updating or carrying out a plan in .ecmwf-multi-agents/plans/.",
+      "body": "skills/ecmwf-multi-agents-plan/SKILL.md",
+      "hidden": true
+    },
+    "ecmwf-multi-agents-guide": {
+      "description": "User guide to the ecmwf-multi-agents harness: agents, commands, plans, review policy, settings and profiles. Use when the user asks how the harness works.",
+      "body": "skills/ecmwf-multi-agents-guide/SKILL.md",
+      "hidden": true
+    }
+  }
+}

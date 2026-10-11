@@ -1,0 +1,225 @@
+// SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, test } from "bun:test";
+import { createPlugin } from "./plugin.ts";
+import { LEAD_PROMPT, embeddedFixture, fakeEnvironment } from "./testing.ts";
+import type { Environment, V1Client, V1Config, V1Hooks } from "./types.ts";
+import { v1ProjectRoot } from "./v1.ts";
+
+const harness = embeddedFixture();
+const GLOBAL = "/home/user/.config/opencode/ecmwf-multi-agents.jsonc";
+const PROJECT = "/repo/.opencode/ecmwf-multi-agents.jsonc";
+
+interface Recorder {
+  logs: Array<{ level: string; message: string }>;
+  toasts: string[];
+  lookups: string[];
+  client: V1Client;
+}
+
+function recorder(sessions: Record<string, string> = {}): Recorder {
+  const record: Recorder = {
+    logs: [],
+    toasts: [],
+    lookups: [],
+    client: {
+      app: {
+        log: async ({ body }) => {
+          record.logs.push({ level: body.level, message: body.message });
+          return true;
+        },
+      },
+      tui: {
+        showToast: async ({ body }) => {
+          record.toasts.push(body.message);
+          return true;
+        },
+      },
+      session: {
+        get: async ({ path }) => {
+          record.lookups.push(path.id);
+          return { data: { agent: sessions[path.id] } };
+        },
+      },
+    },
+  };
+  return record;
+}
+
+async function start(files: Record<string, string>, record = recorder(), environment?: () => Environment): Promise<V1Hooks> {
+  const plugin = createPlugin(harness, {
+    environment: environment ?? (() => fakeEnvironment(files)),
+    schedule: (run) => run(),
+  });
+  return plugin.server({ client: record.client, directory: "/repo/sub", worktree: "/repo" });
+}
+
+function config(): V1Config {
+  return {
+    agent: {
+      lead: { mode: "primary", model: "anthropic/claude-opus-5-5", variant: "xhigh", prompt: LEAD_PROMPT },
+      scout: { mode: "subagent", model: "anthropic/claude-sonnet-5-5", variant: "medium", steps: 15, prompt: "You are scout." },
+      reviewer: { mode: "subagent", model: "github-copilot/gpt-6.1-sol", variant: "medium", steps: 30, prompt: "You are reviewer." },
+    },
+  };
+}
+
+async function shell(hooks: V1Hooks, sessionID: string, command: string): Promise<string | undefined> {
+  try {
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID, callID: "c1" }, { args: { command, description: "probe" } });
+    return undefined;
+  } catch (error) {
+    return (error as Error).message;
+  }
+}
+
+describe("v1 server", () => {
+  test("the module shape: id, server and setup", () => {
+    const plugin = createPlugin(harness);
+    expect(plugin.id).toBe("ecmwf-multi-agents");
+    expect(typeof plugin.server).toBe("function");
+    expect(typeof plugin.setup).toBe("function");
+  });
+
+  test("project root is the git worktree, or the directory outside git", () => {
+    expect(v1ProjectRoot({ directory: "/repo/sub", worktree: "/repo" })).toBe("/repo");
+    expect(v1ProjectRoot({ directory: "/tmp/x", worktree: "/" })).toBe("/tmp/x");
+    expect(v1ProjectRoot({})).toBeUndefined();
+  });
+
+  test("the config hook applies global and project settings", async () => {
+    const hooks = await start({
+      [GLOBAL]: '{ "profile": "anthropic", "review": "never" }',
+      [PROJECT]: '{ "review": "always", "agents": { "scout": { "steps": 9 } } }',
+    });
+    const cfg = config();
+    await hooks.config(cfg);
+    expect(cfg.agent!.reviewer).toMatchObject({ model: "anthropic/claude-opus-5-5", variant: "high" });
+    expect(cfg.agent!.scout!.steps).toBe(9);
+    expect(cfg.agent!.lead!.prompt).toContain("Review policy: always");
+    expect(cfg.default_agent).toBe("lead");
+  });
+
+  test("an invalid file is logged and shown as a toast, and the defaults stay", async () => {
+    const record = recorder();
+    const hooks = await start({ [GLOBAL]: '{ "profile": "anthropic", "review": "sometimes" }' }, record);
+    const cfg = config();
+    await hooks.config(cfg);
+    expect(cfg.agent!.reviewer).toMatchObject({ model: "github-copilot/gpt-6.1-sol", variant: "medium" });
+    expect(cfg.agent!.lead!.prompt).toBe(LEAD_PROMPT);
+    const message = `ecmwf-multi-agents: ignoring ${GLOBAL}: "review" must be auto, ask, always or never, not "sometimes"`;
+    expect(record.logs).toEqual([{ level: "warn", message }]);
+    expect(record.toasts).toEqual([message]);
+  });
+
+  test("several problems share one delayed toast", async () => {
+    const record = recorder();
+    const pending: Array<{ run: () => void; ms: number }> = [];
+    const plugin = createPlugin(harness, {
+      environment: () => fakeEnvironment({ [GLOBAL]: "{ nope", [PROJECT]: '{ "profile": "inherit", "agents": { "scout": { "variant": "high" } } }' }),
+      schedule: (run, ms) => pending.push({ run, ms }),
+    });
+    await plugin.server({ client: record.client, directory: "/repo", worktree: "/repo" });
+    expect(record.logs).toHaveLength(2);
+    expect(record.toasts).toEqual([]);
+    expect(pending.map((item) => item.ms)).toEqual([2000]);
+    pending[0]!.run();
+    expect(record.toasts).toHaveLength(1);
+    expect(record.toasts[0]!.split("\n")).toHaveLength(2);
+  });
+
+  test("the guard blocks a helper's denied command and lets others through", async () => {
+    const hooks = await start({});
+    await hooks["chat.message"]({ sessionID: "child", agent: "builder" }, { message: { agent: "builder" } });
+    await hooks["chat.message"]({ sessionID: "root" }, { message: { agent: "lead" } });
+    expect(await shell(hooks, "child", "bun test && git push origin main")).toContain('helpers may not run "git push origin main"');
+    expect(await shell(hooks, "child", "bun test")).toBeUndefined();
+    expect(await shell(hooks, "root", "git push origin main")).toBeUndefined();
+  });
+
+  test("the guard ignores other tools and malformed arguments", async () => {
+    const hooks = await start({});
+    await hooks["chat.message"]({ sessionID: "child", agent: "builder" }, { message: { agent: "builder" } });
+    await hooks["tool.execute.before"]({ tool: "read", sessionID: "child" }, { args: { command: "git push" } });
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID: "child" }, { args: { command: 42 } });
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID: "child" }, {});
+  });
+
+  test("chat.params records the agent too, except tool-less built-ins", async () => {
+    const record = recorder();
+    const hooks = await start({}, record);
+    await hooks["chat.params"]({ sessionID: "s", agent: "reviewer" }, {});
+    await hooks["chat.params"]({ sessionID: "s", agent: "title" }, {});
+    expect(await shell(hooks, "s", "gh pr merge 1")).toContain("helpers may not run");
+    expect(record.lookups).toEqual([]);
+  });
+
+  test("an agent switch in a session is followed", async () => {
+    const hooks = await start({});
+    await hooks["chat.message"]({ sessionID: "s" }, { message: { agent: "builder" } });
+    expect(await shell(hooks, "s", "git push")).toBeDefined();
+    await hooks["chat.message"]({ sessionID: "s" }, { message: { agent: "lead" } });
+    expect(await shell(hooks, "s", "git push")).toBeUndefined();
+  });
+
+  test("an unknown session is looked up once through the client", async () => {
+    const record = recorder({ old: "scout" });
+    const hooks = await start({}, record);
+    expect(await shell(hooks, "old", "rm -rf x")).toContain("scout may not run");
+    expect(await shell(hooks, "old", "ls")).toBeUndefined();
+    expect(record.lookups).toEqual(["old"]);
+    expect(await shell(hooks, "nobody", "git push")).toBeUndefined();
+  });
+
+  test("a failing lookup lets the command through and logs nothing alarming", async () => {
+    const record = recorder();
+    record.client.session = {
+      get: async () => {
+        throw new Error("server gone");
+      },
+    };
+    const hooks = await start({}, record);
+    expect(await shell(hooks, "x", "git push")).toBeUndefined();
+    expect(record.logs.map((log) => log.level)).toEqual(["error"]);
+  });
+
+  test("fail safe: errors in hooks are logged, never thrown, and leave the config as it was", async () => {
+    const record = recorder();
+    const hooks = await start({}, record);
+    const cfg = config();
+    const before = structuredClone(cfg);
+    Object.defineProperty(cfg.agent!, "reviewer", {
+      get() {
+        throw new Error("boom");
+      },
+    });
+    await hooks.config(cfg);
+    expect(cfg.agent!.lead).toEqual(before.agent!.lead!);
+    expect(cfg.default_agent).toBeUndefined();
+    expect(record.logs).toEqual([{ level: "error", message: "ecmwf-multi-agents: internal error in the config hook, settings left unchanged: boom" }]);
+    await hooks.config(null as unknown as V1Config);
+    await hooks["chat.message"](null as never, null as never);
+    await hooks["chat.params"](null as never, null);
+    await hooks["tool.execute.before"](null as never, null as never);
+  });
+
+  test("fail safe: a broken environment still gives working hooks with the defaults", async () => {
+    const record = recorder();
+    const hooks = await start({}, record, () => {
+      throw new Error("no home");
+    });
+    const cfg = config();
+    await hooks.config(cfg);
+    expect(cfg.default_agent).toBe("lead");
+    expect(record.logs[0]?.message).toContain("internal error in reading the settings");
+  });
+
+  test("works without a client", async () => {
+    const plugin = createPlugin(harness, { environment: () => fakeEnvironment({ [GLOBAL]: "{ bad" }), schedule: (run) => run() });
+    const hooks = await plugin.server({ directory: "/repo", worktree: "/repo" });
+    const cfg = config();
+    await hooks.config(cfg);
+    expect(cfg.default_agent).toBe("lead");
+  });
+});

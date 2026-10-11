@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ecmwf-multi-agents settings",
+  "description": "Settings for the ecmwf-multi-agents agents in opencode, in ecmwf-multi-agents.jsonc. The file is read from the opencode config directory and then from a project's .opencode/ directory: project values override global ones, and agents entries merge per agent. Leave a setting out to keep its default.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "title": "Schema",
+      "description": "Path or URL of this schema, so editors can check the file and suggest values.",
+      "type": "string"
+    },
+    "review": {
+      "title": "Review policy",
+      "description": "When the reviewer checks plans and changes. Default: auto. auto: plans are reviewed before you approve them, and changes beyond a trivial edit are reviewed. ask: lead asks you each time. always: every plan and every change is reviewed. never: nothing is reviewed unless you ask with /review.",
+      "type": "string",
+      "enum": [
+        "auto",
+        "ask",
+        "always",
+        "never"
+      ],
+      "default": "auto"
+    },
+    "profile": {
+      "title": "Model profile",
+      "description": "Which models the agents use. Default: default. anthropic: Anthropic models only. The reviewer uses the strongest model, since a different family is not available. copilot: GitHub Copilot models only, with the same split as the default profile. default: Anthropic for lead, builders and scouts; GitHub Copilot GPT for the reviewer, so reviews come from a different model family. inherit: Every agent uses the model selected in the session. Helpers still differ by step limit.",
+      "type": "string",
+      "enum": [
+        "anthropic",
+        "copilot",
+        "default",
+        "inherit"
+      ],
+      "default": "default"
+    },
+    "default_agent": {
+      "title": "Start in lead",
+      "description": "Make lead the agent opencode starts with. Default: true. Set false to keep opencode's own default agent; you can still switch to lead with Tab.",
+      "type": "boolean",
+      "default": true
+    },
+    "agents": {
+      "title": "Per-agent settings",
+      "description": "Model, variant and step limit for single agents, applied after the profile.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "lead": {
+          "title": "lead",
+          "description": "Talks to you, plans, hands work to helpers and checks the results. Start here. Settings here override the profile for lead.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "model": {
+              "title": "Model",
+              "description": "Model for lead, written as provider/model, for example anthropic/claude-opus-5-5. No \"#\" and no spaces. Leave it out to use the profile's choice.",
+              "type": "string",
+              "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
+            },
+            "variant": {
+              "title": "Variant",
+              "description": "Model variant, usually the reasoning effort, such as \"high\". No \"#\". Leave it out to use the profile's choice.",
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^#\\s]+$"
+            },
+            "steps": {
+              "title": "Step limit",
+              "description": "Most model turns lead may take before it stops and reports. A whole number of at least 1. Default: no limit.",
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "scout": {
+          "title": "scout",
+          "description": "Quick read-only lookup in code, docs or the web. Returns a short answer with file:line evidence. Settings here override the profile for scout.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "model": {
+              "title": "Model",
+              "description": "Model for scout, written as provider/model, for example anthropic/claude-sonnet-5-5. No \"#\" and no spaces. Leave it out to use the profile's choice.",
+              "type": "string",
+              "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
+            },
+            "variant": {
+              "title": "Variant",
+              "description": "Model variant, usually the reasoning effort, such as \"high\". No \"#\". Leave it out to use the profile's choice.",
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^#\\s]+$"
+            },
+            "steps": {
+              "title": "Step limit",
+              "description": "Most model turns scout may take before it stops and reports. A whole number of at least 1. Default: 15.",
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "scout-deep": {
+          "title": "scout-deep",
+          "description": "Longer read-only investigation across many files or sources. Writes long findings to a notes file. Settings here override the profile for scout-deep.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "model": {
+              "title": "Model",
+              "description": "Model for scout-deep, written as provider/model, for example anthropic/claude-sonnet-5-5. No \"#\" and no spaces. Leave it out to use the profile's choice.",
+              "type": "string",
+              "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
+            },
+            "variant": {
+              "title": "Variant",
+              "description": "Model variant, usually the reasoning effort, such as \"high\". No \"#\". Leave it out to use the profile's choice.",
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^#\\s]+$"
+            },
+            "steps": {
+              "title": "Step limit",
+              "description": "Most model turns scout-deep may take before it stops and reports. A whole number of at least 1. Default: 40.",
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "builder": {
+          "title": "builder",
+          "description": "Makes one clearly specified change, runs its checks and reports. Never commits. Settings here override the profile for builder.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "model": {
+              "title": "Model",
+              "description": "Model for builder, written as provider/model, for example anthropic/claude-sonnet-5-5. No \"#\" and no spaces. Leave it out to use the profile's choice.",
+              "type": "string",
+              "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
+            },
+            "variant": {
+              "title": "Variant",
+              "description": "Model variant, usually the reasoning effort, such as \"high\". No \"#\". Leave it out to use the profile's choice.",
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^#\\s]+$"
+            },
+            "steps": {
+              "title": "Step limit",
+              "description": "Most model turns builder may take before it stops and reports. A whole number of at least 1. Default: 40.",
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "builder-deep": {
+          "title": "builder-deep",
+          "description": "Builder for hard changes: subtle logic, numerics, concurrency, several modules, or a task builder could not finish. Settings here override the profile for builder-deep.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "model": {
+              "title": "Model",
+              "description": "Model for builder-deep, written as provider/model, for example anthropic/claude-opus-5-5. No \"#\" and no spaces. Leave it out to use the profile's choice.",
+              "type": "string",
+              "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
+            },
+            "variant": {
+              "title": "Variant",
+              "description": "Model variant, usually the reasoning effort, such as \"high\". No \"#\". Leave it out to use the profile's choice.",
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^#\\s]+$"
+            },
+            "steps": {
+              "title": "Step limit",
+              "description": "Most model turns builder-deep may take before it stops and reports. A whole number of at least 1. Default: 80.",
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "reviewer": {
+          "title": "reviewer",
+          "description": "Independent review of a plan or a change. Answers APPROVE or REJECT with at most three blockers. Settings here override the profile for reviewer.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "model": {
+              "title": "Model",
+              "description": "Model for reviewer, written as provider/model, for example github-copilot/gpt-6.1-sol. No \"#\" and no spaces. Leave it out to use the profile's choice.",
+              "type": "string",
+              "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
+            },
+            "variant": {
+              "title": "Variant",
+              "description": "Model variant, usually the reasoning effort, such as \"high\". No \"#\". Leave it out to use the profile's choice.",
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^#\\s]+$"
+            },
+            "steps": {
+              "title": "Step limit",
+              "description": "Most model turns reviewer may take before it stops and reports. A whole number of at least 1. Default: 30.",
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}

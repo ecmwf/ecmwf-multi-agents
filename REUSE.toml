@@ -1,0 +1,25 @@
+version = 1
+
+# Human-facing licence text lives outside LICENSES/.
+[[annotations]]
+path = ["LICENSE"]
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 European Centre for Medium-Range Weather Forecasts (ECMWF)"
+SPDX-License-Identifier = "Apache-2.0"
+
+# Files that become model prompts (an inline header would reach the model), generated output,
+# and formats that cannot carry a comment.
+[[annotations]]
+path = [
+    "src/agents/**",
+    "src/fragments/**",
+    "src/commands/**",
+    "src/skills/**",
+    "dist/**",
+    "**/*.json",
+    "bun.lock",
+    "CLAUDE.md",
+]
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 European Centre for Medium-Range Weather Forecasts (ECMWF)"
+SPDX-License-Identifier = "Apache-2.0"
