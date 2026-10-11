@@ -11,6 +11,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-11
+
 ### Changed
 
 - `/review` and `/progress` cost less on opencode 1.x: a quarter to a third of what they did
@@ -69,5 +71,6 @@ helpers it hands work to.
 - Scenario evals (`make evals`) that compare the harness with plain opencode on a sample
   repository, using real models.
 
-[Unreleased]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.1.0...HEAD
+[Unreleased]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.2.0...HEAD
+[0.2.0]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.1.0...0.2.0
 [0.1.0]: https://github.com/ecmwf/ecmwf-multi-agents/releases/tag/0.1.0
