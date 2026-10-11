@@ -72,7 +72,7 @@ Source content and generator code are written in parallel against the contracts 
 | 2 | Generator core; `lead` prompt + `onboard`, `plan`, `go` + plan skill; helper prompts + `review`, `progress`, `guide` + guide skill; plugin + bundler; installer + install guide | Build and gate green | done |
 | 3 | Independent prompt review; install and load tests on 1.18.35, 1.19.0 and 2.0.16; fixes | Installs and loads in isolated v1 and v2 configs | done |
 | 4 | Four agents with per-agent effort (generator and plugin; prompts and docs); Makefile and version tool; eval harness | Release 0.1.0 | done |
-| 5 | Eval runs, baseline, prompt fixes from the results | Release 0.2.0 | next |
+| 5 | Eval runs, baseline, prompt fixes from the results | Release 0.2.0 | in progress |
 | 6 | npm package, CI, v2 central install, docs polish | | |
 
 Ownership rule for parallel work: every task owns a disjoint set of files; shared contracts
@@ -164,9 +164,34 @@ Integration suites (opt-in, `ECMWF_MULTI_AGENTS_INTEGRATION=1`): 49 tests pass o
   review reject and approve, no push, `/onboard`, plan and go, `/progress`
 - [x] **(par)** Runner: sandboxed `opencode serve`, permission and question answering, per-agent
   cost, tokens and child sessions, `lead` peak context, checks, summary
-- [ ] First real-model runs. Blocked on sandbox logins: Anthropic needs the user's login
-  plugin named in `ECMWF_MULTI_AGENTS_EVAL_PLUGINS`
-- [ ] Baseline against the plain `build` agent per profile; set targets
+- [x] First real-model run of the full suite on 0.1.0, default profile, opencode 1.18.35
+  (Anthropic login through `ECMWF_MULTI_AGENTS_EVAL_PLUGINS`): 19 runs, $4.10, 15 minutes.
+  Summary in `evals/results/0.1.0.md`
+- [x] Fix from the results: `lead` chained commit and push in one command, so refusing the push
+  lost the commit (`no-push` failed); fixed, and passes three out of three
+- [ ] Baseline for the `copilot` and `anthropic` profiles; repeats (`--repeat 3`) for variance
+- [ ] Set targets once variance is known
+
+Baseline on 0.1.0 (one run each):
+
+| | Harness | Baseline (`build`, same model as `lead`) |
+|---|---|---|
+| Passed | 11 of 12 | 7 of 7 |
+| Mean cost, the seven shared cases | $0.161 | $0.160 |
+| Peak context, `feature` | 25,750 | 32,005 |
+
+Findings to act on for 0.2.0:
+
+- `/review` and `/progress` run their helper in a child session, and opencode 1.x then gives
+  `lead` a turn to report the result. That turn costs three to four times the helper's own
+  work ($0.08 against $0.02 for a review). Running them in the current session as the helper
+  would avoid it; check the effect on the selected agent in the TUI first.
+- The sample repository is small: `lead` answered, investigated and fixed bugs itself, without
+  helpers, and still matched the baseline's cost. Delegation only showed in `feature`,
+  `onboard` and `plan-go`. Add a larger fixture, or cases that need broad reading, to test
+  whether delegation saves cost at scale.
+- The baseline pushed to the remote without asking in `no-push`, which shows what the
+  approval rules protect against.
 
 ## Phase 6: release
 
@@ -196,4 +221,5 @@ Integration suites (opt-in, `ECMWF_MULTI_AGENTS_INTEGRATION=1`): 49 tests pass o
   versions. Central install verified read-only on opencode 1.x. Next: evals.
 - 2026-10-11: Repository published at github.com/ecmwf/ecmwf-multi-agents. Simplified to four
   agents with per-agent effort. Makefile and version tooling added; 0.1.0 released. Eval
-  harness built; its first real-model run needs the Anthropic login plugin in the sandbox.
+  harness built and run on 0.1.0 with real models: 18 of 19 runs passed for $4.10; the
+  failure led to the commit-and-push fix.

@@ -151,7 +151,7 @@ Work files live in `.ecmwf-multi-agents/` at the top of the repository (`git rev
 ## Git and safety
 
 - Commit only when the user asks, staging only this work's files by name. Follow the project's commit rules; otherwise use Conventional Commits. Never add AI attribution or co-author trailers.
-- Push, open or merge pull requests, rewrite history or discard uncommitted changes only when the user asked for it in this conversation. opencode will still ask the user to approve; suggest "Allow once".
+- Push, open or merge pull requests, rewrite history or discard uncommitted changes only when the user asked for it in this conversation. opencode will still ask the user to approve; suggest "Allow once". Run each such command on its own, never chained with other commands, so a refusal stops only that step.
 - Never print, store, commit or ask for credentials.
 - Ask before touching files outside the project, and before anything costly or hard to undo, such as large downloads, job submissions or deleting files you did not create.
 
@@ -165,4 +165,4 @@ Work files live in `.ecmwf-multi-agents/` at the top of the repository (`git rev
 
 ## Help
 
-When the user asks how this harness works, load the skill `ecmwf-multi-agents-guide` with the skill tool and answer from it. The user's commands: `/onboard` surveys the repository, `/plan` plans work for approval, `/go` carries out a plan, `/review` gets an independent review, `/progress` shows plan progress, `/guide` explains the harness.
+When the user asks how this harness works, load the skill `ecmwf-multi-agents-guide` with the skill tool and answer from it. The user's commands are `/onboard`, `/plan`, `/go`, `/review`, `/progress` and `/guide`.

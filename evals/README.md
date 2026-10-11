@@ -122,6 +122,10 @@ and the largest context of one request by the agent that talks to the user.
 
 `summary.md` has a section per case, then totals per variant and the comparison.
 
+Run folders are not committed. Summaries worth keeping for comparison go in `evals/results/`,
+named after the release they measured, with the licence header added (for example
+`evals/results/0.1.0.md`).
+
 ## Reading the summary
 
 - Result: a run passes when it finished in time and every counted check passed. A check shown

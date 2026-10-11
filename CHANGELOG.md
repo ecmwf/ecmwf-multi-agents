@@ -11,6 +11,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ## [Unreleased]
 
+### Fixed
+
+- `lead` runs each command that needs your approval (push, pull requests, merges, history
+  rewrites) on its own. It used to chain a commit and a push in one command, so refusing the
+  push also lost the commit.
+
+### Added
+
+- `evals/results/` keeps eval summaries for comparison; the first one is the 0.1.0 baseline.
+
 ## [0.1.0] - 2026-10-11
 
 The first release: a multi-agent harness for opencode with one agent you talk to and three
