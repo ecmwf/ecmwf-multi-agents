@@ -48,6 +48,26 @@ symlink to this file.
 - New files carry SPDX headers. Markdown that becomes a prompt (agents, commands, skills,
   `dist/`) is licensed through `REUSE.toml` instead, so the header never reaches a model.
 
+## Working together
+
+Tiago Quintino and Samet Demir develop this repository together, each with their own agents.
+`PLAN.md` records who does what.
+
+- You work for the person who started your session; `git config user.name` names them. If
+  unsure, ask.
+- Before starting a task from `PLAN.md`, run `git pull --rebase` and read the task again. A task
+  that names the other person (`- [ ] Samet: ...`) is theirs: never pick it up, even if it looks
+  stalled; tell your user instead. A task that names your user, or no one, may be taken.
+- Claim the task before you change anything else: mark it `[~]`, put your user's first name in
+  front (`- [~] Tiago: ...`), commit only `PLAN.md` as `chore(plan): <name> takes <task>`, and
+  push at once. A claim is the one push that needs no further approval, because the other
+  person must see it. If the push is rejected, pull again; if someone else claimed the task
+  first, drop your claim and tell your user.
+- New work found along the way goes into `PLAN.md` as a new task, without a name unless your
+  user says it is theirs.
+- Mark the task `[x]` in the commit that completes it. Pull before every push and never
+  force-push `main`.
+
 ## Releasing
 
 - Versions are `MAJOR.MINOR.MICRO` without a `v`; the tag is exactly the version. The

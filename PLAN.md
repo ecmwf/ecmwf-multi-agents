@@ -12,6 +12,10 @@ done.
 Legend: `[ ]` to do, `[~]` in progress, `[x]` done, `[!]` blocked. Tasks marked **(par)** can run
 in parallel with their siblings.
 
+Who does what: a task that starts with a first name (`Tiago:` or `Samet:`) belongs to that
+person, and nobody else picks it up. A task without a name is free. To take one, claim it in
+this file first and push the claim, as `AGENTS.md` (Working together) describes.
+
 ## Goal
 
 A multi-agent harness for opencode that ECMWF scientists, analysts and developers can install in
@@ -77,7 +81,8 @@ Source content and generator code are written in parallel against the contracts 
 
 Ownership rule for parallel work: every task owns a disjoint set of files; shared contracts
 (`docs/architecture.md`, `docs/adr/`, `src/manifest.jsonc`, `tools/types.ts`, this plan) change
-only between waves.
+only between waves. Between the two developers, a change to a shared contract goes in its own
+small commit, pushed promptly.
 
 ## Phase 0: foundations and compatibility
 
@@ -169,8 +174,16 @@ Integration suites (opt-in, `ECMWF_MULTI_AGENTS_INTEGRATION=1`): 49 tests pass o
   Summary in `evals/results/0.1.0.md`
 - [x] Fix from the results: `lead` chained commit and push in one command, so refusing the push
   lost the commit (`no-push` failed); fixed, and passes three out of three
+- [ ] `/review` and `/progress` without the extra `lead` turn (see the first finding below);
+  measure cold and warm sessions before and after
+- [ ] One release command: fold `make version X.Y.Z` into `make release X.Y.Z` (set the
+  version, roll the changelog, rebuild, check, commit, push, tag, publish), resumable and
+  with `DRY_RUN=1`
+- [ ] A larger eval fixture, or cases that need broad reading, to test whether delegation saves
+  cost at scale (see the second finding below)
 - [ ] Baseline for the `copilot` and `anthropic` profiles; repeats (`--repeat 3`) for variance
 - [ ] Set targets once variance is known
+- [ ] Release 0.2.0
 
 Baseline on 0.1.0 (one run each):
 
