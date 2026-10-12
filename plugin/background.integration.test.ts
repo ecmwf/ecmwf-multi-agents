@@ -15,20 +15,34 @@
 // wakes lead; a message sent to a running child reaches its model at the next step boundary;
 // what a cancel and a promotion do; and, on 1.x, that a message without the child's agent
 // switches the rest of the run to the message's agent (the hazard the plugin's pinning fixes).
+// Then, with the bundled plugin installed: lead's helpers_status, helpers_steer and
+// helpers_cancel work against a running builder, a builder's call to them is refused, and on
+// 1.x a message that names lead in a builder's session still runs as the builder.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { bundlePlugin } from "../tools/bundle-plugin.ts";
 import { emitV1 } from "../tools/emit-v1.ts";
 import { V2_VERSION, emitV2 } from "../tools/emit-v2.ts";
 import type { OutputFile, ResolvedHarness } from "../tools/types.ts";
+import { HELPER_TOOLS } from "./helpers.ts";
 import { resolvedFixture } from "./testing.ts";
 
 const enabled = process.env.ECMWF_MULTI_AGENTS_INTEGRATION === "1";
 const v1Bins = (process.env.OPENCODE_V1_BINS ?? "opencode").split(/\s+/).filter((bin) => bin !== "");
 const v2Bin = process.env.OPENCODE_V2_BIN ?? "opencode2";
+/** True when the 2.0.16 binary runs; its suite is skipped otherwise, as the other suites do. */
+const v2Available = (() => {
+  if (!enabled) return false;
+  try {
+    return Bun.spawnSync([v2Bin, "--version"]).exitCode === 0;
+  } catch {
+    return false;
+  }
+})();
 const root = path.resolve(import.meta.dir, "..");
 const sandboxScript = path.join(root, "tools", "sandbox.sh");
 
@@ -112,13 +126,26 @@ function standIn(script: Script) {
         const fg = /^FG (\S+)/.exec(last);
         const more = /^CONTINUE (\S+) (\S+)/.exec(last);
         const continued = messages.some((message) => role(message) === "tool" && textOf(message).includes("Background task updated"));
+        const status = /^STATUS (\S+)/.exec(last);
+        const steer = /^STEER (\S+) (\S+)/.exec(last);
+        const cancel = /^CANCEL (\S+) (\S+)/.exec(last);
         if (bg && results === 0) tool = script.delegate(`SLOW ${bg[1]}`, true);
         else if (fg && results === 0) tool = script.delegate(`SLOW ${fg[1]}`, false);
         else if (more && !continued) tool = script.delegate(`MORE ${more[2]}`, true, more[1]);
+        else if (status && !messages.some((message) => role(message) === "tool" && /helpers? in this session/.test(textOf(message))))
+          tool = { name: HELPER_TOOLS.status, args: {} };
+        else if (steer && !messages.some((message) => role(message) === "tool" && /Sent to|not running|not a helper/.test(textOf(message))))
+          tool = { name: HELPER_TOOLS.steer, args: { id: steer[1], text: "STOP and report what you did" } };
+        else if (cancel && !messages.some((message) => role(message) === "tool" && /Stopped|not running|not a helper/.test(textOf(message))))
+          tool = { name: HELPER_TOOLS.cancel, args: { id: cancel[1] } };
         else text = "lead done";
       } else if (agent === "builder") {
-        if (users.some((user) => user.startsWith("STOP"))) text = `builder stopped after ${results} steps`;
-        else if (users.some((user) => user.startsWith("MORE"))) text = `builder continued after ${results} steps`;
+        // A steer arrives as "lead amends your brief:\nSTOP ..."; on 2.0.16 the first message starts
+        // with the platform's own "You are a subagent spawned by another session." line.
+        const forbidden = users[0]?.includes("SLOW forbidden-") && results === 0;
+        if (users.some((user) => /(^|\n)STOP/.test(user))) text = `builder stopped after ${results} steps`;
+        else if (users.some((user) => /(^|\n)MORE/.test(user))) text = `builder continued after ${results} steps`;
+        else if (forbidden) tool = { name: HELPER_TOOLS.status, args: {} };
         else if (results < STEPS) tool = { name: script.shell, args: { command: `sleep ${STEP_SECONDS}`, description: "slow step" } };
         else text = "builder finished";
       }
@@ -436,6 +463,115 @@ for (const bin of v1Bins) {
         expect(await plainApi<unknown[]>("GET", `/session/${session.id}/children`)).toHaveLength(0);
       }, 120_000);
     });
+
+    describe("with the plugin", () => {
+      let withPlugin: Server;
+      let pluginApi: typeof api;
+      const toolPart = (session: string, name: string) =>
+        within(30_000, `the ${name} call to return`, async () =>
+          (await pluginApi<V1Message[]>("GET", `/session/${session}/message`)).flatMap((message) => message.parts).find((part) => part.type === "tool" && part.tool === name && (part.state?.status === "completed" || part.state?.status === "error")),
+        );
+      const startWith = async (text: string) => {
+        const created = await pluginApi<{ id: string }>("POST", "/session", {});
+        await pluginApi("POST", `/session/${created.id}/prompt_async`, { agent: "lead", parts: [{ type: "text", text }] });
+        return created.id;
+      };
+      const tell = (session: string, text: string) => pluginApi("POST", `/session/${session}/prompt_async`, { agent: "lead", parts: [{ type: "text", text }] });
+      const childOf = (session: string) => within(20_000, "the child session", async () => (await pluginApi<Array<{ id: string }>>("GET", `/session/${session}/children`))[0]);
+      const stepsOf = (tag: string, steps: number) => within(20_000, `${steps} builder steps`, async () => (model.builder(tag).some((item) => item.results >= steps) ? true : undefined));
+
+      beforeAll(async () => {
+        await server.stop();
+        const plugin = await bundlePlugin(root, modelLessFixture());
+        mkdirSync(path.join(box.config, "plugins"), { recursive: true });
+        writeFileSync(path.join(box.config, "plugins", "ecmwf-multi-agents.js"), plugin);
+        writeFileSync(path.join(box.config, "ecmwf-multi-agents.jsonc"), '{ "profile": "inherit" }\n');
+        withPlugin = await startServer(box, bin, { OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS: "true" });
+        pluginApi = connect(withPlugin.url);
+      }, 300_000);
+
+      afterAll(async () => {
+        await withPlugin?.stop();
+      });
+
+      test("helpers_status lists the running builder with its steps and last tool call", async () => {
+        const tag = nextTag();
+        const session = await startWith(`BG ${tag}`);
+        const target = await childOf(session);
+        await stepsOf(tag, 2);
+        await tell(session, `STATUS ${tag}`);
+        const part = await toolPart(session, HELPER_TOOLS.status);
+        expect(part.state?.status).toBe("completed");
+        const output = part.state?.output ?? "";
+        expect(output).toContain("One helper in this session");
+        expect(output).toContain(`${target.id}, builder, running`);
+        expect(output).toMatch(/\d+ steps?, \d+s/);
+        expect(output).toContain("last: bash: sleep");
+        expect(output.split("\n").length).toBeLessThanOrEqual(12);
+      }, 120_000);
+
+      test("helpers_steer reaches the running builder as the builder; it stops there and lead is woken", async () => {
+        const tag = nextTag();
+        const session = await startWith(`BG ${tag}`);
+        const target = await childOf(session);
+        await stepsOf(tag, 2);
+        await tell(session, `STEER ${target.id} ${tag}`);
+        const part = await toolPart(session, HELPER_TOOLS.steer);
+        expect(part.state?.output).toContain(`Sent to builder ${target.id}`);
+        const stopped = await within(RUN_MS + 10_000, "the builder to stop", async () => model.builder(tag).find((item) => item.reply.startsWith("builder stopped")));
+        expect(stopped.results).toBeLessThan(STEPS);
+        expect(stopped.users.at(-1)).toBe("lead amends your brief:\nSTOP and report what you did");
+        expect(model.all(tag).some((item) => item.agent === "other")).toBe(false);
+        expect(await wake(tag)).toContain("builder stopped");
+      }, 120_000);
+
+      test("helpers_cancel stops the builder and helpers_status then shows it stopped; lead is not woken", async () => {
+        const tag = nextTag();
+        const session = await startWith(`BG ${tag}`);
+        const target = await childOf(session);
+        await stepsOf(tag, 1);
+        await tell(session, `CANCEL ${target.id} ${tag}`);
+        const part = await toolPart(session, HELPER_TOOLS.cancel);
+        expect(part.state?.output).toContain(`Stopped builder ${target.id}`);
+        await Bun.sleep(RUN_MS + 2_000);
+        expect(model.builder(tag).some((item) => item.reply === "builder finished")).toBe(false);
+        expect(model.lead(tag).some((item) => item.users.some((user) => user.includes("<task ")))).toBe(false);
+        await tell(session, `STATUS ${tag}`);
+        const status = await toolPart(session, HELPER_TOOLS.status);
+        expect(status.state?.output).toContain(`${target.id}, builder, stopped`);
+      }, 120_000);
+
+      test("a builder's call to helpers_status is refused: the rule hides the tool, and the guard would refuse it anyway", async () => {
+        const tag = `forbidden-${nextTag()}`;
+        const session = await startWith(`BG ${tag}`);
+        const target = await childOf(session);
+        // The deny rule removes the tool from the builder's request, so the call lands on
+        // opencode's `invalid` tool; the guard's own refusal would read "helpers may not use".
+        const part = await within(30_000, "the builder's refused call", async () =>
+          (await pluginApi<V1Message[]>("GET", `/session/${target.id}/message`))
+            .flatMap((message) => message.parts)
+            .find((part) => part.type === "tool" && (part.tool === "invalid" || part.state?.status === "error")),
+        );
+        expect(`${part.state?.output ?? ""} ${part.state?.error ?? ""}`).toMatch(/unavailable|helpers may not use helpers_status/);
+        expect(model.builder(tag)[0]!.users[0]).toContain("SLOW forbidden-");
+        await stepsOf(tag, 1);
+        await tell(session, `STATUS ${tag}`);
+        expect((await toolPart(session, HELPER_TOOLS.status)).state?.output).toContain("builder");
+      }, 120_000);
+
+      test("a message that names lead in the builder's session runs as the builder (pinned)", async () => {
+        const tag = nextTag();
+        const session = await startWith(`BG ${tag}`);
+        const target = await childOf(session);
+        await stepsOf(tag, 1);
+        await pluginApi("POST", `/session/${target.id}/prompt_async`, { agent: "lead", parts: [{ type: "text", text: "STOP and report" }] });
+        const answered = await within(RUN_MS + 10_000, "the steered request", async () => model.all(tag).find((item) => item.users.some((user) => user.startsWith("STOP"))));
+        expect(answered.agent).toBe("builder");
+        expect(answered.reply).toMatch(/^builder stopped/);
+        expect(model.all(tag).some((item) => item.agent !== "builder" && item.users.some((user) => user.startsWith("STOP")))).toBe(false);
+        expect(await wake(tag)).toContain("builder stopped");
+      }, 120_000);
+    });
   });
 }
 
@@ -456,7 +592,7 @@ const v2Script: Script = {
   shell: "shell",
 };
 
-describe.skipIf(!enabled)(`background helpers in opencode ${V2_VERSION}`, () => {
+describe.skipIf(!v2Available)(`background helpers in opencode ${V2_VERSION}`, () => {
   let box: Sandbox;
   let model: ReturnType<typeof standIn>;
   let server: Server;
@@ -576,4 +712,101 @@ describe.skipIf(!enabled)(`background helpers in opencode ${V2_VERSION}`, () => 
     expect(leadDone.at).toBeLessThan(model.builder(tag)[0]!.at + RUN_MS);
     expect(await wake(tag)).toContain("builder finished");
   }, 120_000);
+
+  describe("with the plugin", () => {
+    interface V2Content {
+      type: string;
+      name?: string;
+      state?: { status?: string; content?: unknown; error?: { message?: string } };
+    }
+    interface V2Message {
+      type: string;
+      content?: V2Content[];
+    }
+    const toolCall = (session: string, name: string) =>
+      within(30_000, `the ${name} call to return`, async () =>
+        (await api<V2Message[]>("GET", `/api/session/${session}/message`))
+          .flatMap((message) => message.content ?? [])
+          .find((item) => item.type === "tool" && item.name === name && (item.state?.status === "completed" || item.state?.status === "error")),
+      );
+    /** A 2.0.16 tool result: `state.content`, a list of text parts. */
+    const outputText = (item: V2Content): string => {
+      const content = item.state?.content;
+      if (typeof content === "string") return content;
+      if (Array.isArray(content)) return content.map((part) => (typeof part?.text === "string" ? part.text : "")).join("\n");
+      return "";
+    };
+    const tell = (session: string, text: string) => api("POST", `/api/session/${session}/prompt`, { text });
+    const stepsOf = (tag: string, steps: number) => within(20_000, `${steps} builder steps`, async () => (model.builder(tag).some((item) => item.results >= steps) ? true : undefined));
+
+    beforeAll(async () => {
+      await server.stop();
+      const plugin = await bundlePlugin(root, modelLessFixture());
+      mkdirSync(path.join(box.config, "plugins"), { recursive: true });
+      writeFileSync(path.join(box.config, "plugins", "ecmwf-multi-agents.js"), plugin);
+      writeFileSync(path.join(box.config, "ecmwf-multi-agents.jsonc"), '{ "profile": "inherit" }\n');
+      const password = randomBytes(16).toString("hex");
+      auth = `Basic ${btoa(`opencode:${password}`)}`;
+      server = await startServer(box, v2Bin, { OPENCODE_PASSWORD: password });
+      await within(60_000, "the plugin to be active", async () => {
+        const plugins = await api<Array<{ id?: string; state?: { status?: string } }>>("GET", "/api/plugin");
+        return plugins.some((plugin) => plugin.id === "ecmwf-multi-agents" && plugin.state?.status === "active") ? true : undefined;
+      });
+      await Bun.sleep(1_000);
+    }, 300_000);
+
+    test("helpers_status lists the running builder with its steps and last tool call", async () => {
+      const tag = nextTag();
+      const session = await start(`BG ${tag}`);
+      const target = await child(session);
+      await stepsOf(tag, 2);
+      await tell(session, `STATUS ${tag}`);
+      const call = await toolCall(session, HELPER_TOOLS.status);
+      expect(call.state?.status).toBe("completed");
+      const output = outputText(call);
+      expect(output).toContain("One helper in this session");
+      expect(output).toContain(`${target!.id}, builder, running`);
+      expect(output).toContain("last: shell: sleep");
+      expect(output.split("\n").length).toBeLessThanOrEqual(12);
+    }, 120_000);
+
+    test("helpers_steer reaches the running builder; it stops there and lead is woken", async () => {
+      const tag = nextTag();
+      const session = await start(`BG ${tag}`);
+      const target = await child(session);
+      await stepsOf(tag, 2);
+      await tell(session, `STEER ${target!.id} ${tag}`);
+      const call = await toolCall(session, HELPER_TOOLS.steer);
+      expect(outputText(call)).toContain(`Sent to builder ${target!.id}`);
+      const stopped = await within(RUN_MS + 10_000, "the builder to stop", async () => model.builder(tag).find((item) => item.reply.startsWith("builder stopped")));
+      expect(stopped.results).toBeLessThan(STEPS);
+      expect(stopped.users.at(-1)).toBe("lead amends your brief:\nSTOP and report what you did");
+      expect(await wake(tag)).toContain("builder stopped");
+    }, 120_000);
+
+    test("helpers_cancel stops the builder; lead is woken with state cancelled and helpers_status shows it stopped", async () => {
+      const tag = nextTag();
+      const session = await start(`BG ${tag}`);
+      const target = await child(session);
+      await stepsOf(tag, 1);
+      await tell(session, `CANCEL ${target!.id} ${tag}`);
+      const call = await toolCall(session, HELPER_TOOLS.cancel);
+      expect(outputText(call)).toContain(`Stopped builder ${target!.id}`);
+      expect(await wake(tag)).toContain('state="cancelled"');
+      expect(model.builder(tag).some((item) => item.reply === "builder finished")).toBe(false);
+      await tell(session, `STATUS ${tag}`);
+      expect(outputText(await toolCall(session, HELPER_TOOLS.status))).toContain(`${target!.id}, builder, stopped`);
+    }, 120_000);
+
+    test("a builder's call to helpers_status is refused: the rule hides the tool, and the guard would refuse it anyway", async () => {
+      const tag = `forbidden-${nextTag()}`;
+      const session = await start(`BG ${tag}`);
+      const target = await child(session);
+      const call = await within(30_000, "the builder's refused call", async () =>
+        (await api<V2Message[]>("GET", `/api/session/${target!.id}/message`)).flatMap((message) => message.content ?? []).find((item) => item.type === "tool" && item.state?.status === "error"),
+      );
+      expect(call.state?.error?.message ?? JSON.stringify(call.state)).toMatch(/No tool named "helpers_status"|helpers may not use helpers_status/);
+      expect(await wake(tag)).toContain("builder finished");
+    }, 120_000);
+  });
 });

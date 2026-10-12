@@ -16,13 +16,21 @@
 //
 // Helpers that answer in the user's own session (`/review`, `/progress`) get only their own
 // request in each model request; see isolate.ts.
+//
+// The helper tools (tools-v1.ts) let lead see, redirect and stop its helpers. A message that
+// lands in a helper's child session is pinned to that helper's agent, model and effort in
+// `chat.message`, because the run takes them from the latest user message and the TUI sends
+// lead's when the user types there (docs/research/background-helpers.md, section 7). The hook
+// receives the message object that is then saved (prompt.ts:1000 and :1046 at v1.18.35).
 
 import { applyToV1Config, planAgents, type AgentPlan } from "./apply.ts";
 import { processEnvironment } from "./environment.ts";
 import { checkShellCommand } from "./guard.ts";
+import { Activity, HELPER_TOOL_IDS, pinMessage, toolCallBlock } from "./helpers.ts";
 import { Compactions, isolateHelperRequest } from "./isolate.ts";
 import { v1Reporter } from "./report.ts";
 import { loadSettings, mergeSettings } from "./settings.ts";
+import { v1Tools } from "./tools-v1.ts";
 import type { EmbeddedHarness, Environment, Settings, V1Hooks, V1PluginInput } from "./types.ts";
 
 /** opencode 1.x names its shell tool `bash` (opencode/src/tool/shell/id.ts). */
@@ -44,9 +52,11 @@ export function v1ProjectRoot(input: V1PluginInput | undefined): string | undefi
   return typeof input?.directory === "string" && input.directory !== "" ? input.directory : undefined;
 }
 
-/** Which agent each session runs, most recently seen last. */
+/** Which agent each session runs, most recently seen last, and whether it is a child session. */
 class SessionAgents {
   private readonly agents = new Map<string, string>();
+  /** true: has a parent; false: has none. Looked up once per session. */
+  private readonly children = new Map<string, boolean>();
 
   set(session: unknown, agent: unknown): void {
     if (typeof session !== "string" || typeof agent !== "string" || agent === "") return;
@@ -54,12 +64,23 @@ class SessionAgents {
     this.agents.set(session, agent);
     if (this.agents.size > MAX_SESSIONS) {
       const oldest = this.agents.keys().next().value;
-      if (oldest !== undefined) this.agents.delete(oldest);
+      if (oldest !== undefined) {
+        this.agents.delete(oldest);
+        this.children.delete(oldest);
+      }
     }
   }
 
   get(session: string): string | undefined {
     return this.agents.get(session);
+  }
+
+  setChild(session: string, child: boolean): void {
+    this.children.set(session, child);
+  }
+
+  isChild(session: string): boolean | undefined {
+    return this.children.get(session);
   }
 }
 
@@ -89,7 +110,9 @@ export function createServer(harness: EmbeddedHarness, options: V1Options = {}) 
     const sessions = new SessionAgents();
     const helpers = new Set(harness.agents.filter((agent) => agent.mode === "subagent").map((agent) => agent.id));
     const compactions = new Compactions();
-    const lookup = async (session: string): Promise<string | undefined> => {
+    const activity = new Activity();
+    /** The session record from the server, within a short timeout; undefined when unavailable. */
+    const fetchSession = async (session: string) => {
       const get = input?.client?.session?.get;
       if (typeof get !== "function") return undefined;
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -99,13 +122,26 @@ export function createServer(harness: EmbeddedHarness, options: V1Options = {}) 
       });
       try {
         const result = await Promise.race([get.call(input.client?.session, { path: { id: session } }), timeout]);
-        const agent = result?.data?.agent;
-        if (typeof agent === "string") sessions.set(session, agent);
-        return typeof agent === "string" ? agent : undefined;
+        const data = result?.data;
+        if (data === null || data === undefined) return undefined;
+        if (typeof data.agent === "string") sessions.set(session, data.agent);
+        sessions.setChild(session, typeof data.parentID === "string" && data.parentID !== "");
+        return data;
       } finally {
         clearTimeout(timer);
       }
     };
+    const lookup = async (session: string): Promise<string | undefined> => {
+      const data = await fetchSession(session);
+      return typeof data?.agent === "string" ? data.agent : undefined;
+    };
+    const isChild = async (session: string): Promise<boolean> => {
+      const known = sessions.isChild(session);
+      if (known !== undefined) return known;
+      await fetchSession(session);
+      return sessions.isChild(session) ?? false;
+    };
+    const tool = v1Tools({ harness, client: input?.client, agentOf: (session) => sessions.get(session), activity, plans, helpers });
 
     return {
       async config(config) {
@@ -117,9 +153,21 @@ export function createServer(harness: EmbeddedHarness, options: V1Options = {}) 
         }
       },
 
+      tool,
+
       async "chat.message"(message, output) {
         try {
-          sessions.set(message?.sessionID, output?.message?.agent ?? message?.agent);
+          const session = message?.sessionID;
+          const target = output?.message;
+          if (typeof session === "string" && target !== undefined && target !== null) {
+            // A message in a helper's child session runs as that helper, whoever sent it.
+            const helper = sessions.get(session);
+            const incoming = target.agent ?? message?.agent;
+            if (helper !== undefined && helpers.has(helper) && incoming !== helper && (await isChild(session))) {
+              pinMessage(target, helper, plans.find((plan) => plan.id === helper));
+            }
+          }
+          sessions.set(session, output?.message?.agent ?? message?.agent);
         } catch (error) {
           reporter.internal("the chat.message hook", error);
         }
@@ -134,19 +182,26 @@ export function createServer(harness: EmbeddedHarness, options: V1Options = {}) 
       },
 
       async "tool.execute.before"(call, output) {
-        let block: ReturnType<typeof checkShellCommand>;
+        let message: string | undefined;
         try {
-          if (call?.tool !== SHELL_TOOL) return;
-          const command = (output?.args as { command?: unknown } | undefined)?.command;
-          if (typeof command !== "string") return;
-          const agent = sessions.get(call.sessionID) ?? (await lookup(call.sessionID));
-          block = checkShellCommand(harness, agent, command, platform);
+          if (HELPER_TOOL_IDS.includes(call?.tool)) {
+            const agent = sessions.get(call.sessionID) ?? (await lookup(call.sessionID));
+            message = toolCallBlock(harness, agent, call.tool);
+          } else if (call?.tool === SHELL_TOOL) {
+            const command = (output?.args as { command?: unknown } | undefined)?.command;
+            if (typeof command === "string") {
+              const agent = sessions.get(call.sessionID) ?? (await lookup(call.sessionID));
+              message = checkShellCommand(harness, agent, command, platform)?.message;
+            }
+          }
+          // A refused call is not a step the helper took.
+          if (message === undefined) activity.note(call?.sessionID, call?.tool, output?.args);
         } catch (error) {
-          reporter.internal("the shell guard", error);
+          reporter.internal("the tool guard", error);
           return;
         }
         // The one deliberate throw: opencode reports it to the model as the tool's error.
-        if (block !== undefined) throw new Error(block.message);
+        if (message !== undefined) throw new Error(message);
       },
 
       async "experimental.session.compacting"(compaction) {

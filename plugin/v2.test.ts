@@ -4,7 +4,7 @@
 import { describe, expect, test } from "bun:test";
 import { createPlugin } from "./plugin.ts";
 import { LEAD_PROMPT, embeddedFixture, fakeEnvironment } from "./testing.ts";
-import type { V2AgentEditor, V2AgentInfo, V2Context } from "./types.ts";
+import type { V2AgentEditor, V2AgentInfo, V2Context, V2Event, V2ToolCall, V2ToolInfo } from "./types.ts";
 import { v2ProjectRoot } from "./v2.ts";
 
 const harness = embeddedFixture();
@@ -18,8 +18,14 @@ const PROJECT = "/repo/.opencode/ecmwf-multi-agents.jsonc";
 class FakeHost {
   /** Registrations in order; each is its own entry, as in opencode (core/src/state.ts). */
   transforms: Array<(editor: V2AgentEditor) => void> = [];
-  private listeners = new Set<(event: { type: string }) => void>();
+  private listeners = new Set<(event: V2Event) => void>();
   subscriptions = 0;
+  /** Tools added through the tool transform, and the execute.before hooks. */
+  tools = new Map<string, V2ToolInfo>();
+  toolHooks: Array<(call: V2ToolCall) => Promise<void> | void> = [];
+  prompts: Array<{ sessionID: string; text: string; delivery?: string }> = [];
+  interrupts: string[] = [];
+  sessions: Record<string, { parentID?: string; agent?: string }> = {};
 
   readonly ctx: V2Context = {
     location: { directory: "/repo/sub", project: { directory: "/repo" } },
@@ -38,7 +44,36 @@ class FakeHost {
     event: {
       subscribe: (options) => this.subscribe(options?.signal),
     },
+    tool: {
+      transform: async (callback) => {
+        callback({ add: (tool) => this.tools.set(tool.name, tool), remove: (id) => void this.tools.delete(id) });
+        return { dispose: async () => {} };
+      },
+      hook: async (_name, callback) => {
+        this.toolHooks.push(callback);
+        return { dispose: async () => {} };
+      },
+    },
+    session: {
+      get: async ({ sessionID }) => (this.sessions[sessionID] === undefined ? undefined : { id: sessionID, ...this.sessions[sessionID] }),
+      prompt: async (input) => {
+        this.prompts.push(input);
+        return {};
+      },
+      interrupt: async ({ sessionID }) => {
+        this.interrupts.push(sessionID);
+        return {};
+      },
+    },
   };
+
+  /** Run a tool as opencode would: the hooks first, then the tool. */
+  async call(name: string, input: Record<string, unknown>, context: { sessionID: string; agent: string }): Promise<string> {
+    for (const hook of this.toolHooks) await hook({ tool: name, input, ...context });
+    const tool = this.tools.get(name);
+    if (tool === undefined) throw new Error(`no tool ${name}`);
+    return (await tool.execute(input, context)).content;
+  }
 
   /** opencode's loader for agent files and config: a later ("post") registration. */
   loader(defaultAgent?: string): (editor: V2AgentEditor) => void {
@@ -71,14 +106,14 @@ class FakeHost {
     return state;
   }
 
-  emit(type: string): void {
-    for (const listener of this.listeners) listener({ type });
+  emit(type: string, data?: Record<string, unknown>): void {
+    for (const listener of this.listeners) listener({ id: "evt", type, data: data ?? {} });
   }
 
-  private subscribe(signal: AbortSignal | undefined): AsyncIterable<{ type: string }> {
-    const queue: Array<{ type: string }> = [];
+  private subscribe(signal: AbortSignal | undefined): AsyncIterable<V2Event> {
+    const queue: V2Event[] = [];
     let wake: (() => void) | undefined;
-    const listener = (event: { type: string }) => {
+    const listener = (event: V2Event) => {
       queue.push(event);
       wake?.();
     };
@@ -246,5 +281,65 @@ describe("v2 setup", () => {
     host.emit("plugin.updated");
     await settle();
     expect(host.transforms).toHaveLength(2);
+  });
+});
+
+describe("v2 helper tools and guard", () => {
+  test("the three tools are added as direct tools, and a helper's call to them is refused", async () => {
+    const { host } = await start({});
+    expect([...host.tools.keys()]).toEqual(["helpers_status", "helpers_steer", "helpers_cancel"]);
+    for (const tool of host.tools.values()) {
+      expect(tool.options).toEqual({ codemode: false });
+      expect(tool.input.type).toBe("object");
+      expect(tool.input.additionalProperties).toBe(false);
+    }
+    expect(host.tools.get("helpers_steer")!.input.required).toEqual(["id", "text"]);
+    await expect(host.call("helpers_status", {}, { sessionID: "c1", agent: "scout" })).rejects.toThrow("helpers may not use helpers_status");
+    expect(await host.call("helpers_status", {}, { sessionID: "root", agent: "lead" })).toBe("No helpers in this session.");
+  });
+
+  test("status, steer and cancel follow the children the event stream announced", async () => {
+    const { host } = await start({});
+    await settle();
+    host.emit("session.created", { sessionID: "c1", parentID: "root", agent: "scout", title: "find X" });
+    host.emit("session.execution.started", { sessionID: "c1" });
+    host.emit("session.created", { sessionID: "c2", parentID: "root", agent: "builder", title: "fix Y" });
+    host.emit("session.execution.started", { sessionID: "c2" });
+    host.emit("session.execution.succeeded", { sessionID: "c2" });
+    await settle();
+    await host.call("helpers_status", {}, { sessionID: "c1", agent: "scout" }).catch(() => undefined);
+    const status = await host.call("helpers_status", {}, { sessionID: "root", agent: "lead" });
+    expect(status).toContain("2 helpers in this session");
+    expect(status).toContain("c2, builder, done, 0 steps");
+    expect(status).toContain("c1, scout, running, 0 steps");
+
+    expect(await host.call("helpers_steer", { id: "c1", text: "narrow it to src/" }, { sessionID: "root", agent: "lead" })).toContain("Sent to scout c1");
+    expect(host.prompts).toEqual([{ sessionID: "c1", text: "lead amends your brief:\nnarrow it to src/", delivery: "steer" }]);
+    expect(await host.call("helpers_steer", { id: "c2", text: "more" }, { sessionID: "root", agent: "lead" })).toContain('sessionID: "c2"');
+    expect(await host.call("helpers_steer", { id: "c1", text: "x" }, { sessionID: "elsewhere", agent: "lead" })).toBe("c1 is not a helper of this session.");
+
+    expect(await host.call("helpers_cancel", { id: "all" }, { sessionID: "root", agent: "lead" })).toStartWith("Stopped scout c1.");
+    expect(host.interrupts).toEqual(["c1"]);
+    expect(await host.call("helpers_status", {}, { sessionID: "root", agent: "lead" })).toContain("c1, scout, stopped");
+  });
+
+  test("a session the stream did not announce is looked up through the session API", async () => {
+    const { host } = await start({});
+    host.sessions.late = { parentID: "root", agent: "scout" };
+    expect(await host.call("helpers_steer", { id: "late", text: "x" }, { sessionID: "root", agent: "lead" })).toContain('sessionID: "late"');
+    expect(await host.call("helpers_cancel", { id: "late" }, { sessionID: "root", agent: "lead" })).toBe("scout late is not running.");
+    expect(await host.call("helpers_cancel", { id: "ghost" }, { sessionID: "root", agent: "lead" })).toContain('No session "ghost"');
+  });
+
+  test("tool calls feed the status report's step count and last call", async () => {
+    const { host } = await start({});
+    await settle();
+    host.emit("session.created", { sessionID: "c1", parentID: "root", agent: "scout" });
+    host.emit("session.execution.started", { sessionID: "c1" });
+    await settle();
+    for (const hook of host.toolHooks) await hook({ tool: "grep", sessionID: "c1", agent: "scout", input: { pattern: "foo" } });
+    for (const hook of host.toolHooks) await hook({ tool: "read", sessionID: "c1", agent: "scout", input: { filePath: "/a" } });
+    expect(await host.call("helpers_status", {}, { sessionID: "root", agent: "lead" })).toContain("c1, scout, running, 2 steps");
+    expect(await host.call("helpers_status", {}, { sessionID: "root", agent: "lead" })).toContain("last: read: /a");
   });
 });

@@ -67,6 +67,9 @@ export function embedHarness(harness: ResolvedHarness): EmbeddedHarness {
       shell: agent.permissions
         .filter((rule) => rule.action === "shell")
         .map((rule) => ({ resource: rule.resource, effect: rule.effect })),
+      tools: agent.permissions
+        .filter((rule) => rule.action === "tool")
+        .map((rule) => ({ resource: rule.resource, effect: rule.effect })),
     })),
   };
 }

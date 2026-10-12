@@ -267,3 +267,124 @@ describe("v1 helper requests in the user's session", () => {
     expect(record.logs.filter((log) => log.level === "error")).toEqual([]);
   });
 });
+
+describe("v1 helper tools, guard and pinning", () => {
+  interface Fake {
+    client: V1Client;
+    sessions: Record<string, { agent?: string; parentID?: string; title?: string; created?: number }>;
+    busy: Set<string>;
+    prompts: Array<{ id: string; agent?: string; text: string }>;
+    aborts: string[];
+  }
+
+  function fake(): Fake {
+    const state: Fake = {
+      sessions: {
+        root: { agent: "lead" },
+        c1: { agent: "scout", parentID: "root", title: "find X", created: 1_000 },
+        c2: { agent: "builder", parentID: "root", title: "fix Y", created: 2_000 },
+        other: { agent: "scout", parentID: "elsewhere" },
+      },
+      busy: new Set(["c1", "c2"]),
+      prompts: [],
+      aborts: [],
+      client: {
+        session: {
+          get: async ({ path }) => ({ data: state.sessions[path.id] === undefined ? null : { id: path.id, ...state.sessions[path.id] } }),
+          children: async ({ path }) => ({
+            data: Object.entries(state.sessions)
+              .filter(([, info]) => info.parentID === path.id)
+              .map(([id, info]) => ({ id, agent: info.agent, title: info.title, time: { created: info.created } })),
+          }),
+          status: async () => ({ data: Object.fromEntries([...state.busy].map((id) => [id, { type: "busy" }])) }),
+          promptAsync: async ({ path, body }) => {
+            state.prompts.push({ id: path.id, agent: body.agent, text: body.parts[0]!.text });
+            return {};
+          },
+          abort: async ({ path }) => {
+            state.busy.delete(path.id);
+            state.aborts.push(path.id);
+            return {};
+          },
+        },
+      },
+    };
+    return state;
+  }
+
+  async function hooksWith(state: Fake): Promise<V1Hooks> {
+    const plugin = createPlugin(harness, { environment: () => fakeEnvironment({}), schedule: (run) => run() });
+    return plugin.server({ client: state.client, directory: "/repo", worktree: "/repo" });
+  }
+
+  test("the tool hook offers the three tools", async () => {
+    const hooks = await hooksWith(fake());
+    expect(Object.keys(hooks.tool)).toEqual(["helpers_status", "helpers_steer", "helpers_cancel"]);
+    expect(hooks.tool.helpers_steer!.args.id!.type).toBe("string");
+  });
+
+  test("helpers_status lists the children of the caller's session with their activity", async () => {
+    const state = fake();
+    const hooks = await hooksWith(state);
+    await hooks["tool.execute.before"]({ tool: "grep", sessionID: "c1" }, { args: { pattern: "foo" } });
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID: "c1" }, { args: { command: "git log" } });
+    const text = await hooks.tool.helpers_status!.execute({}, { sessionID: "root", agent: "lead" });
+    const lines = text.split("\n");
+    expect(lines[0]).toBe("2 helpers in this session, newest first:");
+    expect(lines[1]).toMatch(/^c2, builder, running, 0 steps, \d+[smh].*: fix Y$/);
+    expect(lines[2]).toMatch(/^c1, scout, running, 2 steps, .*: find X; last: bash: git log$/);
+    expect(await hooks.tool.helpers_status!.execute({}, { sessionID: "lonely", agent: "lead" })).toBe("No helpers in this session.");
+  });
+
+  test("helpers_steer sends the amendment to a running child as its own agent", async () => {
+    const state = fake();
+    const hooks = await hooksWith(state);
+    const steer = hooks.tool.helpers_steer!;
+    expect(await steer.execute({ id: "c1", text: " skip the tests " }, { sessionID: "root", agent: "lead" })).toContain("Sent to scout c1");
+    expect(state.prompts).toEqual([{ id: "c1", agent: "scout", text: "lead amends your brief:\nskip the tests" }]);
+    expect(await steer.execute({ id: "other", text: "x" }, { sessionID: "root", agent: "lead" })).toBe("other is not a helper of this session.");
+    expect(await steer.execute({ id: "nope", text: "x" }, { sessionID: "root", agent: "lead" })).toContain('No session "nope"');
+    state.busy.delete("c1");
+    expect(await steer.execute({ id: "c1", text: "x" }, { sessionID: "root", agent: "lead" })).toContain('task_id: "c1"');
+    expect(state.prompts).toHaveLength(1);
+    await expect(steer.execute({ id: "c1", text: "  " }, { sessionID: "root", agent: "lead" })).rejects.toThrow("text must be a non-empty string");
+  });
+
+  test("helpers_cancel aborts one child or all running children and remembers them as stopped", async () => {
+    const state = fake();
+    const hooks = await hooksWith(state);
+    const cancel = hooks.tool.helpers_cancel!;
+    expect(await cancel.execute({ id: "c1" }, { sessionID: "root", agent: "lead" })).toStartWith("Stopped scout c1.");
+    expect(await cancel.execute({ id: "c1" }, { sessionID: "root", agent: "lead" })).toBe("scout c1 is not running.");
+    expect(await cancel.execute({ id: "all" }, { sessionID: "root", agent: "lead" })).toStartWith("Stopped builder c2.");
+    expect(await cancel.execute({ id: "all" }, { sessionID: "root", agent: "lead" })).toBe("No running helper to stop.");
+    expect(state.aborts).toEqual(["c1", "c2"]);
+    const status = await hooks.tool.helpers_status!.execute({}, { sessionID: "root", agent: "lead" });
+    expect(status).toContain("c1, scout, stopped");
+    expect(status).toContain("c2, builder, stopped");
+  });
+
+  test("the guard refuses a helper's call to the tools, looking the agent up when unseen", async () => {
+    const state = fake();
+    const hooks = await hooksWith(state);
+    await expect(hooks["tool.execute.before"]({ tool: "helpers_cancel", sessionID: "c2" }, { args: { id: "c1" } })).rejects.toThrow("helpers may not use helpers_cancel");
+    await hooks["tool.execute.before"]({ tool: "helpers_status", sessionID: "root" }, { args: {} });
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID: "c2" }, { args: { command: "ls" } });
+  });
+
+  test("a message that names another agent in a helper's child session is pinned to the helper; the user's own session is left alone", async () => {
+    const state = fake();
+    const hooks = await hooksWith(state);
+    await hooks["chat.message"]({ sessionID: "c2", agent: "builder" }, { message: { agent: "builder", model: { providerID: "anthropic", modelID: "claude-sonnet-5-5", variant: "high" } } });
+    const fromTui = { agent: "lead", model: { providerID: "anthropic", modelID: "claude-opus-5-5", variant: "xhigh" } };
+    await hooks["chat.message"]({ sessionID: "c2", agent: "lead" }, { message: fromTui });
+    expect(fromTui).toEqual({ agent: "builder", model: { providerID: "anthropic", modelID: "claude-sonnet-5-5", variant: "high" } });
+    // The reviewer answered inline in the root session; the next message there is lead's.
+    await hooks["chat.params"]({ sessionID: "root", agent: "reviewer" }, {});
+    const next = { agent: "lead", model: { providerID: "anthropic", modelID: "claude-opus-5-5", variant: "xhigh" } };
+    await hooks["chat.message"]({ sessionID: "root", agent: "lead" }, { message: next });
+    expect(next.agent).toBe("lead");
+    // After the pin, the session is known as the helper's again.
+    await expect(hooks["tool.execute.before"]({ tool: "helpers_steer", sessionID: "c2" }, { args: {} })).rejects.toThrow("helpers may not use");
+  });
+});

@@ -34,6 +34,8 @@ export interface EmbeddedAgent {
   mode: "primary" | "subagent";
   /** The agent's resolved neutral rules for the `shell` action, in order (last match wins). */
   shell: EmbeddedRule[];
+  /** The agent's `tool` rules: the resource is a plugin tool id (helpers.ts). */
+  tools: EmbeddedRule[];
 }
 
 export interface EmbeddedRule {
@@ -117,8 +119,34 @@ export interface V1Client {
     }) => Promise<unknown>;
   };
   session?: {
-    get?: (options: { path: { id: string } }) => Promise<{ data?: { agent?: string } | null } | undefined>;
+    get?: (options: { path: { id: string } }) => Promise<{ data?: V1SessionInfo | null } | undefined>;
+    children?: (options: { path: { id: string } }) => Promise<{ data?: V1SessionInfo[] | null } | undefined>;
+    /** Sessions with work in progress, keyed by id; idle sessions are absent. */
+    status?: () => Promise<{ data?: Record<string, { type?: string }> | null } | undefined>;
+    promptAsync?: (options: { path: { id: string }; body: { agent?: string; parts: Array<{ type: "text"; text: string }> } }) => Promise<unknown>;
+    abort?: (options: { path: { id: string } }) => Promise<unknown>;
   };
+}
+
+export interface V1SessionInfo {
+  id?: string;
+  parentID?: string;
+  agent?: string;
+  title?: string;
+  time?: { created?: number; updated?: number };
+}
+
+/** A tool the plugin adds through the 1.x `tool` hook (the JSON Schema form of `args`). */
+export interface V1ToolDefinition {
+  description: string;
+  args: Record<string, { type: "string"; description: string }>;
+  execute: (args: Record<string, unknown>, context: V1ToolContext) => Promise<string>;
+}
+
+export interface V1ToolContext {
+  sessionID: string;
+  agent: string;
+  abort?: AbortSignal;
 }
 
 export interface V1PluginInput {
@@ -129,7 +157,11 @@ export interface V1PluginInput {
 
 export interface V1Hooks {
   config: (config: V1Config) => Promise<void>;
-  "chat.message": (input: { sessionID: string; agent?: string }, output: { message?: { agent?: string } }) => Promise<void>;
+  tool: Record<string, V1ToolDefinition>;
+  "chat.message": (
+    input: { sessionID: string; agent?: string },
+    output: { message?: { agent?: string; model?: { providerID?: string; modelID?: string; variant?: string } } },
+  ) => Promise<void>;
   "chat.params": (input: { sessionID: string; agent: string }, output: unknown) => Promise<void>;
   "tool.execute.before": (input: { tool: string; sessionID: string; callID?: string }, output: { args?: unknown }) => Promise<void>;
   "experimental.session.compacting": (input: { sessionID: string }, output: unknown) => Promise<void>;
@@ -168,10 +200,66 @@ export interface V2Registration {
   dispose: () => Promise<void>;
 }
 
+/** An event as the 2.0.16 subscription yields it: an envelope with the payload under `data`. */
+export interface V2Event {
+  type?: string;
+  data?: unknown;
+  sessionID?: string;
+  parentID?: string;
+  agent?: string;
+  title?: string;
+  reason?: string;
+  [key: string]: unknown;
+}
+
+export interface V2SessionInfo {
+  id: string;
+  parentID?: string;
+  agent?: string;
+  title?: string;
+  time?: { created?: number; updated?: number };
+}
+
+/** A tool as `editor.add` takes it (@opencode/plugin 2.0.16, promise API). */
+export interface V2ToolInfo {
+  name: string;
+  description: string;
+  input: { type: "object"; properties: Record<string, { type: "string"; description: string }>; required?: string[]; additionalProperties?: boolean };
+  execute: (input: Record<string, unknown>, context: V2ToolContext) => Promise<{ content: string }>;
+  options?: { codemode?: boolean };
+}
+
+export interface V2ToolContext {
+  sessionID: string;
+  agent: string;
+  abort?: AbortSignal;
+}
+
+export interface V2ToolEditor {
+  add(tool: V2ToolInfo): void;
+  remove(id: string): void;
+}
+
+export interface V2ToolCall {
+  tool: string;
+  sessionID: string;
+  agent: string;
+  input?: unknown;
+}
+
 export interface V2Context {
   location?: { directory?: string; project?: { directory?: string } };
   agent: { transform: (callback: (editor: V2AgentEditor) => void) => Promise<V2Registration> };
-  event?: { subscribe?: (options?: { signal?: AbortSignal }) => AsyncIterable<{ type?: string }> };
+  event?: { subscribe?: (options?: { signal?: AbortSignal }) => AsyncIterable<V2Event> };
+  tool?: {
+    transform?: (callback: (editor: V2ToolEditor) => void) => Promise<V2Registration>;
+    hook?: (name: "execute.before", callback: (call: V2ToolCall) => Promise<void> | void) => Promise<V2Registration>;
+  };
+  session?: {
+    get?: (input: { sessionID: string }) => Promise<V2SessionInfo | undefined>;
+    prompt?: (input: { sessionID: string; text: string; delivery?: "steer" | "queue" }) => Promise<unknown>;
+    interrupt?: (input: { sessionID: string }) => Promise<unknown>;
+  };
 }
 
 export type V2Cleanup = () => Promise<void>;

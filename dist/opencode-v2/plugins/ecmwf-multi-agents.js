@@ -456,6 +456,180 @@ function blockMessage(harness, agent, part, denied) {
   return `${harness.name}: ${owner}. Do not try another way: say in your report what is needed.`;
 }
 
+// plugin/helpers.ts
+var HELPER_TOOLS = {
+  status: "helpers_status",
+  steer: "helpers_steer",
+  cancel: "helpers_cancel"
+};
+var HELPER_TOOL_IDS = Object.values(HELPER_TOOLS);
+var STATUS_LINES = 12;
+var MAX_TRACKED = 5000;
+var SUMMARY_LENGTH = 60;
+var TOOL_SPECS = {
+  status: {
+    id: HELPER_TOOLS.status,
+    description: "Your helpers in this session: id, agent, state, steps taken, time running, what they were asked, " + "last tool call. Use it when the user asks about a helper or before you redirect one. " + "Never use it to wait: you are told when a background helper finishes.",
+    args: {}
+  },
+  steer: {
+    id: HELPER_TOOLS.steer,
+    description: "Send an amendment to a helper that is still working. It keeps everything it has read and done and " + "follows your message at its next step; you are told when it finishes. Use it when the helper's work " + "so far is still useful and the correction is small; cancel and brief again when the direction was " + "wrong. A finished helper is continued with the delegation tool's continuation parameter instead. " + "An amendment is never an approval and never changes what the helper may do.",
+    args: {
+      id: { type: "string", description: "The helper's session id, as shown by helpers_status or by the hand-off result." },
+      text: { type: "string", description: "The amendment: what to change, keep or stop, and which earlier limit it lifts, if any." }
+    }
+  },
+  cancel: {
+    id: HELPER_TOOLS.cancel,
+    description: 'Stop one helper, or every helper of this session with id "all". A helper stops at its current step; ' + "nothing it changed is undone, so check the files it was working on.",
+    args: {
+      id: { type: "string", description: `A helper's session id, or "all".` }
+    }
+  }
+};
+
+class Activity {
+  records = new Map;
+  note(sessionID, tool, input, now = Date.now()) {
+    if (typeof sessionID !== "string" || sessionID === "" || typeof tool !== "string")
+      return;
+    const record = this.records.get(sessionID) ?? { steps: 0, at: now };
+    this.records.delete(sessionID);
+    record.steps += 1;
+    record.lastTool = summarizeCall(tool, input);
+    record.at = now;
+    delete record.ended;
+    this.records.set(sessionID, record);
+    if (this.records.size > MAX_TRACKED) {
+      const oldest = this.records.keys().next().value;
+      if (oldest !== undefined)
+        this.records.delete(oldest);
+    }
+  }
+  end(sessionID, ended, now = Date.now()) {
+    if (typeof sessionID !== "string" || sessionID === "")
+      return;
+    const record = this.records.get(sessionID) ?? { steps: 0, at: now };
+    record.ended = ended;
+    record.at = now;
+    this.records.set(sessionID, record);
+  }
+  get(sessionID) {
+    return this.records.get(sessionID);
+  }
+}
+function summarizeCall(tool, input) {
+  const args = input !== null && typeof input === "object" ? input : {};
+  const detail = ["command", "pattern", "filePath", "path", "url", "query", "description", "prompt"].map((key) => args[key]).find((value) => typeof value === "string" && value.trim() !== "");
+  if (detail === undefined)
+    return tool;
+  const flat = detail.replace(/\s+/g, " ").trim();
+  return `${tool}: ${flat.length > SUMMARY_LENGTH ? `${flat.slice(0, SUMMARY_LENGTH - 3)}...` : flat}`;
+}
+function formatStatus(helpers, now = Date.now()) {
+  if (helpers.length === 0)
+    return "No helpers in this session.";
+  const sorted = [...helpers].sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0));
+  const room = STATUS_LINES - 1;
+  const shown = sorted.length > room ? sorted.slice(0, room - 1) : sorted;
+  const lines = [`${helpers.length === 1 ? "One helper" : `${helpers.length} helpers`} in this session, newest first:`];
+  for (const helper of shown) {
+    const end = helper.state === "running" ? now : helper.updatedAt ?? now;
+    const parts = [
+      helper.id,
+      helper.agent,
+      helper.state,
+      `${helper.steps} ${helper.steps === 1 ? "step" : "steps"}`,
+      helper.startedAt === undefined ? undefined : elapsed(end - helper.startedAt)
+    ].filter((part) => part !== undefined);
+    const tail = [helper.title.trim() === "" ? undefined : helper.title.trim(), helper.lastTool === undefined ? undefined : `last: ${helper.lastTool}`].filter((part) => part !== undefined).join("; ");
+    lines.push(`${parts.join(", ")}${tail === "" ? "" : `: ${tail}`}`);
+  }
+  if (shown.length < sorted.length)
+    lines.push(`and ${sorted.length - shown.length} more`);
+  return lines.join(`
+`);
+}
+function elapsed(ms) {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 60)
+    return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60)
+    return `${minutes}m ${seconds % 60}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+function targetProblem(target, id, callerSession, helpers) {
+  if (target === undefined)
+    return `No session ${JSON.stringify(id)}. Run ${HELPER_TOOLS.status} for the ids of your helpers.`;
+  if (target.parentID !== callerSession)
+    return `${id} is not a helper of this session.`;
+  if (target.agent !== undefined && !helpers.has(target.agent))
+    return `${id} is not a harness helper (its agent is ${target.agent}).`;
+  return;
+}
+function steerText(text, from) {
+  return `${from} amends your brief:
+${text.trim()}`;
+}
+function steeredResult(agent, id) {
+  return `Sent to ${agent} ${id}. It reads the message at its next step and keeps what it has done so far; you are told when it finishes.`;
+}
+function notRunningResult(agent, id, continuation) {
+  return `${agent} ${id} is not running, so there is nothing to redirect. To continue it with its context, use the delegation tool with ${continuation}; it answers like a new hand-off.`;
+}
+function cancelledResult(cancelled) {
+  if (cancelled.length === 0)
+    return "No running helper to stop.";
+  const list = cancelled.map((item) => `${item.agent} ${item.id}`).join(", ");
+  return `Stopped ${list}. ${cancelled.length === 1 ? "It" : "They"} will not report; check ${HELPER_TOOLS.status} or the files ${cancelled.length === 1 ? "it" : "they"} touched before building on ${cancelled.length === 1 ? "its" : "their"} work.`;
+}
+function toolRuleEffect(rules, tool) {
+  for (let i = rules.length - 1;i >= 0; i--) {
+    const rule = rules[i];
+    if (rule.resource === tool || rule.resource === "*")
+      return rule.effect;
+  }
+  return;
+}
+function toolCallBlock(harness, agentId, tool) {
+  if (!HELPER_TOOL_IDS.includes(tool))
+    return;
+  const agent = harness.agents.find((item) => item.id === agentId);
+  if (agent === undefined || agent.mode !== "subagent")
+    return;
+  if (toolRuleEffect(agent.tools, tool) !== "deny")
+    return;
+  return `${harness.name}: helpers may not use ${tool}; only ${harness.defaultAgent} sees, redirects or stops helpers. Do not try another way: say in your report what is needed.`;
+}
+function splitModel(model) {
+  if (model === undefined)
+    return;
+  const slash = model.indexOf("/");
+  if (slash <= 0 || slash === model.length - 1)
+    return;
+  return { providerID: model.slice(0, slash), modelID: model.slice(slash + 1) };
+}
+function pinMessage(message, helper, plan) {
+  let changed = false;
+  if (message.agent !== helper) {
+    message.agent = helper;
+    changed = true;
+  }
+  const model = splitModel(plan?.model);
+  if (model !== undefined) {
+    const current = message.model ?? {};
+    if (current.providerID !== model.providerID || current.modelID !== model.modelID || current.variant !== plan?.effort) {
+      message.model = { ...current, providerID: model.providerID, modelID: model.modelID, variant: plan?.effort };
+      if (plan?.effort === undefined)
+        delete message.model.variant;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 // plugin/isolate.ts
 function isolateHelperRequest(messages, helpers) {
   let request = -1;
@@ -971,6 +1145,118 @@ function loadSettings(harness, environment, projectRoot) {
   return { settings: mergeSettings(files, harness), problems, applied };
 }
 
+// plugin/tools-v1.ts
+function fail(message) {
+  throw new Error(message);
+}
+function session(client) {
+  const api = client?.session;
+  if (api?.children === undefined || api.status === undefined || api.promptAsync === undefined || api.abort === undefined || api.get === undefined) {
+    fail("this opencode does not offer the session API the helper tools need");
+  }
+  return api;
+}
+async function busySessions(api) {
+  const status = (await api.status())?.data ?? {};
+  return new Set(Object.entries(status).filter(([, value]) => value?.type === "busy").map(([id]) => id));
+}
+function facts(info, id, agentOf) {
+  if (info === null || info === undefined)
+    return;
+  const agent = typeof info.agent === "string" ? info.agent : agentOf(id);
+  return { id, parentID: info.parentID, ...agent === undefined ? {} : { agent } };
+}
+function v1Tools(deps) {
+  const { harness, activity, helpers } = deps;
+  const text = (args, key) => {
+    const value = args[key];
+    if (typeof value !== "string" || value.trim() === "")
+      fail(`${key} must be a non-empty string`);
+    return value.trim();
+  };
+  const children = async (api, context) => {
+    const list = (await api.children({ path: { id: context.sessionID } }))?.data ?? [];
+    return list.filter((item) => typeof item?.id === "string");
+  };
+  const status = {
+    description: TOOL_SPECS.status.description,
+    args: TOOL_SPECS.status.args,
+    async execute(_args, context) {
+      const api = session(deps.client);
+      const [list, busy] = await Promise.all([children(api, context), busySessions(api)]);
+      const now = Date.now();
+      const views = list.map((item) => {
+        const record = activity.get(item.id);
+        const agent = (typeof item.agent === "string" ? item.agent : deps.agentOf(item.id)) ?? "helper";
+        return {
+          id: item.id,
+          agent,
+          title: typeof item.title === "string" ? item.title : "",
+          state: busy.has(item.id) ? "running" : record?.ended ?? "done",
+          steps: record?.steps ?? 0,
+          startedAt: item.time?.created,
+          updatedAt: record?.at ?? item.time?.updated,
+          ...record?.lastTool === undefined ? {} : { lastTool: record.lastTool }
+        };
+      });
+      return formatStatus(views, now);
+    }
+  };
+  const steer = {
+    description: TOOL_SPECS.steer.description,
+    args: TOOL_SPECS.steer.args,
+    async execute(args, context) {
+      const id = text(args, "id");
+      const message = text(args, "text");
+      const api = session(deps.client);
+      const target = facts((await api.get({ path: { id } }).catch(() => {
+        return;
+      }))?.data, id, deps.agentOf);
+      const problem = targetProblem(target, id, context.sessionID, helpers);
+      if (problem !== undefined)
+        return problem;
+      const agent = target.agent ?? "helper";
+      if (!(await busySessions(api)).has(id))
+        return notRunningResult(agent, id, `task_id: ${JSON.stringify(id)}`);
+      await api.promptAsync({ path: { id }, body: { agent, parts: [{ type: "text", text: steerText(message, harness.defaultAgent) }] } });
+      return steeredResult(agent, id);
+    }
+  };
+  const cancel = {
+    description: TOOL_SPECS.cancel.description,
+    args: TOOL_SPECS.cancel.args,
+    async execute(args, context) {
+      const id = text(args, "id");
+      const api = session(deps.client);
+      const busy = await busySessions(api);
+      const targets = [];
+      if (id === "all") {
+        for (const item of await children(api, context)) {
+          if (!busy.has(item.id))
+            continue;
+          targets.push({ id: item.id, agent: (typeof item.agent === "string" ? item.agent : deps.agentOf(item.id)) ?? "helper" });
+        }
+      } else {
+        const target = facts((await api.get({ path: { id } }).catch(() => {
+          return;
+        }))?.data, id, deps.agentOf);
+        const problem = targetProblem(target, id, context.sessionID, helpers);
+        if (problem !== undefined)
+          return problem;
+        if (!busy.has(id))
+          return `${target.agent ?? "helper"} ${id} is not running.`;
+        targets.push({ id, agent: target.agent ?? "helper" });
+      }
+      for (const target of targets) {
+        await api.abort({ path: { id: target.id } });
+        activity.end(target.id, "stopped");
+      }
+      return cancelledResult(targets);
+    }
+  };
+  return { [HELPER_TOOLS.status]: status, [HELPER_TOOLS.steer]: steer, [HELPER_TOOLS.cancel]: cancel };
+}
+
 // plugin/v1.ts
 var SHELL_TOOL = "bash";
 var TOOL_LESS_AGENTS = new Set(["title", "summary", "compaction"]);
@@ -985,6 +1271,7 @@ function v1ProjectRoot(input) {
 
 class SessionAgents {
   agents = new Map;
+  children = new Map;
   set(session, agent) {
     if (typeof session !== "string" || typeof agent !== "string" || agent === "")
       return;
@@ -992,12 +1279,20 @@ class SessionAgents {
     this.agents.set(session, agent);
     if (this.agents.size > MAX_SESSIONS) {
       const oldest = this.agents.keys().next().value;
-      if (oldest !== undefined)
+      if (oldest !== undefined) {
         this.agents.delete(oldest);
+        this.children.delete(oldest);
+      }
     }
   }
   get(session) {
     return this.agents.get(session);
+  }
+  setChild(session, child) {
+    this.children.set(session, child);
+  }
+  isChild(session) {
+    return this.children.get(session);
   }
 }
 function createServer(harness, options = {}) {
@@ -1025,7 +1320,8 @@ function createServer(harness, options = {}) {
     const sessions = new SessionAgents;
     const helpers = new Set(harness.agents.filter((agent) => agent.mode === "subagent").map((agent) => agent.id));
     const compactions = new Compactions;
-    const lookup = async (session) => {
+    const activity = new Activity;
+    const fetchSession = async (session) => {
       const get = input?.client?.session?.get;
       if (typeof get !== "function")
         return;
@@ -1036,14 +1332,29 @@ function createServer(harness, options = {}) {
       });
       try {
         const result = await Promise.race([get.call(input.client?.session, { path: { id: session } }), timeout]);
-        const agent = result?.data?.agent;
-        if (typeof agent === "string")
-          sessions.set(session, agent);
-        return typeof agent === "string" ? agent : undefined;
+        const data = result?.data;
+        if (data === null || data === undefined)
+          return;
+        if (typeof data.agent === "string")
+          sessions.set(session, data.agent);
+        sessions.setChild(session, typeof data.parentID === "string" && data.parentID !== "");
+        return data;
       } finally {
         clearTimeout(timer);
       }
     };
+    const lookup = async (session) => {
+      const data = await fetchSession(session);
+      return typeof data?.agent === "string" ? data.agent : undefined;
+    };
+    const isChild = async (session) => {
+      const known = sessions.isChild(session);
+      if (known !== undefined)
+        return known;
+      await fetchSession(session);
+      return sessions.isChild(session) ?? false;
+    };
+    const tool = v1Tools({ harness, client: input?.client, agentOf: (session) => sessions.get(session), activity, plans, helpers });
     return {
       async config(config) {
         try {
@@ -1054,9 +1365,19 @@ function createServer(harness, options = {}) {
           reporter.internal("the config hook", error);
         }
       },
+      tool,
       async "chat.message"(message, output) {
         try {
-          sessions.set(message?.sessionID, output?.message?.agent ?? message?.agent);
+          const session = message?.sessionID;
+          const target = output?.message;
+          if (typeof session === "string" && target !== undefined && target !== null) {
+            const helper = sessions.get(session);
+            const incoming = target.agent ?? message?.agent;
+            if (helper !== undefined && helpers.has(helper) && incoming !== helper && await isChild(session)) {
+              pinMessage(target, helper, plans.find((plan) => plan.id === helper));
+            }
+          }
+          sessions.set(session, output?.message?.agent ?? message?.agent);
         } catch (error) {
           reporter.internal("the chat.message hook", error);
         }
@@ -1070,21 +1391,26 @@ function createServer(harness, options = {}) {
         }
       },
       async "tool.execute.before"(call, output) {
-        let block;
+        let message;
         try {
-          if (call?.tool !== SHELL_TOOL)
-            return;
-          const command = output?.args?.command;
-          if (typeof command !== "string")
-            return;
-          const agent = sessions.get(call.sessionID) ?? await lookup(call.sessionID);
-          block = checkShellCommand(harness, agent, command, platform);
+          if (HELPER_TOOL_IDS.includes(call?.tool)) {
+            const agent = sessions.get(call.sessionID) ?? await lookup(call.sessionID);
+            message = toolCallBlock(harness, agent, call.tool);
+          } else if (call?.tool === SHELL_TOOL) {
+            const command = output?.args?.command;
+            if (typeof command === "string") {
+              const agent = sessions.get(call.sessionID) ?? await lookup(call.sessionID);
+              message = checkShellCommand(harness, agent, command, platform)?.message;
+            }
+          }
+          if (message === undefined)
+            activity.note(call?.sessionID, call?.tool, output?.args);
         } catch (error) {
-          reporter.internal("the shell guard", error);
+          reporter.internal("the tool guard", error);
           return;
         }
-        if (block !== undefined)
-          throw new Error(block.message);
+        if (message !== undefined)
+          throw new Error(message);
       },
       async "experimental.session.compacting"(compaction) {
         try {
@@ -1108,6 +1434,170 @@ function createServer(harness, options = {}) {
     };
   };
 }
+
+// plugin/tools-v2.ts
+var MAX_TRACKED2 = 5000;
+
+class SessionTracker {
+  sessions = new Map;
+  observe(envelope, now = Date.now()) {
+    if (typeof envelope?.type !== "string")
+      return;
+    const data = envelope.data;
+    const event = { ...envelope, ...data !== null && typeof data === "object" ? data : {}, type: envelope.type };
+    const id = event.sessionID;
+    if (typeof id !== "string" || id === "")
+      return;
+    switch (event.type) {
+      case "session.created": {
+        const created = {
+          id,
+          state: "unknown",
+          startedAt: now,
+          updatedAt: now,
+          ...typeof event.parentID === "string" ? { parentID: event.parentID } : {},
+          ...typeof event.agent === "string" ? { agent: event.agent } : {},
+          ...typeof event.title === "string" ? { title: event.title } : {}
+        };
+        this.sessions.delete(id);
+        this.sessions.set(id, created);
+        if (this.sessions.size > MAX_TRACKED2) {
+          const oldest = this.sessions.keys().next().value;
+          if (oldest !== undefined)
+            this.sessions.delete(oldest);
+        }
+        return;
+      }
+      case "session.execution.started":
+        return this.update(id, "running", now);
+      case "session.execution.succeeded":
+        return this.update(id, "done", now);
+      case "session.execution.failed":
+        return this.update(id, "failed", now);
+      case "session.execution.interrupted":
+        return this.update(id, "stopped", now);
+      case "session.renamed":
+        if (typeof event.title === "string")
+          this.update(id, undefined, now, event.title);
+        return;
+      case "session.agent.selected":
+        if (typeof event.agent === "string") {
+          const session = this.sessions.get(id);
+          if (session !== undefined)
+            session.agent = event.agent;
+        }
+        return;
+      default:
+        return;
+    }
+  }
+  update(id, state, now, title) {
+    const session = this.sessions.get(id) ?? { id, state: "unknown", startedAt: now, updatedAt: now };
+    if (state !== undefined)
+      session.state = state;
+    if (title !== undefined)
+      session.title = title;
+    session.updatedAt = now;
+    this.sessions.set(id, session);
+  }
+  get(id) {
+    return this.sessions.get(id);
+  }
+  children(parent) {
+    return [...this.sessions.values()].filter((session) => session.parentID === parent);
+  }
+}
+function fail2(message) {
+  throw new Error(message);
+}
+function sessionApi(ctx) {
+  const api = ctx.session;
+  if (api?.get === undefined || api.prompt === undefined || api.interrupt === undefined) {
+    fail2("this opencode does not offer the session API the helper tools need");
+  }
+  return api;
+}
+function v2Tools(deps) {
+  const { harness, tracker, activity, helpers } = deps;
+  const text = (args, key) => {
+    const value = args[key];
+    if (typeof value !== "string" || value.trim() === "")
+      fail2(`${key} must be a non-empty string`);
+    return value.trim();
+  };
+  const factsOf = async (id) => {
+    const tracked = tracker.get(id);
+    if (tracked !== undefined)
+      return { id, parentID: tracked.parentID, ...tracked.agent === undefined ? {} : { agent: tracked.agent } };
+    const info = await sessionApi(deps.ctx).get({ sessionID: id }).catch(() => {
+      return;
+    });
+    if (info === undefined || info === null)
+      return;
+    return { id, parentID: info.parentID, ...typeof info.agent === "string" ? { agent: info.agent } : {} };
+  };
+  const view = (session) => {
+    const record = activity.get(session.id);
+    const state = session.state === "running" && record?.ended !== undefined && record.at >= session.updatedAt ? record.ended : session.state;
+    return {
+      id: session.id,
+      agent: session.agent ?? "helper",
+      title: session.title ?? "",
+      state,
+      steps: record?.steps ?? 0,
+      startedAt: session.startedAt,
+      updatedAt: session.updatedAt,
+      ...record?.lastTool === undefined ? {} : { lastTool: record.lastTool }
+    };
+  };
+  const define = (spec, run) => ({
+    name: spec.id,
+    description: spec.description,
+    input: { type: "object", properties: spec.args, required: Object.keys(spec.args), additionalProperties: false },
+    execute: async (input, context) => ({ content: await run(input ?? {}, context) }),
+    options: { codemode: false }
+  });
+  return [
+    define(TOOL_SPECS.status, async (_args, context) => formatStatus(tracker.children(context.sessionID).map(view))),
+    define(TOOL_SPECS.steer, async (args, context) => {
+      const id = text(args, "id");
+      const message = text(args, "text");
+      const target = await factsOf(id);
+      const problem = targetProblem(target, id, context.sessionID, helpers);
+      if (problem !== undefined)
+        return problem;
+      const agent = target.agent ?? "helper";
+      if (tracker.get(id)?.state !== "running")
+        return notRunningResult(agent, id, `sessionID: ${JSON.stringify(id)}`);
+      await sessionApi(deps.ctx).prompt({ sessionID: id, text: steerText(message, harness.defaultAgent), delivery: "steer" });
+      return steeredResult(agent, id);
+    }),
+    define(TOOL_SPECS.cancel, async (args, context) => {
+      const id = text(args, "id");
+      const targets = [];
+      if (id === "all") {
+        for (const child of tracker.children(context.sessionID)) {
+          if (child.state === "running")
+            targets.push({ id: child.id, agent: child.agent ?? "helper" });
+        }
+      } else {
+        const target = await factsOf(id);
+        const problem = targetProblem(target, id, context.sessionID, helpers);
+        if (problem !== undefined)
+          return problem;
+        if (tracker.get(id)?.state !== "running")
+          return `${target.agent ?? "helper"} ${id} is not running.`;
+        targets.push({ id, agent: target.agent ?? "helper" });
+      }
+      for (const target of targets) {
+        await sessionApi(deps.ctx).interrupt({ sessionID: target.id });
+        activity.end(target.id, "stopped");
+      }
+      return cancelledResult(targets);
+    })
+  ];
+}
+var HELPER_TOOL_NAMES = [HELPER_TOOLS.status, HELPER_TOOLS.steer, HELPER_TOOLS.cancel];
 
 // plugin/v2.ts
 var FALLBACK_MS = 3000;
@@ -1152,7 +1642,7 @@ class LateTransform {
     this.stopped = true;
   }
 }
-function watchActivations(ctx, onActivation, reporter, fallbackMs) {
+function watchEvents(ctx, onActivation, onEvent, reporter, fallbackMs) {
   const controller = new AbortController;
   let seen = false;
   const subscribe = ctx.event?.subscribe;
@@ -1161,14 +1651,20 @@ function watchActivations(ctx, onActivation, reporter, fallbackMs) {
       for await (const event of subscribe.call(ctx.event, { signal: controller.signal })) {
         if (controller.signal.aborted)
           return;
-        if (event?.type !== "plugin.updated")
+        if (event?.type === "plugin.updated") {
+          seen = true;
+          onActivation();
           continue;
-        seen = true;
-        onActivation();
+        }
+        try {
+          onEvent(event);
+        } catch (error) {
+          reporter.internal("reading an event", error);
+        }
       }
     })().catch((error) => {
       if (!controller.signal.aborted)
-        reporter.internal("watching plugin activations", error);
+        reporter.internal("watching events", error);
     });
   }
   const timer = setTimeout(() => {
@@ -1206,6 +1702,35 @@ function createSetup(harness, options = {}) {
           }
         });
       }
+      const helpers = new Set(harness.agents.filter((agent) => agent.mode === "subagent").map((agent) => agent.id));
+      const tracker = new SessionTracker;
+      const activity = new Activity;
+      if (typeof ctx.tool?.transform === "function") {
+        const tools = v2Tools({ harness, ctx, tracker, activity, plans, helpers });
+        await ctx.tool.transform((editor) => {
+          try {
+            for (const tool of tools)
+              editor.add(tool);
+          } catch (error) {
+            reporter.internal("the tool transform", error);
+          }
+        });
+      }
+      if (typeof ctx.tool?.hook === "function") {
+        await ctx.tool.hook("execute.before", (call) => {
+          let message;
+          try {
+            message = toolCallBlock(harness, call?.agent, call?.tool);
+            if (message === undefined)
+              activity.note(call?.sessionID, call?.tool, call?.input);
+          } catch (error) {
+            reporter.internal("the tool guard", error);
+            return;
+          }
+          if (message !== undefined)
+            throw new Error(message);
+        });
+      }
       const late = new LateTransform(ctx, (editor) => {
         try {
           reporter.report(applyToV2Agents(editor, harness, settings, plans));
@@ -1213,7 +1738,7 @@ function createSetup(harness, options = {}) {
           reporter.internal("the agent transform", error);
         }
       }, reporter);
-      const stopWatching = watchActivations(ctx, () => void late.register(), reporter, options.fallbackMs ?? FALLBACK_MS);
+      const stopWatching = watchEvents(ctx, () => void late.register(), (event) => tracker.observe(event), reporter, options.fallbackMs ?? FALLBACK_MS);
       return async () => {
         stopWatching();
         late.stop();
@@ -1235,7 +1760,7 @@ function createPlugin(harness, options = {}) {
 }
 
 // plugin/index.ts
-var plugin_default = createPlugin({ name: "ecmwf-multi-agents", version: "0.2.0", defaultAgent: "lead", defaultProfile: "default", profiles: [{ id: "anthropic", description: "Anthropic models only. The reviewer uses the strongest model, since a different family is not available.", agents: { lead: { model: "anthropic/claude-opus-5-5", effort: "xhigh" }, scout: { model: "anthropic/claude-sonnet-5-5", effort: "medium" }, builder: { model: "anthropic/claude-sonnet-5-5", effort: "high" }, reviewer: { model: "anthropic/claude-opus-5-5", effort: "high" } } }, { id: "copilot", description: "GitHub Copilot models only, with the same split as the default profile.", agents: { lead: { model: "github-copilot/claude-opus-5.5", effort: "xhigh" }, scout: { model: "github-copilot/claude-sonnet-5.5", effort: "medium" }, builder: { model: "github-copilot/claude-sonnet-5.5", effort: "high" }, reviewer: { model: "github-copilot/gpt-6.1-sol", effort: "medium" } } }, { id: "default", description: "Anthropic for lead, scout and builder; GitHub Copilot GPT for the reviewer, so reviews come from a different model family.", agents: { lead: { model: "anthropic/claude-opus-5-5", effort: "xhigh" }, scout: { model: "anthropic/claude-sonnet-5-5", effort: "medium" }, builder: { model: "anthropic/claude-sonnet-5-5", effort: "high" }, reviewer: { model: "github-copilot/gpt-6.1-sol", effort: "medium" } } }, { id: "inherit", description: "Every agent uses the model selected in the session. Helpers still differ by step limit.", agents: {} }], agents: [{ id: "lead", mode: "primary", shell: [{ resource: "git push *", effect: "ask" }, { resource: "git -C * push *", effect: "ask" }, { resource: "git commit --amend *", effect: "ask" }, { resource: "git reset --hard *", effect: "ask" }, { resource: "git clean *", effect: "ask" }, { resource: "git rebase *", effect: "ask" }, { resource: "git branch -D *", effect: "ask" }, { resource: "git restore *", effect: "ask" }, { resource: "git checkout -- *", effect: "ask" }, { resource: "git stash drop *", effect: "ask" }, { resource: "git stash clear *", effect: "ask" }, { resource: "gh pr create *", effect: "ask" }, { resource: "gh pr merge *", effect: "ask" }, { resource: "gh pr close *", effect: "ask" }, { resource: "gh release *", effect: "ask" }, { resource: "gh repo delete *", effect: "ask" }] }, { id: "scout", mode: "subagent", shell: [{ resource: "*", effect: "deny" }, { resource: "git log *", effect: "allow" }, { resource: "git show *", effect: "allow" }, { resource: "git diff *", effect: "allow" }, { resource: "git blame *", effect: "allow" }, { resource: "git status *", effect: "allow" }, { resource: "git grep *", effect: "allow" }, { resource: "git ls-files *", effect: "allow" }, { resource: "git rev-parse *", effect: "allow" }, { resource: "ls *", effect: "allow" }, { resource: "wc *", effect: "allow" }, { resource: "file *", effect: "allow" }, { resource: "tree *", effect: "allow" }] }, { id: "builder", mode: "subagent", shell: [{ resource: "git add *", effect: "deny" }, { resource: "git commit *", effect: "deny" }, { resource: "git push *", effect: "deny" }, { resource: "git pull *", effect: "deny" }, { resource: "git fetch *", effect: "deny" }, { resource: "git reset *", effect: "deny" }, { resource: "git rebase *", effect: "deny" }, { resource: "git merge *", effect: "deny" }, { resource: "git cherry-pick *", effect: "deny" }, { resource: "git revert *", effect: "deny" }, { resource: "git am *", effect: "deny" }, { resource: "git checkout *", effect: "deny" }, { resource: "git switch *", effect: "deny" }, { resource: "git restore *", effect: "deny" }, { resource: "git stash *", effect: "deny" }, { resource: "git clean *", effect: "deny" }, { resource: "git rm *", effect: "deny" }, { resource: "git mv *", effect: "deny" }, { resource: "git tag *", effect: "deny" }, { resource: "git branch *", effect: "deny" }, { resource: "git remote *", effect: "deny" }, { resource: "git worktree *", effect: "deny" }, { resource: "git update-ref *", effect: "deny" }, { resource: "git config *", effect: "deny" }, { resource: "git -C *", effect: "deny" }, { resource: "gh *", effect: "deny" }] }, { id: "reviewer", mode: "subagent", shell: [{ resource: "git add *", effect: "deny" }, { resource: "git commit *", effect: "deny" }, { resource: "git push *", effect: "deny" }, { resource: "git pull *", effect: "deny" }, { resource: "git fetch *", effect: "deny" }, { resource: "git reset *", effect: "deny" }, { resource: "git rebase *", effect: "deny" }, { resource: "git merge *", effect: "deny" }, { resource: "git cherry-pick *", effect: "deny" }, { resource: "git revert *", effect: "deny" }, { resource: "git am *", effect: "deny" }, { resource: "git checkout *", effect: "deny" }, { resource: "git switch *", effect: "deny" }, { resource: "git restore *", effect: "deny" }, { resource: "git stash *", effect: "deny" }, { resource: "git clean *", effect: "deny" }, { resource: "git rm *", effect: "deny" }, { resource: "git mv *", effect: "deny" }, { resource: "git tag *", effect: "deny" }, { resource: "git branch *", effect: "deny" }, { resource: "git remote *", effect: "deny" }, { resource: "git worktree *", effect: "deny" }, { resource: "git update-ref *", effect: "deny" }, { resource: "git config *", effect: "deny" }, { resource: "git -C *", effect: "deny" }, { resource: "gh *", effect: "deny" }, { resource: "gh pr view *", effect: "allow" }, { resource: "gh pr diff *", effect: "allow" }, { resource: "gh pr checks *", effect: "allow" }] }] });
+var plugin_default = createPlugin({ name: "ecmwf-multi-agents", version: "0.2.0", defaultAgent: "lead", defaultProfile: "default", profiles: [{ id: "anthropic", description: "Anthropic models only. The reviewer uses the strongest model, since a different family is not available.", agents: { lead: { model: "anthropic/claude-opus-5-5", effort: "xhigh" }, scout: { model: "anthropic/claude-sonnet-5-5", effort: "medium" }, builder: { model: "anthropic/claude-sonnet-5-5", effort: "high" }, reviewer: { model: "anthropic/claude-opus-5-5", effort: "high" } } }, { id: "copilot", description: "GitHub Copilot models only, with the same split as the default profile.", agents: { lead: { model: "github-copilot/claude-opus-5.5", effort: "xhigh" }, scout: { model: "github-copilot/claude-sonnet-5.5", effort: "medium" }, builder: { model: "github-copilot/claude-sonnet-5.5", effort: "high" }, reviewer: { model: "github-copilot/gpt-6.1-sol", effort: "medium" } } }, { id: "default", description: "Anthropic for lead, scout and builder; GitHub Copilot GPT for the reviewer, so reviews come from a different model family.", agents: { lead: { model: "anthropic/claude-opus-5-5", effort: "xhigh" }, scout: { model: "anthropic/claude-sonnet-5-5", effort: "medium" }, builder: { model: "anthropic/claude-sonnet-5-5", effort: "high" }, reviewer: { model: "github-copilot/gpt-6.1-sol", effort: "medium" } } }, { id: "inherit", description: "Every agent uses the model selected in the session. Helpers still differ by step limit.", agents: {} }], agents: [{ id: "lead", mode: "primary", shell: [{ resource: "git push *", effect: "ask" }, { resource: "git -C * push *", effect: "ask" }, { resource: "git commit --amend *", effect: "ask" }, { resource: "git reset --hard *", effect: "ask" }, { resource: "git clean *", effect: "ask" }, { resource: "git rebase *", effect: "ask" }, { resource: "git branch -D *", effect: "ask" }, { resource: "git restore *", effect: "ask" }, { resource: "git checkout -- *", effect: "ask" }, { resource: "git stash drop *", effect: "ask" }, { resource: "git stash clear *", effect: "ask" }, { resource: "gh pr create *", effect: "ask" }, { resource: "gh pr merge *", effect: "ask" }, { resource: "gh pr close *", effect: "ask" }, { resource: "gh release *", effect: "ask" }, { resource: "gh repo delete *", effect: "ask" }], tools: [] }, { id: "scout", mode: "subagent", shell: [{ resource: "*", effect: "deny" }, { resource: "git log *", effect: "allow" }, { resource: "git show *", effect: "allow" }, { resource: "git diff *", effect: "allow" }, { resource: "git blame *", effect: "allow" }, { resource: "git status *", effect: "allow" }, { resource: "git grep *", effect: "allow" }, { resource: "git ls-files *", effect: "allow" }, { resource: "git rev-parse *", effect: "allow" }, { resource: "ls *", effect: "allow" }, { resource: "wc *", effect: "allow" }, { resource: "file *", effect: "allow" }, { resource: "tree *", effect: "allow" }], tools: [{ resource: "helpers_status", effect: "deny" }, { resource: "helpers_steer", effect: "deny" }, { resource: "helpers_cancel", effect: "deny" }] }, { id: "builder", mode: "subagent", shell: [{ resource: "git add *", effect: "deny" }, { resource: "git commit *", effect: "deny" }, { resource: "git push *", effect: "deny" }, { resource: "git pull *", effect: "deny" }, { resource: "git fetch *", effect: "deny" }, { resource: "git reset *", effect: "deny" }, { resource: "git rebase *", effect: "deny" }, { resource: "git merge *", effect: "deny" }, { resource: "git cherry-pick *", effect: "deny" }, { resource: "git revert *", effect: "deny" }, { resource: "git am *", effect: "deny" }, { resource: "git checkout *", effect: "deny" }, { resource: "git switch *", effect: "deny" }, { resource: "git restore *", effect: "deny" }, { resource: "git stash *", effect: "deny" }, { resource: "git clean *", effect: "deny" }, { resource: "git rm *", effect: "deny" }, { resource: "git mv *", effect: "deny" }, { resource: "git tag *", effect: "deny" }, { resource: "git branch *", effect: "deny" }, { resource: "git remote *", effect: "deny" }, { resource: "git worktree *", effect: "deny" }, { resource: "git update-ref *", effect: "deny" }, { resource: "git config *", effect: "deny" }, { resource: "git -C *", effect: "deny" }, { resource: "gh *", effect: "deny" }], tools: [{ resource: "helpers_status", effect: "deny" }, { resource: "helpers_steer", effect: "deny" }, { resource: "helpers_cancel", effect: "deny" }] }, { id: "reviewer", mode: "subagent", shell: [{ resource: "git add *", effect: "deny" }, { resource: "git commit *", effect: "deny" }, { resource: "git push *", effect: "deny" }, { resource: "git pull *", effect: "deny" }, { resource: "git fetch *", effect: "deny" }, { resource: "git reset *", effect: "deny" }, { resource: "git rebase *", effect: "deny" }, { resource: "git merge *", effect: "deny" }, { resource: "git cherry-pick *", effect: "deny" }, { resource: "git revert *", effect: "deny" }, { resource: "git am *", effect: "deny" }, { resource: "git checkout *", effect: "deny" }, { resource: "git switch *", effect: "deny" }, { resource: "git restore *", effect: "deny" }, { resource: "git stash *", effect: "deny" }, { resource: "git clean *", effect: "deny" }, { resource: "git rm *", effect: "deny" }, { resource: "git mv *", effect: "deny" }, { resource: "git tag *", effect: "deny" }, { resource: "git branch *", effect: "deny" }, { resource: "git remote *", effect: "deny" }, { resource: "git worktree *", effect: "deny" }, { resource: "git update-ref *", effect: "deny" }, { resource: "git config *", effect: "deny" }, { resource: "git -C *", effect: "deny" }, { resource: "gh *", effect: "deny" }, { resource: "gh pr view *", effect: "allow" }, { resource: "gh pr diff *", effect: "allow" }, { resource: "gh pr checks *", effect: "allow" }], tools: [{ resource: "helpers_status", effect: "deny" }, { resource: "helpers_steer", effect: "deny" }, { resource: "helpers_cancel", effect: "deny" }] }] });
 export {
   plugin_default as default
 };

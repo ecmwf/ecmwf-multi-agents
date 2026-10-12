@@ -60,6 +60,8 @@ const gitWrites = shell(
   ].map((command) => `git ${command} *`),
 );
 
+const harnessTools: Rule[] = ["helpers_status", "helpers_steer", "helpers_cancel"].map((resource) => ({ action: "tool", resource, effect: "deny" }));
+
 const readOnlyShell = shell(
   "allow",
   "git log *",
@@ -113,6 +115,7 @@ const agents: ResolvedAgent[] = [
       { action: "todo", resource: "*", effect: "deny" },
       { action: "execute", resource: "*", effect: "deny" },
       { action: "skill", resource: "ecmwf-multi-agents-*", effect: "deny" },
+      ...harnessTools,
     ],
   },
   {
@@ -129,6 +132,7 @@ const agents: ResolvedAgent[] = [
       { action: "delegate", resource: "*", effect: "deny" },
       { action: "question", resource: "*", effect: "deny" },
       { action: "skill", resource: "ecmwf-multi-agents-*", effect: "deny" },
+      ...harnessTools,
     ],
   },
   {
@@ -149,6 +153,7 @@ const agents: ResolvedAgent[] = [
       { action: "todo", resource: "*", effect: "deny" },
       { action: "execute", resource: "*", effect: "deny" },
       { action: "skill", resource: "ecmwf-multi-agents-*", effect: "deny" },
+      ...harnessTools,
     ],
   },
 ];

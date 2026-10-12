@@ -141,7 +141,7 @@ describe("checkShellCommand", () => {
 
     // A subagent added to the harness is checked with its own rules, without code changes.
     const extended = embeddedFixture();
-    extended.agents.push({ id: "tester", mode: "subagent", shell: [{ resource: "git push *", effect: "deny" }] });
+    extended.agents.push({ id: "tester", mode: "subagent", shell: [{ resource: "git push *", effect: "deny" }], tools: [] });
     expect(checkShellCommand(extended, "tester", "git push origin main", "linux")?.part).toBe("git push origin main");
     expect(checkShellCommand(extended, "tester", "git status", "linux")).toBeUndefined();
     expect(blocked("tester", "git push origin main")).toBeUndefined();
