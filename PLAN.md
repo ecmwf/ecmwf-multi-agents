@@ -313,15 +313,15 @@ Tasks, in order; **(par)** marks what can run side by side once 7a is done:
 
 7d. Prompts
 
-- [ ] Samet: **(par)** `lead`: background rule, reading `<task>` and `<subagent>` wakes as
+- [~] Samet: **(par)** `lead`: background rule, reading `<task>` and `<subagent>` wakes as
   reports (check DONE WHEN as for any report, never re-run the helper's checks twice), steer
   versus cancel rule, no polling, the two safety limits; a running helper is reached only
   through `helpers_steer`, never through `task_id` or `sessionID` on the delegation tool, so
   every redirect passes the guard and carries the helper's own agent and model
-- [ ] Samet: **(par)** `scout`, `builder`, `reviewer`: a later message amends the brief;
+- [~] Samet: **(par)** `scout`, `builder`, `reviewer`: a later message amends the brief;
   report what changed and what was already done before it; on 1.x the step limit counts the
   whole run, so a steer near the limit gets "stop and report"
-- [ ] Samet: **(par)** `/guide` skill and README: the user's path (open the helper's session
+- [~] Samet: **(par)** `/guide` skill and README: the user's path (open the helper's session
   and type; the `session.background` keybind; "ask `lead` to redirect or stop it")
 
 7e. Verification and release
