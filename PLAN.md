@@ -278,11 +278,11 @@ Tasks, in order; **(par)** marks what can run side by side once 7a is done:
   Also the tool id check: the `helpers_*` ids against the tool lists of 1.18.35, 1.19.0 and
   2.0.16 (`GET /experimental/tool` and `GET /api/tool`), as `command-clashes.md` did for
   commands
-- [~] Samet: `docs/adr/0002-background-helpers-and-steering.md` with the decisions table above
+- [x] Samet: `docs/adr/0002-background-helpers-and-steering.md` with the decisions table above
   as agreed, and the tool shape settled there: three tools, or one `helpers` tool with an
   `action` argument, chosen by what the 2.0.16 check above allows and by which gives the
   simplest permission rules
-- [ ] Samet: `docs/architecture.md`: principle 3 amended (brief is the contract, a steer
+- [x] Samet: `docs/architecture.md`: principle 3 amended (brief is the contract, a steer
   amends it); the three tools in the permission table; routing rules for background,
   steer and cancel; the notification as a report form; budgets raised. `src/manifest.jsonc`:
   budgets and permission rules for the tools, with the generator mapping the new actions to

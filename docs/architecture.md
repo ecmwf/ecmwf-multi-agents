@@ -16,7 +16,8 @@ answers land in `docs/research/` and `docs/adr/`.
 2. Delegate to save money and context. A helper is worth calling when its work would cost
    `lead` more context or a more expensive model than the hand-off costs.
 3. Every hand-off is an explicit brief. A helper starts with no memory of the conversation; the
-   brief is all it knows.
+   brief is all it knows. A later message from `lead` or the user amends the brief, and the
+   helper's report still answers it: every DONE WHEN item, plus what the amendment changed.
 4. Few agents, each with one job. How hard an agent thinks is a setting, its model and effort,
    not a separate agent. A failed task gets one more try with the gap stated, then goes to the
    user.
@@ -63,6 +64,13 @@ denies `git push` globally gets an approval prompt in `lead` instead.
 | Harness skills (`ecmwf-multi-agents-*`) | user policy | deny | deny | deny |
 | Todo list (opencode 1.x) | user policy | deny | platform default (denied) | deny |
 | Code Mode (opencode 2) | user policy | deny | user policy | deny |
+| Harness tools (`helpers_status`, `helpers_steer`, `helpers_cancel`) | user policy | deny | deny | deny |
+
+The harness tools come from the plugin (see Background helpers). A `tool` rule in the manifest
+names one tool id; the emitters write it as that id's own permission key, which on both
+platforms removes a denied tool from the agent's requests, and the plugin refuses a helper's
+call again at execution time, like the shell guard. Without the plugin the tools do not exist
+and the rules are inert.
 
 opencode 1.x denies the todo list to every subagent by default, and opencode 2 has none.
 Code Mode is the opencode 2 `execute` tool through which MCP tools and a few others are
@@ -122,6 +130,50 @@ briefs a builder to run it without changing anything.
 Parallelism: at most three helpers at once. Scouts in parallel whenever their questions are
 independent. Builders in parallel only when their file sets do not overlap.
 
+## Background helpers
+
+A hand-off normally blocks `lead` until the helper reports. Both platforms can also run a
+helper in the background: the delegation tool returns at once, `lead` goes on, and when the
+helper finishes the platform writes its final text into `lead`'s session as a user message
+(`<task ...>` on opencode 1.x, `<subagent ...>` on opencode 2) and gives `lead` a turn. On
+opencode 1.x this needs `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` in the environment
+before opencode starts; the installer and `doctor` cover it, and without it `lead` hands off
+in the foreground as before. The user can also move a blocking hand-off to the background
+with the TUI's `session.background` keybind. Evidence and limits:
+`docs/research/background-helpers.md`; decisions: `docs/adr/0002-background-helpers-and-steering.md`.
+
+`lead` uses the background when it does not need the result before its next step and has
+other work meanwhile, or when the user may want to keep talking. Each completion wakes `lead`
+once, so three background scouts can cost three `lead` turns where three parallel foreground
+scouts cost one; `/onboard` stays in the foreground. A wake is read like any report: `lead`
+checks the DONE WHEN items and does not re-run the helper's checks twice.
+
+Three tools from the plugin let `lead` see, redirect and stop its helpers; helpers never
+have them:
+
+| Tool | Does |
+|---|---|
+| `helpers_status` | The helpers of this session: agent, title, state, steps taken, elapsed time, last tool call. At most twelve lines |
+| `helpers_steer(id, text)` | Sends an amendment to a running or finished helper. The text reaches the helper at its next step; its context and prompt cache stay |
+| `helpers_cancel(id or all)` | Stops a helper and says so in the result (opencode 1.x does not wake `lead` for a cancel) |
+
+A steer amends the brief (principle 3): the helper follows the latest message, keeps the
+earlier LIMITS unless the steer lifts them, and reports what changed under ASSUMPTIONS. A
+steer is never an approval and never changes permissions. `lead` steers when the helper's
+reading so far is still useful and the correction is small; it cancels and briefs again when
+the direction was wrong. It steers reactively, when the user asks or when a status check it
+ran for a reason shows a helper off its brief; it never polls, because each status call and
+each steer is a turn of the most expensive agent. `lead` reaches a running helper only through
+`helpers_steer`, never through `task_id` or `sessionID` on the delegation tool. On opencode
+1.x a helper's step limit counts the whole run, steers included.
+
+The user may also open a helper's session and type into it. On opencode 1.x a message sent
+to a running session carries an agent and a model, and the TUI sends the user's primary agent,
+`lead`; the plugin therefore pins every message that lands in a helper's child session to that
+helper's own agent, model and effort. It never touches the user's own session, where `/review`
+and `/progress` answer inline on 1.x. A completion that lands there while a helper is
+answering reaches `lead` on its next turn, not as a wake.
+
 ## Hand-off brief
 
 `lead` sends every helper a brief with these sections. Empty sections are left out.
@@ -171,6 +223,11 @@ BLOCKERS: on REJECT only, at most three: `path:line`, the problem, the direction
 NOTES: at most three non-blocking suggestions.
 CHECKED: what was examined and which commands ran.
 ```
+
+A background helper's report arrives wrapped by the platform (`<task id="..."
+state="completed">` with the report inside on opencode 1.x, `<subagent ...>` on opencode 2;
+`state="error"` or `state="cancelled"` when it did not finish). `lead` reads the inside as the
+helper's report.
 
 The reviewer rejects only for real problems: wrong behaviour, missing acceptance criteria,
 broken checks, security issues, or a plan that does not reach its goal. Style preferences are

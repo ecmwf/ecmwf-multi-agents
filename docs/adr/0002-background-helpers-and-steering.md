@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # 0002. Background helpers, steering and cancel
 
-Status: proposed. Date: 2026-10-12.
+Status: accepted. Date: 2026-10-12.
 
 ## Context
 
