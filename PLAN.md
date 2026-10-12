@@ -268,7 +268,7 @@ Tasks, in order; **(par)** marks what can run side by side once 7a is done:
 
 7a. Evidence and contract
 
-- [ ] Samet: `docs/research/background-helpers.md`: the table above with command runs on
+- [~] Samet: `docs/research/background-helpers.md`: the table above with command runs on
   1.18.35, 1.19.0 and 2.0.16 (the stand-in experiment becomes a script under `tools/` or a
   suite in `plugin/plugin.integration.test.ts`), source references for each claim, the TUI
   hazard, and two checks that decide 7c: how a plugin tool surfaces on 2.0.16 (a tool of its
@@ -278,7 +278,7 @@ Tasks, in order; **(par)** marks what can run side by side once 7a is done:
   Also the tool id check: the `helpers_*` ids against the tool lists of 1.18.35, 1.19.0 and
   2.0.16 (`GET /experimental/tool` and `GET /api/tool`), as `command-clashes.md` did for
   commands
-- [ ] Samet: `docs/adr/0002-background-helpers-and-steering.md` with the decisions table above
+- [~] Samet: `docs/adr/0002-background-helpers-and-steering.md` with the decisions table above
   as agreed, and the tool shape settled there: three tools, or one `helpers` tool with an
   `action` argument, chosen by what the 2.0.16 check above allows and by which gives the
   simplest permission rules
