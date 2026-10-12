@@ -331,10 +331,11 @@ describe("v1 helper tools, guard and pinning", () => {
     await hooks["tool.execute.before"]({ tool: "bash", sessionID: "c1" }, { args: { command: "git log" } });
     const text = await hooks.tool.helpers_status!.execute({}, { sessionID: "root", agent: "lead" });
     const lines = text.split("\n");
-    expect(lines[0]).toBe("3 helpers in this session, newest first:");
-    expect(lines[1]).toMatch(/^general, general, running, 0 steps, .*: not ours$/);
-    expect(lines[2]).toMatch(/^c2, builder, running, 0 steps, \d+[smh].*: fix Y$/);
-    expect(lines[3]).toMatch(/^c1, scout, running, 2 steps, .*: find X; last: bash: git log$/);
+    // The general child is not a harness helper and is left out, as cancel leaves it alone.
+    expect(lines[0]).toBe("2 helpers in this session, newest first:");
+    expect(lines[1]).toMatch(/^c2, builder, running, 0 steps, \d+[smh].*: fix Y$/);
+    expect(lines[2]).toMatch(/^c1, scout, running, 2 steps, .*: find X; last: bash: git log$/);
+    expect(text).not.toContain("general");
     expect(await hooks.tool.helpers_status!.execute({}, { sessionID: "lonely", agent: "lead" })).toBe("No helpers in this session.");
   });
 

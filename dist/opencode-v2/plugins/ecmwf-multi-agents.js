@@ -1224,7 +1224,8 @@ function v1Tools(deps) {
     async execute(_args, context) {
       const api = sessionApi(deps.client);
       const [list, busy] = await Promise.all([children(api, context), busySessions(api)]);
-      const views = list.map((item) => {
+      const ours = list.filter((item) => helpers.has(agentOf(item.id, item)));
+      const views = ours.map((item) => {
         const record = activity.get(item.id);
         return {
           id: item.id,
@@ -1534,6 +1535,15 @@ class SessionTracker {
   get(id) {
     return this.sessions.get(id);
   }
+  complete(id, facts) {
+    const session = this.sessions.get(id);
+    if (session === undefined)
+      return;
+    if (session.parentID === undefined && facts.parentID !== undefined)
+      session.parentID = facts.parentID;
+    if (session.agent === undefined && facts.agent !== undefined)
+      session.agent = facts.agent;
+  }
   children(parent) {
     return [...this.sessions.values()].filter((session) => session.parentID === parent);
   }
@@ -1553,14 +1563,21 @@ function v2Tools(deps) {
   };
   const targetOf = async (id) => {
     const tracked = tracker.get(id);
-    if (tracked !== undefined)
-      return { parentID: tracked.parentID, agent: tracked.agent ?? "helper", state: stateOf(tracked) };
+    if (tracked !== undefined && tracked.parentID !== undefined && tracked.agent !== undefined) {
+      return { parentID: tracked.parentID, agent: tracked.agent, state: stateOf(tracked) };
+    }
     const info = await sessionApi2(deps.ctx).get({ sessionID: id }).catch(() => {
       return;
     });
     if (info === undefined || info === null)
-      return;
-    return { parentID: info.parentID, agent: typeof info.agent === "string" ? info.agent : "helper", state: "unknown" };
+      return tracked === undefined ? undefined : { parentID: tracked.parentID, agent: tracked.agent ?? "helper", state: stateOf(tracked) };
+    const parentID = tracked?.parentID ?? info.parentID;
+    const agent = tracked?.agent ?? (typeof info.agent === "string" ? info.agent : "helper");
+    if (tracked !== undefined) {
+      tracker.complete(id, { parentID, agent });
+      return { parentID, agent, state: stateOf(tracked) };
+    }
+    return { parentID, agent, state: "unknown" };
   };
   const view = (session) => {
     const record = activity.get(session.id);
@@ -1583,7 +1600,7 @@ function v2Tools(deps) {
     options: { codemode: false }
   });
   return [
-    define(TOOL_SPECS.status, async (_args, context) => formatStatus(tracker.children(context.sessionID).map(view))),
+    define(TOOL_SPECS.status, async (_args, context) => formatStatus(tracker.children(context.sessionID).filter((child) => child.agent === undefined || helpers.has(child.agent)).map(view))),
     define(TOOL_SPECS.steer, async (args, context) => {
       const id = requiredText(args, "id");
       const message = requiredText(args, "text");

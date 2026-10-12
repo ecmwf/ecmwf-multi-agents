@@ -74,7 +74,10 @@ export function v1Tools(deps: V1ToolDeps): Record<string, V1ToolDefinition> {
     async execute(_args, context) {
       const api = sessionApi(deps.client);
       const [list, busy] = await Promise.all([children(api, context), busySessions(api)]);
-      const views: HelperView[] = list.map((item) => {
+      // The harness's helpers only; a child of another kind (a command run as a subtask, say)
+      // is not lead's to watch, as it is not lead's to steer or stop.
+      const ours = list.filter((item) => helpers.has(agentOf(item.id, item)));
+      const views: HelperView[] = ours.map((item) => {
         const record = activity.get(item.id);
         return {
           id: item.id,

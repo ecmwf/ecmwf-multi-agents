@@ -99,6 +99,14 @@ export class SessionTracker {
     return this.sessions.get(id);
   }
 
+  /** Fill in the parent and agent of a session the stream announced only by its execution events. */
+  complete(id: string, facts: { parentID?: string; agent?: string }): void {
+    const session = this.sessions.get(id);
+    if (session === undefined) return;
+    if (session.parentID === undefined && facts.parentID !== undefined) session.parentID = facts.parentID;
+    if (session.agent === undefined && facts.agent !== undefined) session.agent = facts.agent;
+  }
+
   children(parent: string): TrackedSession[] {
     return [...this.sessions.values()].filter((session) => session.parentID === parent);
   }
@@ -133,13 +141,25 @@ export function v2Tools(deps: V2ToolDeps): V2ToolInfo[] {
     const record = activity.get(session.id);
     return session.state === "running" && record?.ended !== undefined && record.at >= session.updatedAt ? record.ended : session.state;
   };
-  /** The target as the tracker knows it, else as the server describes it (state unknown then). */
+  /**
+   * The target as the tracker knows it, completed from the server when the tracker saw only
+   * execution events for it (its parent and agent come with `session.created`); a session the
+   * tracker never saw has an unknown state.
+   */
   const targetOf = async (id: string): Promise<(TargetSession & { state: HelperState }) | undefined> => {
     const tracked = tracker.get(id);
-    if (tracked !== undefined) return { parentID: tracked.parentID, agent: tracked.agent ?? "helper", state: stateOf(tracked) };
+    if (tracked !== undefined && tracked.parentID !== undefined && tracked.agent !== undefined) {
+      return { parentID: tracked.parentID, agent: tracked.agent, state: stateOf(tracked) };
+    }
     const info = await sessionApi(deps.ctx).get({ sessionID: id }).catch(() => undefined);
-    if (info === undefined || info === null) return undefined;
-    return { parentID: info.parentID, agent: typeof info.agent === "string" ? info.agent : "helper", state: "unknown" };
+    if (info === undefined || info === null) return tracked === undefined ? undefined : { parentID: tracked.parentID, agent: tracked.agent ?? "helper", state: stateOf(tracked) };
+    const parentID = tracked?.parentID ?? info.parentID;
+    const agent = tracked?.agent ?? (typeof info.agent === "string" ? info.agent : "helper");
+    if (tracked !== undefined) {
+      tracker.complete(id, { parentID, agent });
+      return { parentID, agent, state: stateOf(tracked) };
+    }
+    return { parentID, agent, state: "unknown" };
   };
   const view = (session: TrackedSession): HelperView => {
     const record = activity.get(session.id);
@@ -164,7 +184,10 @@ export function v2Tools(deps: V2ToolDeps): V2ToolInfo[] {
   });
 
   return [
-    define(TOOL_SPECS.status, async (_args, context) => formatStatus(tracker.children(context.sessionID).map(view))),
+    // The harness's helpers only, as on 1.x; a child the tracker knows no agent for is kept.
+    define(TOOL_SPECS.status, async (_args, context) =>
+      formatStatus(tracker.children(context.sessionID).filter((child) => child.agent === undefined || helpers.has(child.agent)).map(view)),
+    ),
 
     define(TOOL_SPECS.steer, async (args, context) => {
       const id = requiredText(args, "id");

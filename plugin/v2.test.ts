@@ -344,9 +344,21 @@ describe("v2 helper tools and guard", () => {
     host.emit("session.created", { sessionID: "g1", parentID: "root", agent: "general" });
     host.emit("session.execution.started", { sessionID: "g1" });
     await settle();
+    expect(await host.call("helpers_status", {}, { sessionID: "root", agent: "lead" })).not.toContain("g1");
     expect(await host.call("helpers_cancel", { id: "all" }, { sessionID: "root", agent: "lead" })).toStartWith("Stopped scout c1.");
     expect(host.interrupts).toEqual(["c1"]);
     expect(await host.call("helpers_cancel", { id: "g1" }, { sessionID: "root", agent: "lead" })).toBe("g1 is not a harness helper (its agent is general).");
+  });
+
+  test("a session seen only through execution events is completed from the session API before the ownership check", async () => {
+    const { host } = await start({});
+    await settle();
+    host.emit("session.execution.started", { sessionID: "orphan" });
+    await settle();
+    host.sessions.orphan = { parentID: "root", agent: "builder" };
+    expect(await host.call("helpers_steer", { id: "orphan", text: "stop" }, { sessionID: "root", agent: "lead" })).toContain("Sent to builder orphan");
+    expect(host.prompts.at(-1)).toEqual({ sessionID: "orphan", text: "lead amends your brief:\nstop", delivery: "steer" });
+    expect(await host.call("helpers_status", {}, { sessionID: "root", agent: "lead" })).toContain("orphan, builder, running");
   });
 
   test("tool calls feed the status report's step count and last call", async () => {
