@@ -257,7 +257,7 @@ Decisions to agree with Tiago before 7c starts (shared contracts change):
 |---|---|
 | Mechanism | Build on the platforms' own background mode and session API. No task manager, poller or queue in the plugin: the wake-the-parent problem belongs inside the session loop, where opencode already solves it |
 | Tools | Three plugin tools for `lead` only, same on both platforms: `helpers_status` (children of this session: agent, title, state, steps, elapsed, last tool call), `helpers_steer(id, text)`, `helpers_cancel(id or all)`. Helpers are denied all three in the manifest and by the plugin guard |
-| Steer semantics | The brief stays the contract; a steer amends it. Helpers follow the latest message, keep earlier LIMITS unless lifted, and report what changed under ASSUMPTIONS. A steer is never an approval and never changes permissions |
+| Steer semantics | The brief stays the contract; a steer amends it. Helpers follow the latest message, keep earlier LIMITS unless lifted, and report what changed under ASSUMPTIONS. A steer is never an approval and never changes permissions. `helpers_steer` is for a running helper; a finished one is continued through the delegation tool's continuation parameter, which both platforms handle well and which the plugin cannot do on 2.0.16 (no messages through the plugin context) |
 | When `lead` steers | Reactively: the user asks, or `helpers_status` (run only when the user asks or before a steer, never polled) shows a helper off its brief. Steer when the helper's reading so far is still useful and the correction is small; cancel and brief again when the direction was wrong |
 | When `lead` uses background | When it has other work meanwhile (answer the user, next plan task) or the user may want to keep talking. Each completion wakes `lead` once, so three background scouts cost up to three `lead` turns where three parallel foreground scouts cost one; `/onboard` stays foreground |
 | 1.x child pinning | The plugin's `chat.message` hook rewrites `agent`, `model` and `variant` of a message that lands in a helper's child session to that helper's own, so typing into a running helper steers it instead of switching it to `lead`. Never applied to the user's own session (`/review` and `/progress` run there by design) |
@@ -298,15 +298,15 @@ Tasks, in order; **(par)** marks what can run side by side once 7a is done:
 
 7c. Plugin
 
-- [~] Samet: **(par)** `helpers_status`, `helpers_steer`, `helpers_cancel` registered through
+- [x] Samet: **(par)** `helpers_status`, `helpers_steer`, `helpers_cancel` registered through
   the plugin `tool` hook on both platforms, with the client calls per platform (1.x:
   `session.children`, `session.status`, `session.messages`, `session.prompt_async` with the
   child's agent, model and variant, `session.abort`; 2.0.16: `GET /api/session` by parent,
   `prompt` with `delivery: steer`, `interrupt`); refuse a target that is not a helper child
   of the caller's session; output of `helpers_status` at most twelve lines
-- [~] Samet: **(par)** Guard: helpers denied the three tools in `tool.execute.before` whatever
+- [x] Samet: **(par)** Guard: helpers denied the three tools in `tool.execute.before` whatever
   was approved, like the shell guard; unit tests
-- [~] Samet: 1.x child pinning in `chat.message`; test that the isolation hook leaves a
+- [x] Samet: 1.x child pinning in `chat.message`; test that the isolation hook leaves a
   steered child session alone and that `/review` in the user's session is unaffected; decide
   from the 7a check what to do with a wake that lands during an inline `/review` (hold it,
   or tell `lead` not to start background work before a `/review`)
@@ -369,3 +369,9 @@ and a steer cost; `/guide` explains it in plain words.
   mechanics against their source and a stand-in model on 1.18.35 and 2.0.23 (table in the
   phase). opencode's own background mode is enough; the plugin adds status, steer and cancel
   for `lead` and pins 1.x child sessions to their helper.
+- 2026-10-12: Phase 7a and 7c done by Samet on a branch: research note, ADR 0002, the
+  contract, `tool` rules in the generator and manifest, and the plugin's three tools, guard
+  and 1.x pinning, verified on 1.18.35, 1.19.0 and 2.0.16 (`plugin/background.integration.test.ts`,
+  60 integration tests with the plugin suite). Found on the way: 2.0.16's plugin context has
+  no session list or messages, so children come from the event stream there; a steer is for
+  running helpers only, a finished one is continued through the delegation tool.
