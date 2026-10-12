@@ -519,6 +519,16 @@ class Activity {
     delete record.ended;
     remember(this.records, sessionID, record);
   }
+  resume(sessionID, now = Date.now()) {
+    if (typeof sessionID !== "string" || sessionID === "")
+      return;
+    const record = this.records.get(sessionID);
+    if (record?.ended === undefined)
+      return;
+    delete record.ended;
+    record.at = now;
+    remember(this.records, sessionID, record);
+  }
   end(sessionID, ended, now = Date.now()) {
     if (typeof sessionID !== "string" || sessionID === "")
       return;
@@ -552,9 +562,11 @@ function commandHead(command) {
 function urlHead(url) {
   try {
     const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:" || parsed.host === "")
+      return "";
     return `${parsed.origin}${parsed.pathname}`;
   } catch {
-    return url.split(/[?#@]/, 1)[0] ?? url;
+    return "";
   }
 }
 function summarizeCall(tool, input) {
@@ -1403,11 +1415,11 @@ function createServer(harness, options = {}) {
           const target = output?.message;
           if (typeof session === "string" && target !== undefined && target !== null) {
             const helper = sessions.get(session);
-            const incoming = target.agent ?? message?.agent;
-            if (helper !== undefined && helpers.has(helper) && incoming !== helper && await isChild(session)) {
+            if (helper !== undefined && helpers.has(helper) && await isChild(session)) {
               pinMessage(target, helper, plans.find((plan) => plan.id === helper));
             }
           }
+          activity.resume(session);
           sessions.set(session, output?.message?.agent ?? message?.agent);
         } catch (error) {
           reporter.internal("the chat.message hook", error);
@@ -1423,22 +1435,31 @@ function createServer(harness, options = {}) {
       },
       async "tool.execute.before"(call, output) {
         let message;
-        try {
-          if (HELPER_TOOL_IDS.includes(call?.tool)) {
+        if (HELPER_TOOL_IDS.includes(call?.tool)) {
+          try {
             const agent = sessions.get(call.sessionID) ?? await lookup(call.sessionID);
             message = toolCallBlock(harness, agent, call.tool);
-          } else if (call?.tool === SHELL_TOOL) {
+          } catch (error) {
+            reporter.internal("verifying the caller of a helper tool", error);
+            message = toolCallBlock(harness, undefined, call.tool);
+          }
+        } else if (call?.tool === SHELL_TOOL) {
+          try {
             const command = output?.args?.command;
             if (typeof command === "string") {
               const agent = sessions.get(call.sessionID) ?? await lookup(call.sessionID);
               message = checkShellCommand(harness, agent, command, platform)?.message;
             }
+          } catch (error) {
+            reporter.internal("the shell guard", error);
+            return;
           }
+        }
+        try {
           if (message === undefined)
             activity.observe(call?.sessionID, call?.tool, output?.args);
         } catch (error) {
-          reporter.internal("the tool guard", error);
-          return;
+          reporter.internal("recording a tool call", error);
         }
         if (message !== undefined)
           throw new Error(message);

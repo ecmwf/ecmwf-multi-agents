@@ -167,13 +167,15 @@ export function createServer(harness: EmbeddedHarness, options: V1Options = {}) 
           const session = message?.sessionID;
           const target = output?.message;
           if (typeof session === "string" && target !== undefined && target !== null) {
-            // A message in a helper's child session runs as that helper, whoever sent it.
+            // Every message in a helper's child session runs as that helper, with the helper's
+            // model and effort, whoever sent it and whatever it names.
             const helper = sessions.get(session);
-            const incoming = target.agent ?? message?.agent;
-            if (helper !== undefined && helpers.has(helper) && incoming !== helper && (await isChild(session))) {
+            if (helper !== undefined && helpers.has(helper) && (await isChild(session))) {
               pinMessage(target, helper, plans.find((plan) => plan.id === helper));
             }
           }
+          // A new message starts a new run; an earlier stop or failure no longer describes it.
+          activity.resume(session);
           sessions.set(session, output?.message?.agent ?? message?.agent);
         } catch (error) {
           reporter.internal("the chat.message hook", error);
@@ -190,22 +192,32 @@ export function createServer(harness: EmbeddedHarness, options: V1Options = {}) 
 
       async "tool.execute.before"(call, output) {
         let message: string | undefined;
-        try {
-          if (HELPER_TOOL_IDS.includes(call?.tool)) {
+        if (HELPER_TOOL_IDS.includes(call?.tool)) {
+          // Fail closed: a caller that cannot be verified is refused like any other non-lead caller.
+          try {
             const agent = sessions.get(call.sessionID) ?? (await lookup(call.sessionID));
             message = toolCallBlock(harness, agent, call.tool);
-          } else if (call?.tool === SHELL_TOOL) {
+          } catch (error) {
+            reporter.internal("verifying the caller of a helper tool", error);
+            message = toolCallBlock(harness, undefined, call.tool);
+          }
+        } else if (call?.tool === SHELL_TOOL) {
+          try {
             const command = (output?.args as { command?: unknown } | undefined)?.command;
             if (typeof command === "string") {
               const agent = sessions.get(call.sessionID) ?? (await lookup(call.sessionID));
               message = checkShellCommand(harness, agent, command, platform)?.message;
             }
+          } catch (error) {
+            reporter.internal("the shell guard", error);
+            return;
           }
+        }
+        try {
           // A refused call is not a step the helper took.
           if (message === undefined) activity.observe(call?.sessionID, call?.tool, output?.args);
         } catch (error) {
-          reporter.internal("the tool guard", error);
-          return;
+          reporter.internal("recording a tool call", error);
         }
         // The one deliberate throw: opencode reports it to the model as the tool's error.
         if (message !== undefined) throw new Error(message);

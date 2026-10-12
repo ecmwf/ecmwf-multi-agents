@@ -124,6 +124,16 @@ export class Activity {
     remember(this.records, sessionID, record);
   }
 
+  /** A new message in the session starts a new run: an earlier ending no longer describes it. */
+  resume(sessionID: unknown, now: number = Date.now()): void {
+    if (typeof sessionID !== "string" || sessionID === "") return;
+    const record = this.records.get(sessionID);
+    if (record?.ended === undefined) return;
+    delete record.ended;
+    record.at = now;
+    remember(this.records, sessionID, record);
+  }
+
   /** Record how a session's run ended, when the platform does not say so itself. */
   end(sessionID: unknown, ended: ActivityRecord["ended"], now: number = Date.now()): void {
     if (typeof sessionID !== "string" || sessionID === "") return;
@@ -166,13 +176,18 @@ export function commandHead(command: string): string {
   return SUBCOMMAND_PROGRAMS.has(program) && subcommand !== undefined && !subcommand.startsWith("-") ? `${program} ${subcommand}` : program;
 }
 
-/** A URL without its user information, query and fragment, which may carry tokens. */
-function urlHead(url: string): string {
+/**
+ * An http or https URL reduced to its origin and path, which cannot carry user information,
+ * a query or a fragment. Anything else (another scheme, an opaque or unparsable URL) gives
+ * nothing: its text is not shown at all.
+ */
+export function urlHead(url: string): string {
   try {
     const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:" || parsed.host === "") return "";
     return `${parsed.origin}${parsed.pathname}`;
   } catch {
-    return url.split(/[?#@]/, 1)[0] ?? url;
+    return "";
   }
 }
 

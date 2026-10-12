@@ -20,6 +20,7 @@ import {
   toolCallBlock,
   commandHead,
   helperIds,
+  urlHead,
   remember,
   requiredText,
   type HelperView,
@@ -75,6 +76,12 @@ describe("activity", () => {
     expect(activity.get("s")).toEqual({ steps: 0, at: 5, ended: "stopped" });
     activity.observe("s", "bash", {}, 6);
     expect(activity.get("s")?.ended).toBeUndefined();
+    // A new run (a new message) clears an earlier ending even before any tool call.
+    activity.end("s", "failed", 7);
+    activity.resume("s", 8);
+    expect(activity.get("s")).toEqual({ steps: 1, lastTool: "bash", at: 8 });
+    activity.resume("never-seen");
+    expect(activity.get("never-seen")).toBeUndefined();
   });
 
   test("summaries fall back to the plain tool name", () => {
@@ -291,6 +298,12 @@ describe("shared pieces", () => {
     expect(commandHead("cd /tmp && curl -u a:b host")).toBe("cd");
     expect(summarizeCall("bash", { command: "curl -H 'Authorization: Bearer abc' https://x" })).toBe("bash: curl");
     expect(summarizeCall("webfetch", { url: "https://user:pw@host/path?token=abc#frag" })).toBe("webfetch: https://host/path");
+    // Anything but a web URL with a host shows nothing: no scheme to strip secrets from safely.
+    expect(urlHead("user:s3cret@host")).toBe("");
+    expect(urlHead("ftp://user:pw@host/file")).toBe("");
+    expect(urlHead("not a url")).toBe("");
+    expect(urlHead("http://host:8080/a/b")).toBe("http://host:8080/a/b");
+    expect(summarizeCall("webfetch", { url: "mailto:someone@x?subject=s3cret" })).toBe("webfetch");
     expect(summarizeCall("grep", { pattern: "password = ", path: "/repo/src" })).toBe("grep: /repo/src");
     expect(summarizeCall("websearch", { query: "secret stuff" })).toBe("websearch");
     // Free text the model wrote is never shown; a hand-off shows the agent it named.

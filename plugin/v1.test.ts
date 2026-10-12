@@ -377,6 +377,27 @@ describe("v1 helper tools, guard and pinning", () => {
     await hooks["tool.execute.before"]({ tool: "bash", sessionID: "c2" }, { args: { command: "ls" } });
   });
 
+  test("a helper tool call whose caller cannot be verified is refused, not let through", async () => {
+    const state = fake();
+    state.client.session!.get = async () => {
+      throw new Error("server away");
+    };
+    const hooks = await hooksWith(state);
+    await expect(hooks["tool.execute.before"]({ tool: "helpers_steer", sessionID: "unseen" }, { args: {} })).rejects.toThrow("an unknown agent may not use helpers_steer");
+    // The shell guard keeps its earlier behaviour: a failed lookup is reported and the call goes on.
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID: "unseen" }, { args: { command: "git push" } });
+  });
+
+  test("a continued helper no longer shows its earlier stop or failure", async () => {
+    const state = fake();
+    const hooks = await hooksWith(state);
+    expect(await hooks.tool.helpers_cancel!.execute({ id: "c1" }, { sessionID: "root", agent: "lead" })).toStartWith("Stopped scout c1.");
+    expect(await hooks.tool.helpers_status!.execute({}, { sessionID: "root", agent: "lead" })).toContain("c1, scout, stopped");
+    // lead continues it with task_id; the new message starts a new run that answers without a tool call.
+    await hooks["chat.message"]({ sessionID: "c1", agent: "scout" }, { message: { agent: "scout" } });
+    expect(await hooks.tool.helpers_status!.execute({}, { sessionID: "root", agent: "lead" })).toContain("c1, scout, idle");
+  });
+
   test("a message that names another agent in a helper's child session is pinned to the helper; the user's own session is left alone", async () => {
     const state = fake();
     const hooks = await hooksWith(state);
@@ -384,6 +405,10 @@ describe("v1 helper tools, guard and pinning", () => {
     const fromTui = { agent: "lead", model: { providerID: "anthropic", modelID: "claude-opus-5-5", variant: "xhigh" } };
     await hooks["chat.message"]({ sessionID: "c2", agent: "lead" }, { message: fromTui });
     expect(fromTui).toEqual({ agent: "builder", model: { providerID: "anthropic", modelID: "claude-sonnet-5-5", variant: "high" } });
+    // A message that names the helper but another model or effort is pinned too.
+    const sameAgent = { agent: "builder", model: { providerID: "anthropic", modelID: "claude-opus-5-5", variant: "max" } };
+    await hooks["chat.message"]({ sessionID: "c2", agent: "builder" }, { message: sameAgent });
+    expect(sameAgent.model).toEqual({ providerID: "anthropic", modelID: "claude-sonnet-5-5", variant: "high" });
     // The reviewer answered inline in the root session; the next message there is lead's.
     await hooks["chat.params"]({ sessionID: "root", agent: "reviewer" }, {});
     const next = { agent: "lead", model: { providerID: "anthropic", modelID: "claude-opus-5-5", variant: "xhigh" } };
