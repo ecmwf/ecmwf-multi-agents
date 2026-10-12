@@ -268,7 +268,7 @@ Tasks, in order; **(par)** marks what can run side by side once 7a is done:
 
 7a. Evidence and contract
 
-- [~] Samet: `docs/research/background-helpers.md`: the table above with command runs on
+- [x] Samet: `docs/research/background-helpers.md`: the table above with command runs on
   1.18.35, 1.19.0 and 2.0.16 (the stand-in experiment becomes a script under `tools/` or a
   suite in `plugin/plugin.integration.test.ts`), source references for each claim, the TUI
   hazard, and two checks that decide 7c: how a plugin tool surfaces on 2.0.16 (a tool of its
