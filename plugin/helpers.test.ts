@@ -60,9 +60,9 @@ describe("activity", () => {
     const activity = new Activity();
     activity.observe("s1", "bash", { command: "git  log   --oneline" }, 1000);
     activity.observe("s1", "read", { filePath: "/repo/a.py" }, 2000);
-    activity.observe("s2", "read", { filePath: `/repo/${"x".repeat(100)}` }, 3000);
-    expect(activity.get("s1")).toEqual({ steps: 2, lastTool: "read: /repo/a.py", at: 2000 });
-    expect(activity.get("s2")?.lastTool).toBe(`read: /repo/${"x".repeat(51)}...`);
+    activity.observe("s2", "bash", { command: `${"x".repeat(100)} arg` }, 3000);
+    expect(activity.get("s1")).toEqual({ steps: 2, lastTool: "read", at: 2000 });
+    expect(activity.get("s2")?.lastTool).toBe(`bash: ${"x".repeat(57)}...`);
     expect(activity.get("s3")).toBeUndefined();
   });
 
@@ -297,14 +297,16 @@ describe("shared pieces", () => {
     expect(commandHead("python3 -m \"my mod\"")).toBe("python3");
     expect(commandHead("cd /tmp && curl -u a:b host")).toBe("cd");
     expect(summarizeCall("bash", { command: "curl -H 'Authorization: Bearer abc' https://x" })).toBe("bash: curl");
-    expect(summarizeCall("webfetch", { url: "https://user:pw@host/path?token=abc#frag" })).toBe("webfetch: https://host/path");
+    expect(summarizeCall("webfetch", { url: "https://user:pw@host/reset/t0k3n?token=abc#frag" })).toBe("webfetch: https://host");
     // Anything but a web URL with a host shows nothing: no scheme to strip secrets from safely.
     expect(urlHead("user:s3cret@host")).toBe("");
     expect(urlHead("ftp://user:pw@host/file")).toBe("");
     expect(urlHead("not a url")).toBe("");
-    expect(urlHead("http://host:8080/a/b")).toBe("http://host:8080/a/b");
+    expect(urlHead("http://host:8080/a/b")).toBe("http://host:8080");
     expect(summarizeCall("webfetch", { url: "mailto:someone@x?subject=s3cret" })).toBe("webfetch");
-    expect(summarizeCall("grep", { pattern: "password = ", path: "/repo/src" })).toBe("grep: /repo/src");
+    // Paths are arbitrary text too and are not shown.
+    expect(summarizeCall("grep", { pattern: "password = ", path: "/repo/src" })).toBe("grep");
+    expect(summarizeCall("read", { filePath: "/repo/config/prod-token-abc.json" })).toBe("read");
     expect(summarizeCall("websearch", { query: "secret stuff" })).toBe("websearch");
     // Free text the model wrote is never shown; a hand-off shows the agent it named.
     expect(summarizeCall("task", { description: "job with a password: hunter2", prompt: "the brief", subagent_type: "scout" })).toBe("task: scout");

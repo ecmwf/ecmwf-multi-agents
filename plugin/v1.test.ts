@@ -155,12 +155,20 @@ describe("v1 server", () => {
     expect(record.lookups).toEqual([]);
   });
 
-  test("an agent switch in a session is followed", async () => {
+  test("an agent switch is followed in the user's own session, and pinned back in a helper's child session", async () => {
     const hooks = await start({});
-    await hooks["chat.message"]({ sessionID: "s" }, { message: { agent: "builder" } });
-    expect(await shell(hooks, "s", "git push")).toBeDefined();
-    await hooks["chat.message"]({ sessionID: "s" }, { message: { agent: "lead" } });
-    expect(await shell(hooks, "s", "git push")).toBeUndefined();
+    // The user's session: lead first, a helper answering inline, lead again.
+    await hooks["chat.message"]({ sessionID: "own" }, { message: { agent: "lead" } });
+    await hooks["chat.message"]({ sessionID: "own" }, { message: { agent: "reviewer" } });
+    expect(await shell(hooks, "own", "git push")).toBeDefined();
+    await hooks["chat.message"]({ sessionID: "own" }, { message: { agent: "lead" } });
+    expect(await shell(hooks, "own", "git push")).toBeUndefined();
+    // A child session: the builder first, then a message that names lead, which is pinned back.
+    await hooks["chat.message"]({ sessionID: "child" }, { message: { agent: "builder" } });
+    const pinned = { agent: "lead" };
+    await hooks["chat.message"]({ sessionID: "child" }, { message: pinned });
+    expect(pinned.agent).toBe("builder");
+    expect(await shell(hooks, "child", "git push")).toBeDefined();
   });
 
   test("an unknown session is looked up once through the client", async () => {
@@ -386,6 +394,24 @@ describe("v1 helper tools, guard and pinning", () => {
     await expect(hooks["tool.execute.before"]({ tool: "helpers_steer", sessionID: "unseen" }, { args: {} })).rejects.toThrow("an unknown agent may not use helpers_steer");
     // The shell guard keeps its earlier behaviour: a failed lookup is reported and the call goes on.
     await hooks["tool.execute.before"]({ tool: "bash", sessionID: "unseen" }, { args: { command: "git push" } });
+  });
+
+  test("pinning needs no server lookup: a session whose first message is a helper's is a child, even when the server is unreachable", async () => {
+    const state = fake();
+    state.client.session!.get = async () => {
+      throw new Error("server away");
+    };
+    const hooks = await hooksWith(state);
+    await hooks["chat.message"]({ sessionID: "c9", agent: "scout" }, { message: { agent: "scout" } });
+    const fromTui = { agent: "lead", model: { providerID: "anthropic", modelID: "claude-opus-5-5", variant: "xhigh" } };
+    await hooks["chat.message"]({ sessionID: "c9", agent: "lead" }, { message: fromTui });
+    expect(fromTui).toEqual({ agent: "scout", model: { providerID: "anthropic", modelID: "claude-sonnet-5-5", variant: "medium" } });
+    // The user's own session starts with lead's message and is never pinned, whatever the server says.
+    await hooks["chat.message"]({ sessionID: "own", agent: "lead" }, { message: { agent: "lead" } });
+    await hooks["chat.params"]({ sessionID: "own", agent: "reviewer" }, {});
+    const next = { agent: "lead", model: { providerID: "anthropic", modelID: "claude-opus-5-5", variant: "xhigh" } };
+    await hooks["chat.message"]({ sessionID: "own", agent: "lead" }, { message: next });
+    expect(next.agent).toBe("lead");
   });
 
   test("a continued helper no longer shows its earlier stop or failure", async () => {

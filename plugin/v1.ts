@@ -24,6 +24,14 @@
 // receives the message object that is then saved (prompt.ts:1000 and :1046 at v1.18.35). The
 // session record is updated before the hook runs (prompt.ts:672-689), so after a pin it names
 // the sender; the plugin's own record of a session's agent therefore wins over the server's.
+//
+// Whether a session is a helper's child is known from its first message: the delegation tool
+// writes the brief as the helper (task.ts:207-216), so a session whose first message is a
+// helper's is a child, and one whose first message is lead's is the user's own, where a helper
+// may answer inline later (`/review`) and must not be pinned. That decision needs no server
+// lookup, so a lookup failure cannot leave a child unpinned. The lookup remains for one corner:
+// a plugin that started after the child did sees a later message first, and then asks the
+// server for the parent; if that fails too, the helper to pin to is unknown anyway.
 
 import { applyToV1Config, planAgents, type AgentPlan } from "./apply.ts";
 import { processEnvironment } from "./environment.ts";
@@ -69,8 +77,9 @@ class SessionAgents {
     return this.agents.get(session);
   }
 
+  /** Record what the first message seen in a session says, once; later calls do nothing. */
   setChild(session: string, child: boolean): void {
-    this.children.set(session, child);
+    if (!this.children.has(session)) this.children.set(session, child);
   }
 
   isChild(session: string): boolean | undefined {
@@ -132,14 +141,6 @@ export function createServer(harness: EmbeddedHarness, options: V1Options = {}) 
       const data = await fetchSession(session);
       return typeof data?.agent === "string" ? data.agent : undefined;
     };
-    const isChild = async (session: string): Promise<boolean> => {
-      const known = sessions.isChild(session);
-      if (known !== undefined) return known;
-      await fetchSession(session);
-      const found = sessions.isChild(session);
-      if (found === undefined) reporter.internal("looking up a session", new Error(`no answer for ${session} within ${LOOKUP_TIMEOUT_MS} ms; a message there may run as its sender`));
-      return found ?? false;
-    };
     const tool = v1Tools({ harness, client: input?.client, agentOf: (session) => sessions.get(session), activity, helpers });
 
     return {
@@ -167,10 +168,16 @@ export function createServer(harness: EmbeddedHarness, options: V1Options = {}) 
           const session = message?.sessionID;
           const target = output?.message;
           if (typeof session === "string" && target !== undefined && target !== null) {
-            // Every message in a helper's child session runs as that helper, with the helper's
-            // model and effort, whoever sent it and whatever it names.
             const helper = sessions.get(session);
-            if (helper !== undefined && helpers.has(helper) && (await isChild(session))) {
+            if (helper === undefined) {
+              // First sight of this session: a helper's message means a child session; lead's
+              // means the user's own. A plugin that started mid-run asks the server instead.
+              const first = target.agent ?? message?.agent;
+              if (typeof first === "string" && helpers.has(first)) sessions.setChild(session, true);
+              else void fetchSession(session).catch((error: unknown) => reporter.internal("looking up a session", error));
+            } else if (helpers.has(helper) && sessions.isChild(session) === true) {
+              // Every message in a helper's child session runs as that helper, with the helper's
+              // model and effort, whoever sent it and whatever it names.
               pinMessage(target, helper, plans.find((plan) => plan.id === helper));
             }
           }

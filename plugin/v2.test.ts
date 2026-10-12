@@ -370,6 +370,6 @@ describe("v2 helper tools and guard", () => {
     for (const hook of host.toolHooks) await hook({ tool: "grep", sessionID: "c1", agent: "scout", input: { pattern: "foo" } });
     for (const hook of host.toolHooks) await hook({ tool: "read", sessionID: "c1", agent: "scout", input: { filePath: "/a" } });
     expect(await host.call("helpers_status", {}, { sessionID: "root", agent: "lead" })).toContain("c1, scout, running, 2 steps");
-    expect(await host.call("helpers_status", {}, { sessionID: "root", agent: "lead" })).toContain("last: read: /a");
+    expect(await host.call("helpers_status", {}, { sessionID: "root", agent: "lead" })).toContain("last: read");
   });
 });

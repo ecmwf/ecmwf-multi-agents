@@ -564,7 +564,7 @@ function urlHead(url) {
     const parsed = new URL(url);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:" || parsed.host === "")
       return "";
-    return `${parsed.origin}${parsed.pathname}`;
+    return parsed.origin;
   } catch {
     return "";
   }
@@ -575,7 +575,7 @@ function summarizeCall(tool, input) {
   const command = text("command");
   const url = text("url");
   const named = text("subagent_type") ?? text("agent");
-  const detail = command !== undefined ? commandHead(command) : url !== undefined ? urlHead(url) : text("filePath") ?? text("path") ?? (named !== undefined && PLAIN_WORD.test(named) ? named : undefined);
+  const detail = command !== undefined ? commandHead(command) : url !== undefined ? urlHead(url) : named !== undefined && PLAIN_WORD.test(named) ? named : undefined;
   if (detail === undefined || detail === "")
     return tool;
   const flat = detail.replace(/\s+/g, " ").trim();
@@ -1321,7 +1321,8 @@ class SessionAgents {
     return this.agents.get(session);
   }
   setChild(session, child) {
-    this.children.set(session, child);
+    if (!this.children.has(session))
+      this.children.set(session, child);
   }
   isChild(session) {
     return this.children.get(session);
@@ -1379,16 +1380,6 @@ function createServer(harness, options = {}) {
       const data = await fetchSession(session);
       return typeof data?.agent === "string" ? data.agent : undefined;
     };
-    const isChild = async (session) => {
-      const known = sessions.isChild(session);
-      if (known !== undefined)
-        return known;
-      await fetchSession(session);
-      const found = sessions.isChild(session);
-      if (found === undefined)
-        reporter.internal("looking up a session", new Error(`no answer for ${session} within ${LOOKUP_TIMEOUT_MS} ms; a message there may run as its sender`));
-      return found ?? false;
-    };
     const tool = v1Tools({ harness, client: input?.client, agentOf: (session) => sessions.get(session), activity, helpers });
     return {
       async config(config) {
@@ -1415,7 +1406,13 @@ function createServer(harness, options = {}) {
           const target = output?.message;
           if (typeof session === "string" && target !== undefined && target !== null) {
             const helper = sessions.get(session);
-            if (helper !== undefined && helpers.has(helper) && await isChild(session)) {
+            if (helper === undefined) {
+              const first = target.agent ?? message?.agent;
+              if (typeof first === "string" && helpers.has(first))
+                sessions.setChild(session, true);
+              else
+                fetchSession(session).catch((error) => reporter.internal("looking up a session", error));
+            } else if (helpers.has(helper) && sessions.isChild(session) === true) {
               pinMessage(target, helper, plans.find((plan) => plan.id === helper));
             }
           }

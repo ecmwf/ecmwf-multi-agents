@@ -177,24 +177,25 @@ export function commandHead(command: string): string {
 }
 
 /**
- * An http or https URL reduced to its origin and path, which cannot carry user information,
- * a query or a fragment. Anything else (another scheme, an opaque or unparsable URL) gives
- * nothing: its text is not shown at all.
+ * The origin of an http or https URL: scheme and host only. Paths, queries, fragments and user
+ * information can all carry a token, so none is shown; any other scheme, or an unparsable
+ * URL, gives nothing.
  */
 export function urlHead(url: string): string {
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:" || parsed.host === "") return "";
-    return `${parsed.origin}${parsed.pathname}`;
+    return parsed.origin;
   } catch {
     return "";
   }
 }
 
 /**
- * `tool: what it was asked`, short, from fields that cannot carry a secret: a command's head,
- * a URL without its query, a path, or the agent a hand-off named. Free text the model wrote
- * (descriptions, prompts, patterns, queries) is left out.
+ * `tool: what it was asked`, short, from the few fields that cannot carry a secret: a command's
+ * head (program and subcommand), a URL's origin, or the agent a hand-off named. Everything the
+ * model or the user wrote freely is left out: descriptions, prompts, patterns, queries, and
+ * file or URL paths, whose segments are arbitrary text.
  */
 export function summarizeCall(tool: string, input: unknown): string {
   const args = input !== null && typeof input === "object" ? (input as Record<string, unknown>) : {};
@@ -202,8 +203,7 @@ export function summarizeCall(tool: string, input: unknown): string {
   const command = text("command");
   const url = text("url");
   const named = text("subagent_type") ?? text("agent");
-  const detail =
-    command !== undefined ? commandHead(command) : url !== undefined ? urlHead(url) : (text("filePath") ?? text("path") ?? (named !== undefined && PLAIN_WORD.test(named) ? named : undefined));
+  const detail = command !== undefined ? commandHead(command) : url !== undefined ? urlHead(url) : named !== undefined && PLAIN_WORD.test(named) ? named : undefined;
   if (detail === undefined || detail === "") return tool;
   const flat = detail.replace(/\s+/g, " ").trim();
   return `${tool}: ${flat.length > SUMMARY_LENGTH ? `${flat.slice(0, SUMMARY_LENGTH - 3)}...` : flat}`;
