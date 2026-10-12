@@ -83,6 +83,11 @@ What it does:
    answers in the user's own session (`/review`, `/progress`), through
    `experimental.chat.messages.transform`, so it works from its command alone. Compaction
    passes through the same hook and is never trimmed.
+7. On opencode 1.x, keeps such a helper from taking a turn that is not its own, in
+   `chat.message`: a helper command sent while another agent works runs in a child session
+   instead, a background helper's completion goes to the session's owner (normally `lead`)
+   instead of the helper the session last ran, and either waits while a helper answers inline.
+   Details: `docs/architecture.md` (Reports) and `plugin/inline.ts`.
 
 On opencode 2, agent transforms registered during `setup` run before the agent files load,
 so the plugin registers its transform after activation.

@@ -211,6 +211,8 @@ export async function runCase(item: EvalCase, options: RunOptions): Promise<RunR
       answer: answers.at(-1) ?? "",
       answers,
       reports: sessions.map((session) => ({ agent: record.transcript.find((item) => item.id === session.id)?.agent ?? "unknown", sessionID: session.id, text: finalText(session) })),
+      sessions,
+      rootSessions: record.rootSessions,
       changedFiles: record.changedFiles,
       metrics: record.metrics,
       permissions,

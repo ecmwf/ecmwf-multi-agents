@@ -114,9 +114,13 @@ describe("bundlePlugin", () => {
 });
 
 describe("embedHarness", () => {
-  test("keeps what the plugin needs: profiles, agents with mode and shell rules", () => {
+  test("keeps what the plugin needs: profiles, agents with mode and shell rules, commands", () => {
     const data = embedHarness(resolvedFixture());
-    expect(Object.keys(data)).toEqual(["name", "version", "defaultAgent", "defaultProfile", "profiles", "agents"]);
+    expect(Object.keys(data)).toEqual(["name", "version", "defaultAgent", "defaultProfile", "profiles", "agents", "commands"]);
+    expect(data.commands).toEqual([
+      { id: "plan", agent: "lead", description: "Plan a piece of work with you" },
+      { id: "review", agent: "reviewer", description: "Independent review of your changes" },
+    ]);
     expect(data.profiles.map((profile) => profile.id)).toEqual(["anthropic", "copilot", "default", "inherit"]);
     expect(data.profiles.find((profile) => profile.id === "default")!.agents).toEqual({
       lead: { model: "anthropic/claude-opus-5-5", effort: "xhigh" },
@@ -167,6 +171,7 @@ describe("embedHarness", () => {
       ['default agent "scout" is not a primary agent', (h) => (h.defaultAgent = "scout")],
       ["profile inherit names unknown agents: build", (h) => (h.profiles[3]!.agents = { build: { model: "a/b" } })],
       ["profile inherit: lead has an effort but no model", (h) => (h.profiles[3]!.agents = { lead: { effort: "high" } })],
+      ['command review names unknown agent "auditor"', (h) => (h.commands[1]!.agent = "auditor")],
     ];
     for (const [message, change] of cases) {
       const harness = resolvedFixture();

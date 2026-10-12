@@ -17,6 +17,8 @@
 // :379), right after `experimental.session.compacting` (:373). Trimming there would leave the
 // earlier conversation out of the summary, so a compaction in progress is never trimmed.
 
+import { isSyntheticMessage } from "./inline.ts";
+
 /** A stored message as the hook receives it: its info and its parts. */
 export interface V1MessageWithParts {
   info: { role?: string; agent?: string; sessionID?: string };
@@ -31,12 +33,6 @@ export interface V1MessageWithParts {
  * A session that holds only the helper's own messages (a child session, also one that lead
  * continues with a further request) is left alone.
  */
-/** A user message that opencode wrote itself, such as a background helper's completion. */
-export function synthetic(message: V1MessageWithParts): boolean {
-  const texts = message.parts.filter((part) => (part as { type?: unknown } | null)?.type === "text");
-  return texts.length > 0 && texts.every((part) => (part as { synthetic?: unknown }).synthetic === true);
-}
-
 export function isolateHelperRequest(messages: V1MessageWithParts[], helpers: ReadonlySet<string>): number {
   // The request is the last user message the user or lead wrote. A completion opencode wrote
   // into the session meanwhile (docs/research/background-helpers.md, section 9) is part of the
@@ -44,7 +40,7 @@ export function isolateHelperRequest(messages: V1MessageWithParts[], helpers: Re
   let request = -1;
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index];
-    if (message?.info?.role === "user" && !synthetic(message)) {
+    if (message?.info?.role === "user" && !isSyntheticMessage(message.parts)) {
       request = index;
       break;
     }

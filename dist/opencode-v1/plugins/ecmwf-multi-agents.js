@@ -679,16 +679,118 @@ function pinMessage(message, helper, plan) {
   return changed;
 }
 
-// plugin/isolate.ts
-function synthetic(message) {
-  const texts = message.parts.filter((part) => part?.type === "text");
+// plugin/inline.ts
+var COMPLETION_PREFIX = "<task ";
+var INLINE_WAIT_LIMIT_MS = 30 * 60000;
+var PENDING_MS = 60000;
+function textParts(parts) {
+  if (!Array.isArray(parts))
+    return [];
+  return parts.filter((part) => part !== null && typeof part === "object" && part.type === "text");
+}
+function isSyntheticMessage(parts) {
+  const texts = textParts(parts);
   return texts.length > 0 && texts.every((part) => part.synthetic === true);
 }
+function isCompletion(parts) {
+  const first = textParts(parts)[0]?.text;
+  return isSyntheticMessage(parts) && typeof first === "string" && first.startsWith(COMPLETION_PREFIX);
+}
+function inlineAction(facts, helpers) {
+  if (facts.agent === undefined || !helpers.has(facts.agent) || facts.busy === undefined)
+    return "leave";
+  if (facts.busy && facts.running !== undefined && helpers.has(facts.running))
+    return "wait";
+  if (facts.completion)
+    return "owner";
+  return facts.busy ? "subtask" : "inline";
+}
+function toSubtask(parts, spec) {
+  const first = textParts(parts)[0];
+  if (first === undefined || typeof first.text !== "string" || first.text.trim() === "")
+    return false;
+  const subtask = {
+    ...first.id !== undefined ? { id: first.id } : {},
+    ...first.sessionID !== undefined ? { sessionID: first.sessionID } : {},
+    ...first.messageID !== undefined ? { messageID: first.messageID } : {},
+    type: "subtask",
+    prompt: first.text,
+    description: spec.description,
+    agent: spec.agent,
+    ...spec.model !== undefined ? { model: { providerID: spec.model.providerID, modelID: spec.model.modelID } } : {},
+    ...spec.command !== undefined ? { command: spec.command } : {}
+  };
+  parts.splice(0, parts.length, subtask);
+  return true;
+}
+function giveTo(message, owner, plan) {
+  const model = owner.model;
+  if (typeof model?.providerID === "string" && typeof model.modelID === "string") {
+    message.agent = owner.agent;
+    message.model = { providerID: model.providerID, modelID: model.modelID, ...typeof model.variant === "string" ? { variant: model.variant } : {} };
+    return;
+  }
+  pinMessage(message, owner.agent, plan);
+}
+
+class Owners {
+  owners = new Map;
+  note(session, agent, model) {
+    if (typeof session !== "string" || session === "" || typeof agent !== "string" || agent === "")
+      return;
+    const ref = model !== null && typeof model === "object" ? model : undefined;
+    remember(this.owners, session, { agent, ...ref !== undefined ? { model: { ...ref } } : {} });
+  }
+  get(session) {
+    return this.owners.get(session);
+  }
+}
+
+class PendingCommands {
+  now;
+  pending = new Map;
+  constructor(now = Date.now) {
+    this.now = now;
+  }
+  note(session, command) {
+    if (typeof session !== "string" || session === "" || typeof command !== "string" || command === "")
+      return;
+    remember(this.pending, session, { command, at: this.now() }, 1000);
+  }
+  take(session) {
+    const entry = this.pending.get(session);
+    this.pending.delete(session);
+    return entry !== undefined && this.now() - entry.at <= PENDING_MS ? entry.command : undefined;
+  }
+}
+async function waitForIdle(busy, options) {
+  const deadline = options.now() + options.limitMs;
+  let unreadable = 0;
+  let pause = 200;
+  for (;; ) {
+    const state = await busy();
+    if (state === false)
+      return false;
+    unreadable = state === undefined ? unreadable + 1 : 0;
+    if (unreadable >= 3 || options.now() >= deadline)
+      return state;
+    await options.sleep(pause);
+    pause = Math.min(pause * 2, 1000);
+  }
+}
+function sleep(ms) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
+}
+
+// plugin/isolate.ts
 function isolateHelperRequest(messages, helpers) {
   let request = -1;
   for (let index = messages.length - 1;index >= 0; index--) {
     const message = messages[index];
-    if (message?.info?.role === "user" && !synthetic(message)) {
+    if (message?.info?.role === "user" && !isSyntheticMessage(message.parts)) {
       request = index;
       break;
     }
@@ -1304,6 +1406,18 @@ function v1Tools(deps) {
 var SHELL_TOOL = "bash";
 var TOOL_LESS_AGENTS = new Set(["title", "summary", "compaction"]);
 var LOOKUP_TIMEOUT_MS = 2000;
+async function inTime(promise, ms) {
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(undefined), ms);
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 function v1ProjectRoot(input) {
   const worktree = input?.worktree;
   if (typeof worktree === "string" && worktree !== "" && worktree !== "/")
@@ -1394,6 +1508,54 @@ function createServer(harness, options = {}) {
       return typeof first === "string" && helpers.has(first) ? first : undefined;
     };
     const tool = v1Tools({ harness, client: input?.client, agentOf: (session) => sessions.get(session), activity, helpers });
+    const owners = new Owners;
+    const now = options.now ?? Date.now;
+    const pending = new PendingCommands(now);
+    const waiting = { limitMs: options.inlineWaitLimitMs ?? INLINE_WAIT_LIMIT_MS, sleep: options.sleep ?? sleep, now };
+    const busyState = async (session) => {
+      const status = input?.client?.session?.status;
+      if (typeof status !== "function")
+        return;
+      const data = (await inTime(status.call(input.client?.session), LOOKUP_TIMEOUT_MS).catch(() => {
+        return;
+      }))?.data;
+      if (data === null || data === undefined)
+        return;
+      const type = data[session]?.type;
+      return type !== undefined && type !== "idle";
+    };
+    const shareSession = async (session, target, parts, command) => {
+      const completion = isCompletion(parts);
+      const facts = async (busy) => ({
+        agent: target.agent,
+        completion,
+        busy,
+        running: sessions.get(session) ?? await lookup(session).catch(() => {
+          return;
+        })
+      });
+      let action = inlineAction(await facts(await busyState(session)), helpers);
+      if (action === "wait") {
+        if (await waitForIdle(() => busyState(session), waiting) !== false)
+          return;
+        if (target.time !== undefined)
+          target.time.created = now();
+        action = inlineAction(await facts(false), helpers);
+      }
+      if (action !== "owner" && action !== "subtask")
+        return;
+      const owner = owners.get(session) ?? { agent: harness.defaultAgent };
+      const plan = plans.find((item) => item.id === owner.agent);
+      if (action === "subtask") {
+        const helper = target.agent;
+        const known = harness.commands.find((item) => item.id === command && item.agent === helper);
+        const model = typeof target.model?.providerID === "string" && typeof target.model.modelID === "string" ? { providerID: target.model.providerID, modelID: target.model.modelID } : undefined;
+        const spec = { agent: helper, description: known?.description ?? "", ...command !== undefined ? { command } : {}, ...model !== undefined ? { model } : {} };
+        if (!Array.isArray(parts) || !toSubtask(parts, spec))
+          return;
+      }
+      giveTo(target, owner, plan);
+    };
     return {
       async config(config) {
         try {
@@ -1419,11 +1581,19 @@ function createServer(harness, options = {}) {
           reporter.internal("the event hook", error);
         }
       },
+      async "command.execute.before"(command) {
+        try {
+          pending.note(command?.sessionID, command?.command);
+        } catch (error) {
+          reporter.internal("the command hook", error);
+        }
+      },
       async "chat.message"(message, output) {
         try {
           const session = message?.sessionID;
           const target = output?.message;
           if (typeof session === "string" && target !== undefined && target !== null) {
+            const command = isSyntheticMessage(output?.parts) ? undefined : pending.take(session);
             let helper = sessions.get(session);
             if (sessions.isChild(session) === undefined) {
               try {
@@ -1442,6 +1612,12 @@ function createServer(harness, options = {}) {
             if (helper !== undefined && helpers.has(helper) && sessions.isChild(session) === true) {
               pinMessage(target, helper, plans.find((plan) => plan.id === helper));
             }
+            if (sessions.isChild(session) === false) {
+              await shareSession(session, target, output?.parts, command);
+              const agent = target.agent;
+              if (typeof agent === "string" && !helpers.has(agent) && !TOOL_LESS_AGENTS.has(agent))
+                owners.note(session, agent, target.model);
+            }
           }
           activity.resume(session);
           sessions.set(session, output?.message?.agent ?? message?.agent);
@@ -1451,8 +1627,12 @@ function createServer(harness, options = {}) {
       },
       async "chat.params"(request) {
         try {
-          if (!TOOL_LESS_AGENTS.has(request?.agent))
-            sessions.set(request?.sessionID, request?.agent);
+          const agent = request?.agent;
+          if (TOOL_LESS_AGENTS.has(agent))
+            return;
+          sessions.set(request?.sessionID, agent);
+          if (typeof agent === "string" && !helpers.has(agent))
+            owners.note(request?.sessionID, agent, request?.message?.model);
         } catch (error) {
           reporter.internal("the chat.params hook", error);
         }
@@ -1841,7 +2021,7 @@ function createPlugin(harness, options = {}) {
 }
 
 // plugin/index.ts
-var plugin_default = createPlugin({ name: "ecmwf-multi-agents", version: "0.2.0", defaultAgent: "lead", defaultProfile: "default", profiles: [{ id: "anthropic", description: "Anthropic models only. The reviewer uses the strongest model, since a different family is not available.", agents: { lead: { model: "anthropic/claude-opus-5-5", effort: "xhigh" }, scout: { model: "anthropic/claude-sonnet-5-5", effort: "medium" }, builder: { model: "anthropic/claude-sonnet-5-5", effort: "high" }, reviewer: { model: "anthropic/claude-opus-5-5", effort: "high" } } }, { id: "copilot", description: "GitHub Copilot models only, with the same split as the default profile.", agents: { lead: { model: "github-copilot/claude-opus-5.5", effort: "xhigh" }, scout: { model: "github-copilot/claude-sonnet-5.5", effort: "medium" }, builder: { model: "github-copilot/claude-sonnet-5.5", effort: "high" }, reviewer: { model: "github-copilot/gpt-6.1-sol", effort: "medium" } } }, { id: "default", description: "Anthropic for lead, scout and builder; GitHub Copilot GPT for the reviewer, so reviews come from a different model family.", agents: { lead: { model: "anthropic/claude-opus-5-5", effort: "xhigh" }, scout: { model: "anthropic/claude-sonnet-5-5", effort: "medium" }, builder: { model: "anthropic/claude-sonnet-5-5", effort: "high" }, reviewer: { model: "github-copilot/gpt-6.1-sol", effort: "medium" } } }, { id: "inherit", description: "Every agent uses the model selected in the session. Helpers still differ by step limit.", agents: {} }], agents: [{ id: "lead", mode: "primary", shell: [{ resource: "git push *", effect: "ask" }, { resource: "git -C * push *", effect: "ask" }, { resource: "git commit --amend *", effect: "ask" }, { resource: "git reset --hard *", effect: "ask" }, { resource: "git clean *", effect: "ask" }, { resource: "git rebase *", effect: "ask" }, { resource: "git branch -D *", effect: "ask" }, { resource: "git restore *", effect: "ask" }, { resource: "git checkout -- *", effect: "ask" }, { resource: "git stash drop *", effect: "ask" }, { resource: "git stash clear *", effect: "ask" }, { resource: "gh pr create *", effect: "ask" }, { resource: "gh pr merge *", effect: "ask" }, { resource: "gh pr close *", effect: "ask" }, { resource: "gh release *", effect: "ask" }, { resource: "gh repo delete *", effect: "ask" }] }, { id: "scout", mode: "subagent", shell: [{ resource: "*", effect: "deny" }, { resource: "git log *", effect: "allow" }, { resource: "git show *", effect: "allow" }, { resource: "git diff *", effect: "allow" }, { resource: "git blame *", effect: "allow" }, { resource: "git status *", effect: "allow" }, { resource: "git grep *", effect: "allow" }, { resource: "git ls-files *", effect: "allow" }, { resource: "git rev-parse *", effect: "allow" }, { resource: "ls *", effect: "allow" }, { resource: "wc *", effect: "allow" }, { resource: "file *", effect: "allow" }, { resource: "tree *", effect: "allow" }] }, { id: "builder", mode: "subagent", shell: [{ resource: "git add *", effect: "deny" }, { resource: "git commit *", effect: "deny" }, { resource: "git push *", effect: "deny" }, { resource: "git pull *", effect: "deny" }, { resource: "git fetch *", effect: "deny" }, { resource: "git reset *", effect: "deny" }, { resource: "git rebase *", effect: "deny" }, { resource: "git merge *", effect: "deny" }, { resource: "git cherry-pick *", effect: "deny" }, { resource: "git revert *", effect: "deny" }, { resource: "git am *", effect: "deny" }, { resource: "git checkout *", effect: "deny" }, { resource: "git switch *", effect: "deny" }, { resource: "git restore *", effect: "deny" }, { resource: "git stash *", effect: "deny" }, { resource: "git clean *", effect: "deny" }, { resource: "git rm *", effect: "deny" }, { resource: "git mv *", effect: "deny" }, { resource: "git tag *", effect: "deny" }, { resource: "git branch *", effect: "deny" }, { resource: "git remote *", effect: "deny" }, { resource: "git worktree *", effect: "deny" }, { resource: "git update-ref *", effect: "deny" }, { resource: "git config *", effect: "deny" }, { resource: "git -C *", effect: "deny" }, { resource: "gh *", effect: "deny" }] }, { id: "reviewer", mode: "subagent", shell: [{ resource: "git add *", effect: "deny" }, { resource: "git commit *", effect: "deny" }, { resource: "git push *", effect: "deny" }, { resource: "git pull *", effect: "deny" }, { resource: "git fetch *", effect: "deny" }, { resource: "git reset *", effect: "deny" }, { resource: "git rebase *", effect: "deny" }, { resource: "git merge *", effect: "deny" }, { resource: "git cherry-pick *", effect: "deny" }, { resource: "git revert *", effect: "deny" }, { resource: "git am *", effect: "deny" }, { resource: "git checkout *", effect: "deny" }, { resource: "git switch *", effect: "deny" }, { resource: "git restore *", effect: "deny" }, { resource: "git stash *", effect: "deny" }, { resource: "git clean *", effect: "deny" }, { resource: "git rm *", effect: "deny" }, { resource: "git mv *", effect: "deny" }, { resource: "git tag *", effect: "deny" }, { resource: "git branch *", effect: "deny" }, { resource: "git remote *", effect: "deny" }, { resource: "git worktree *", effect: "deny" }, { resource: "git update-ref *", effect: "deny" }, { resource: "git config *", effect: "deny" }, { resource: "git -C *", effect: "deny" }, { resource: "gh *", effect: "deny" }, { resource: "gh pr view *", effect: "allow" }, { resource: "gh pr diff *", effect: "allow" }, { resource: "gh pr checks *", effect: "allow" }] }] });
+var plugin_default = createPlugin({ name: "ecmwf-multi-agents", version: "0.2.0", defaultAgent: "lead", defaultProfile: "default", profiles: [{ id: "anthropic", description: "Anthropic models only. The reviewer uses the strongest model, since a different family is not available.", agents: { lead: { model: "anthropic/claude-opus-5-5", effort: "xhigh" }, scout: { model: "anthropic/claude-sonnet-5-5", effort: "medium" }, builder: { model: "anthropic/claude-sonnet-5-5", effort: "high" }, reviewer: { model: "anthropic/claude-opus-5-5", effort: "high" } } }, { id: "copilot", description: "GitHub Copilot models only, with the same split as the default profile.", agents: { lead: { model: "github-copilot/claude-opus-5.5", effort: "xhigh" }, scout: { model: "github-copilot/claude-sonnet-5.5", effort: "medium" }, builder: { model: "github-copilot/claude-sonnet-5.5", effort: "high" }, reviewer: { model: "github-copilot/gpt-6.1-sol", effort: "medium" } } }, { id: "default", description: "Anthropic for lead, scout and builder; GitHub Copilot GPT for the reviewer, so reviews come from a different model family.", agents: { lead: { model: "anthropic/claude-opus-5-5", effort: "xhigh" }, scout: { model: "anthropic/claude-sonnet-5-5", effort: "medium" }, builder: { model: "anthropic/claude-sonnet-5-5", effort: "high" }, reviewer: { model: "github-copilot/gpt-6.1-sol", effort: "medium" } } }, { id: "inherit", description: "Every agent uses the model selected in the session. Helpers still differ by step limit.", agents: {} }], agents: [{ id: "lead", mode: "primary", shell: [{ resource: "git push *", effect: "ask" }, { resource: "git -C * push *", effect: "ask" }, { resource: "git commit --amend *", effect: "ask" }, { resource: "git reset --hard *", effect: "ask" }, { resource: "git clean *", effect: "ask" }, { resource: "git rebase *", effect: "ask" }, { resource: "git branch -D *", effect: "ask" }, { resource: "git restore *", effect: "ask" }, { resource: "git checkout -- *", effect: "ask" }, { resource: "git stash drop *", effect: "ask" }, { resource: "git stash clear *", effect: "ask" }, { resource: "gh pr create *", effect: "ask" }, { resource: "gh pr merge *", effect: "ask" }, { resource: "gh pr close *", effect: "ask" }, { resource: "gh release *", effect: "ask" }, { resource: "gh repo delete *", effect: "ask" }] }, { id: "scout", mode: "subagent", shell: [{ resource: "*", effect: "deny" }, { resource: "git log *", effect: "allow" }, { resource: "git show *", effect: "allow" }, { resource: "git diff *", effect: "allow" }, { resource: "git blame *", effect: "allow" }, { resource: "git status *", effect: "allow" }, { resource: "git grep *", effect: "allow" }, { resource: "git ls-files *", effect: "allow" }, { resource: "git rev-parse *", effect: "allow" }, { resource: "ls *", effect: "allow" }, { resource: "wc *", effect: "allow" }, { resource: "file *", effect: "allow" }, { resource: "tree *", effect: "allow" }] }, { id: "builder", mode: "subagent", shell: [{ resource: "git add *", effect: "deny" }, { resource: "git commit *", effect: "deny" }, { resource: "git push *", effect: "deny" }, { resource: "git pull *", effect: "deny" }, { resource: "git fetch *", effect: "deny" }, { resource: "git reset *", effect: "deny" }, { resource: "git rebase *", effect: "deny" }, { resource: "git merge *", effect: "deny" }, { resource: "git cherry-pick *", effect: "deny" }, { resource: "git revert *", effect: "deny" }, { resource: "git am *", effect: "deny" }, { resource: "git checkout *", effect: "deny" }, { resource: "git switch *", effect: "deny" }, { resource: "git restore *", effect: "deny" }, { resource: "git stash *", effect: "deny" }, { resource: "git clean *", effect: "deny" }, { resource: "git rm *", effect: "deny" }, { resource: "git mv *", effect: "deny" }, { resource: "git tag *", effect: "deny" }, { resource: "git branch *", effect: "deny" }, { resource: "git remote *", effect: "deny" }, { resource: "git worktree *", effect: "deny" }, { resource: "git update-ref *", effect: "deny" }, { resource: "git config *", effect: "deny" }, { resource: "git -C *", effect: "deny" }, { resource: "gh *", effect: "deny" }] }, { id: "reviewer", mode: "subagent", shell: [{ resource: "git add *", effect: "deny" }, { resource: "git commit *", effect: "deny" }, { resource: "git push *", effect: "deny" }, { resource: "git pull *", effect: "deny" }, { resource: "git fetch *", effect: "deny" }, { resource: "git reset *", effect: "deny" }, { resource: "git rebase *", effect: "deny" }, { resource: "git merge *", effect: "deny" }, { resource: "git cherry-pick *", effect: "deny" }, { resource: "git revert *", effect: "deny" }, { resource: "git am *", effect: "deny" }, { resource: "git checkout *", effect: "deny" }, { resource: "git switch *", effect: "deny" }, { resource: "git restore *", effect: "deny" }, { resource: "git stash *", effect: "deny" }, { resource: "git clean *", effect: "deny" }, { resource: "git rm *", effect: "deny" }, { resource: "git mv *", effect: "deny" }, { resource: "git tag *", effect: "deny" }, { resource: "git branch *", effect: "deny" }, { resource: "git remote *", effect: "deny" }, { resource: "git worktree *", effect: "deny" }, { resource: "git update-ref *", effect: "deny" }, { resource: "git config *", effect: "deny" }, { resource: "git -C *", effect: "deny" }, { resource: "gh *", effect: "deny" }, { resource: "gh pr view *", effect: "allow" }, { resource: "gh pr diff *", effect: "allow" }, { resource: "gh pr checks *", effect: "allow" }] }], commands: [{ id: "onboard", agent: "lead", description: "Survey this repository and keep a short summary for later sessions" }, { id: "plan", agent: "lead", description: "Plan a piece of work with you, then wait for your approval" }, { id: "go", agent: "lead", description: "Carry out an approved plan task by task" }, { id: "review", agent: "reviewer", description: "Independent review of your uncommitted changes, a branch, a commit, a pull request or a plan" }, { id: "progress", agent: "scout", description: "Show progress on the current plan" }, { id: "guide", agent: "lead", description: "How this harness works, in plain words" }] });
 export {
   plugin_default as default
 };

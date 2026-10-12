@@ -3,7 +3,7 @@
 
 // Bundles plugin/ into one ES module for both platforms. The build writes the result to
 // plugins/ecmwf-multi-agents.js in dist/opencode-v1/ and dist/opencode-v2/. The harness data the
-// plugin needs (profiles, agents and their shell rules) is embedded at bundle time through
+// plugin needs (profiles, agents and their shell rules, commands) is embedded at bundle time through
 // Bun.build `define`, so the module imports nothing but runtime built-ins and works without the
 // generator or any package next to it. The output starts with the marker line the installer
 // looks for and is the same for the same input: no timestamps, no absolute paths.
@@ -55,6 +55,10 @@ export function embedHarness(harness: ResolvedHarness): EmbeddedHarness {
     return { id: profile.id, description: profile.description, agents };
   });
 
+  for (const command of harness.commands) {
+    if (!ids.includes(command.agent)) fail(`command ${command.id} names unknown agent ${JSON.stringify(command.agent)}`);
+  }
+
   return {
     name: harness.name,
     version: harness.version,
@@ -68,6 +72,7 @@ export function embedHarness(harness: ResolvedHarness): EmbeddedHarness {
         .filter((rule) => rule.action === "shell")
         .map((rule) => ({ resource: rule.resource, effect: rule.effect })),
     })),
+    commands: harness.commands.map((command) => ({ id: command.id, agent: command.agent, description: command.description })),
   };
 }
 

@@ -17,7 +17,10 @@
 // switches the rest of the run to the message's agent (the hazard the plugin's pinning fixes).
 // Then, with the bundled plugin installed: lead's helpers_status, helpers_steer and
 // helpers_cancel work against a running builder, a builder's call to them is refused, and on
-// 1.x a message that names lead in a builder's session still runs as the builder.
+// 1.x a message that names lead in a builder's session still runs as the builder. Also on 1.x,
+// `/review` in the user's session: it never takes a turn from lead (sent while lead works, it
+// runs in a child session; sent while another review answers, it waits), and a background
+// helper's completion always wakes lead, never the reviewer, without cutting a review short.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
@@ -50,6 +53,9 @@ const sandboxScript = path.join(root, "tools", "sandbox.sh");
 const STEPS = 5;
 const STEP_SECONDS = 1.5;
 const RUN_MS = STEPS * STEP_SECONDS * 1000;
+/** Steps of a slow review (`SLOW_REVIEW` in its request): long enough for a builder to finish meanwhile. */
+const REVIEW_STEPS = 8;
+const REVIEW_MS = REVIEW_STEPS * STEP_SECONDS * 1000;
 
 const ISOLATION = {
   OPENCODE_DISABLE_PROJECT_CONFIG: "1",
@@ -149,7 +155,10 @@ function standIn(script: Script) {
         else if (results < STEPS) tool = { name: script.shell, args: { command: `sleep ${STEP_SECONDS}`, description: "slow step" } };
         else text = "builder finished";
       } else if (agent === "reviewer") {
-        text = "VERDICT: APPROVE";
+        // A review answers at once, or after REVIEW_STEPS `sleep` steps when its request says SLOW_REVIEW.
+        if (users.some((user) => user.includes("SLOW_REVIEW")) && results < REVIEW_STEPS)
+          tool = { name: script.shell, args: { command: `sleep ${STEP_SECONDS}`, description: "slow review step" } };
+        else text = "VERDICT: APPROVE";
       }
       calls++;
       seen.push({ agent, users, results, at: Date.now(), reply: tool ? `tool:${tool.name}` : text });
@@ -597,6 +606,111 @@ for (const bin of v1Bins) {
         expect(woken.users.at(-1)).toContain("builder finished");
         expect(tagged().some((item) => item.agent === "reviewer")).toBe(false);
       }, 120_000);
+
+      // `/review` and `/progress` answer inline in the user's session on 1.x. These four check
+      // that they never take a turn from another agent, and that a completion never goes to them.
+      const review = (session: string, text: string) =>
+        void pluginApi("POST", `/session/${session}/command`, { command: "review", arguments: text, agent: "lead" }).catch(() => undefined);
+      /** The reviewer's request that gave the verdict on `Review <text>`, wherever it ran. */
+      const verdictOn = (text: string) =>
+        model.seen.find((item) => item.agent === "reviewer" && item.users[0]?.endsWith(`Review ${text}`) && item.reply === "VERDICT: APPROVE");
+      /**
+       * Until opencode reports the session idle. lead's last answer reaches the stand-in a moment
+       * before its run ends, and a command sent in between would rightly run in a child session.
+       */
+      const idle = (session: string) =>
+        within(20_000, "the session to be idle", async () =>
+          ((await pluginApi<Record<string, { type: string }>>("GET", "/session/status"))[session]?.type ?? "idle") === "idle" ? true : undefined,
+        );
+
+      test("/review sent while lead waits on a foreground builder runs in a child session; lead then carries on with the builder's result", async () => {
+        const tag = nextTag();
+        const session = await startWith(`FG ${tag}`);
+        await childOf(session);
+        await stepsOf(tag, 1);
+        review(session, tag);
+        // lead's next request holds its own task result and the review's, and opencode's instruction to go on.
+        const resumed = await within(RUN_MS + 30_000, "lead to carry on", async () =>
+          model.lead(tag).find((item) => item.results >= 2 && item.users.at(-1) === "Summarize the task tool output above and continue with your task."),
+        );
+        expect(resumed.reply).toBe("lead done");
+        expect(verdictOn(tag)).toBeDefined();
+        const stored = await pluginApi<V1Message[]>("GET", `/session/${session}/message`);
+        const command = stored.find((message) => message.info.role === "user" && message.parts.some((part) => part.type === "subtask"));
+        expect(command?.info.agent).toBe("lead");
+        // The reviewer wrote nothing in the user's own session.
+        expect(stored.some((message) => message.info.role === "assistant" && message.info.agent === "reviewer" && message.parts.some((part) => part.type === "text"))).toBe(false);
+      }, 120_000);
+
+      test("a /review sent while another answers inline waits for that verdict, then answers inline from its own request", async () => {
+        const tag = nextTag();
+        const session = await startWith(`HELLO ${tag}`);
+        await within(20_000, "lead's turn to end", async () => model.lead(tag).find((item) => item.reply === "lead done"));
+        await idle(session);
+        review(session, `SLOW_REVIEW ${tag}`);
+        await within(30_000, "two review steps", async () => model.seen.find((item) => item.agent === "reviewer" && item.users[0]?.endsWith(`SLOW_REVIEW ${tag}`) && item.results >= 2));
+        review(session, `SECOND ${tag}`);
+        const first = await within(REVIEW_MS + 30_000, "the first verdict", async () => verdictOn(`SLOW_REVIEW ${tag}`));
+        expect(first.results).toBe(REVIEW_STEPS);
+        const second = await within(30_000, "the second verdict", async () => verdictOn(`SECOND ${tag}`));
+        expect(second.at).toBeGreaterThan(first.at);
+        expect(second.users).toEqual([`Review SECOND ${tag}`]);
+        expect(await pluginApi<unknown[]>("GET", `/session/${session}/children`)).toHaveLength(0);
+      }, 120_000);
+
+      test("a background helper that finishes after an inline /review wakes lead, not the reviewer", async () => {
+        const tag = nextTag();
+        const session = await startWith(`BG ${tag}`);
+        await childOf(session);
+        await within(20_000, "lead's turn to end", async () => model.lead(tag).find((item) => item.reply === "lead done"));
+        await idle(session);
+        review(session, tag);
+        const verdict = await within(30_000, "the reviewer's verdict", async () => verdictOn(tag));
+        expect(model.builder(tag).some((item) => item.reply === "builder finished" && item.at < verdict.at)).toBe(false);
+        expect(await wake(tag)).toContain("builder finished");
+        expect(model.seen.some((item) => item.agent === "reviewer" && item.users[0]?.endsWith(`Review ${tag}`) && item.users.some((user) => user.includes("<task ")))).toBe(false);
+        const last = (await pluginApi<V1Message[]>("GET", `/session/${session}/message`)).filter((message) => message.info.role === "user").at(-1)!;
+        expect(last.info.agent).toBe("lead");
+        expect(last.parts[0]?.synthetic).toBe(true);
+      }, 120_000);
+
+      test("a background helper that finishes during an inline /review waits for the verdict, then wakes lead", async () => {
+        const tag = nextTag();
+        const session = await startWith(`BG ${tag}`);
+        await childOf(session);
+        await within(20_000, "lead's turn to end", async () => model.lead(tag).find((item) => item.reply === "lead done"));
+        await idle(session);
+        review(session, `SLOW_REVIEW ${tag}`);
+        const verdict = await within(RUN_MS + REVIEW_MS + 30_000, "the reviewer's verdict", async () => verdictOn(`SLOW_REVIEW ${tag}`));
+        // The builder finished while the review was running; the review ran to its end without seeing it.
+        const finished = model.builder(tag).find((item) => item.reply === "builder finished");
+        expect(finished?.at).toBeLessThan(verdict.at);
+        expect(verdict.results).toBe(REVIEW_STEPS);
+        expect(verdict.users).toEqual([`Review SLOW_REVIEW ${tag}`]);
+        const woken = await within(30_000, "lead to be woken", async () => model.lead(tag).find((item) => item.users.some((user) => user.includes("<task "))));
+        expect(woken.at).toBeGreaterThan(verdict.at);
+        expect(woken.users.find((user) => user.includes("<task "))).toContain("builder finished");
+      }, 120_000);
+
+      test("without the background flag, /review sent while lead waits on a foreground builder also runs in a child session", async () => {
+        const plain = await startServer(box, bin, {});
+        const plainApi = connect(plain.url);
+        try {
+          const tag = nextTag();
+          const session = (await plainApi<{ id: string }>("POST", "/session", {})).id;
+          await plainApi("POST", `/session/${session}/prompt_async`, { agent: "lead", parts: [{ type: "text", text: `FG ${tag}` }] });
+          await within(20_000, "the child session", async () => (await plainApi<Array<{ id: string }>>("GET", `/session/${session}/children`))[0]);
+          await stepsOf(tag, 1);
+          void plainApi("POST", `/session/${session}/command`, { command: "review", arguments: `PLAIN ${tag}`, agent: "lead" }).catch(() => undefined);
+          const resumed = await within(RUN_MS + 30_000, "lead to carry on", async () =>
+            model.lead(tag).find((item) => item.results >= 2 && item.users.at(-1) === "Summarize the task tool output above and continue with your task."),
+          );
+          expect(resumed.reply).toBe("lead done");
+          expect(verdictOn(`PLAIN ${tag}`)).toBeDefined();
+        } finally {
+          await plain.stop();
+        }
+      }, 180_000);
     });
   });
 }

@@ -150,7 +150,18 @@ export function hiddenTestsPass(caseId: string): Check {
 }
 
 /** Final reports of the reviewer, or of every session when no reviewer ran. */
+/**
+ * What the reviewer said: the text of its own messages, wherever it ran. A review that answers
+ * inline in the user's session (`/review` on opencode 1.x) is not that session's final text when
+ * lead speaks after it, so the sessions' final texts alone would miss it.
+ */
 function reviewerText(ctx: CheckContext): string {
+  const inSessions = ctx.sessions
+    .flatMap((session) => session.messages)
+    .filter((message) => message.info.role === "assistant" && message.info.agent === "reviewer")
+    .map((message) => message.parts.filter((part) => part.type === "text" && !part.synthetic && typeof part.text === "string").map((part) => part.text!.trim()).join("\n\n"))
+    .filter((text) => text !== "");
+  if (inSessions.length > 0) return inSessions.join("\n\n");
   const reviews = ctx.reports.filter((report) => report.agent === "reviewer").map((report) => report.text);
   return (reviews.length > 0 ? reviews : [...ctx.reports.map((report) => report.text), ...ctx.answers]).join("\n\n");
 }
@@ -521,6 +532,38 @@ export function reportMentions(agent: string, title: string, terms: Term[]): Che
       const text = reports.map((report) => report.text).join("\n");
       const missing = terms.filter((term) => !mentions(text, term));
       return missing.length === 0 ? ok(`mentions all ${terms.length}`) : fail(`missing ${missing.map(termLabel).join(", ")}`);
+    },
+  };
+}
+
+/**
+ * In the sessions the turns started, every background helper's completion (a message opencode
+ * wrote itself, starting `<task `) was answered by lead: the next assistant message after it is
+ * lead's. On opencode 1.x a completion is written as the session's current agent, so after an
+ * inline `/review` it would go to the reviewer without the plugin's correction.
+ */
+export function completionsWakeLead(): Check {
+  return {
+    id: "completions-wake-lead",
+    title: "every background completion in the user's session woke lead",
+    variants: ["harness"],
+    run(ctx) {
+      const roots = new Set(ctx.rootSessions);
+      let completions = 0;
+      const wrong: string[] = [];
+      for (const session of ctx.sessions.filter((item) => roots.has(item.id))) {
+        session.messages.forEach((message, index) => {
+          const texts = message.parts.filter((part) => part.type === "text");
+          const completion = message.info.role === "user" && texts.length > 0 && texts.every((part) => part.synthetic === true) && (texts[0]?.text ?? "").startsWith("<task ");
+          if (!completion) return;
+          completions += 1;
+          const answer = session.messages.slice(index + 1).find((next) => next.info.role === "assistant");
+          if (answer === undefined) wrong.push("one was never answered");
+          else if (answer.info.agent !== "lead") wrong.push(`one was answered by ${answer.info.agent ?? "an unknown agent"}`);
+        });
+      }
+      if (completions === 0) return fail("no background completion arrived in the user's session");
+      return wrong.length === 0 ? ok(`${completions} completion(s), all answered by lead`) : fail(wrong.join("; "));
     },
   };
 }

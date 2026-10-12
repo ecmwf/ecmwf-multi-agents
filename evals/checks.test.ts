@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 import {
   answerMentions,
   committedLocally,
+  completionsWakeLead,
   isGitWrite,
   isPushAttempt,
   listsPublicFunctions,
@@ -24,7 +25,7 @@ import {
   workDirExcluded,
 } from "./checks.ts";
 import { aggregate } from "./metrics.ts";
-import type { Check, CheckContext, CommandResult, PermissionRecord, ToolCall } from "./types.ts";
+import type { ApiMessage, Check, CheckContext, CommandResult, PermissionRecord, SessionData, ToolCall } from "./types.ts";
 
 const HEAD = "a".repeat(40);
 
@@ -40,6 +41,8 @@ function context(overrides: Partial<CheckContext> & { files?: Record<string, str
     answer: "",
     answers: [],
     reports: [],
+    sessions: [],
+    rootSessions: [],
     changedFiles: [],
     metrics,
     permissions: [],
@@ -277,5 +280,46 @@ describe("running checks", () => {
       { id: "c", title: "C", pass: false, detail: "no", recordOnly: true },
       { id: "d", title: "D", pass: false, detail: "check failed to run: boom", recordOnly: false },
     ]);
+  });
+});
+
+test("verdict reads the reviewer's own messages when lead speaks after an inline review", () => {
+  const messages: ApiMessage[] = [
+    { info: { id: "u1", sessionID: "root", role: "user", agent: "reviewer" }, parts: [{ type: "text", text: "Review" }] },
+    { info: { id: "a1", sessionID: "root", role: "assistant", agent: "reviewer" }, parts: [{ type: "text", text: "VERDICT: REJECT\nBLOCKERS: stations/units.py:28 divides" }] },
+    { info: { id: "u2", sessionID: "root", role: "user", agent: "lead" }, parts: [{ type: "text", text: "<task>", synthetic: true }] },
+    { info: { id: "a2", sessionID: "root", role: "assistant", agent: "lead" }, parts: [{ type: "text", text: "The scout reported; shall I fix units.py?" }] },
+  ];
+  const ctx = context({ sessions: [{ id: "root", messages }], rootSessions: ["root"], reports: [{ agent: "lead", sessionID: "root", text: "The scout reported; shall I fix units.py?" }] });
+  expect(run(verdict("REJECT", ["units.py"]), ctx)).toEqual({ pass: true, detail: "VERDICT: REJECT" });
+});
+
+describe("completionsWakeLead", () => {
+  let id = 0;
+  const message = (role: string, agent: string, text: string, synthetic = false): ApiMessage => ({
+    info: { id: `m${++id}`, sessionID: "root", role, agent },
+    parts: [{ type: "text", text, ...(synthetic ? { synthetic: true } : {}) }],
+  });
+  const completion = () => message("user", "lead", '<task id="ses_c" state="completed">\nreport\n</task>', true);
+  const session = (messages: ApiMessage[], sessionId = "root"): SessionData => ({ id: sessionId, messages });
+
+  test("passes when every completion in a root session is answered by lead", () => {
+    const sessions = [session([message("user", "lead", "start"), message("assistant", "lead", "ok"), message("user", "reviewer", "Review"), message("assistant", "reviewer", "VERDICT: REJECT"), completion(), message("assistant", "lead", "the scout reported")])];
+    expect(run(completionsWakeLead(), context({ sessions, rootSessions: ["root"] }))).toEqual({ pass: true, detail: "1 completion(s), all answered by lead" });
+  });
+
+  test("fails when the reviewer answers a completion, when none is answered, or when none arrived", () => {
+    const toReviewer = [session([message("user", "reviewer", "Review"), completion(), message("assistant", "reviewer", "VERDICT: APPROVE")])];
+    expect(run(completionsWakeLead(), context({ sessions: toReviewer, rootSessions: ["root"] })).detail).toBe("one was answered by reviewer");
+    const unanswered = [session([message("user", "lead", "start"), completion()])];
+    expect(run(completionsWakeLead(), context({ sessions: unanswered, rootSessions: ["root"] })).detail).toBe("one was never answered");
+    const none = [session([message("user", "lead", "start"), message("assistant", "lead", "done")])];
+    expect(run(completionsWakeLead(), context({ sessions: none, rootSessions: ["root"] })).pass).toBe(false);
+  });
+
+  test("looks only at the sessions the turns started, and only at messages opencode wrote", () => {
+    const child = session([completion(), message("assistant", "scout", "x")], "child");
+    const typed = session([message("user", "lead", '<task id="x"> typed by the user'), message("assistant", "reviewer", "x"), completion(), message("assistant", "lead", "ok")]);
+    expect(run(completionsWakeLead(), context({ sessions: [child, typed], rootSessions: ["root"] }))).toEqual({ pass: true, detail: "1 completion(s), all answered by lead" });
   });
 });

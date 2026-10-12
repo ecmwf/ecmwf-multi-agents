@@ -173,9 +173,10 @@ each steer is a turn of the most expensive agent. `lead` reaches a running helpe
 The user may also open a helper's session and type into it. On opencode 1.x a message sent
 to a running session carries an agent and a model, and the TUI sends the user's primary agent,
 `lead`; the plugin therefore pins every message that lands in a helper's child session to that
-helper's own agent, model and effort. It never touches the user's own session, where `/review`
-and `/progress` answer inline on 1.x. A completion that lands there while a helper is
-answering reaches `lead` on its next turn, not as a wake.
+helper's own agent, model and effort. It never pins the user's own session, where `/review`
+and `/progress` answer inline on 1.x. A completion that lands there always wakes `lead`, also
+right after an inline review; if a helper is answering inline at that moment, the completion
+waits for its report first (see below).
 
 ## Hand-off brief
 
@@ -250,6 +251,18 @@ differs by platform:
   child session: the reviewer stays independent of `lead`'s reasoning, and a long session does
   not make a review costly. The stored conversation is unchanged, compaction is never trimmed,
   and without the plugin the helper sees the whole conversation.
+
+  The session loop always runs the agent of its newest message, so sharing the session needs
+  three rules, which the plugin applies in `chat.message` before opencode saves a message
+  (`plugin/inline.ts`). A helper command sent while another agent works (for example `/progress`
+  during a long `/go`) runs in a child session instead, as every helper command did before 0.2.0:
+  the working agent finishes its step, the helper runs, and opencode tells that agent to go on
+  with the report in view. A background helper's completion is written as the session's current
+  agent, which after an inline command is the helper; the plugin gives it back to the session's
+  owner, the agent of the latest request that was not a helper's (normally `lead`), so the
+  completion wakes `lead`. A helper command or a completion that arrives while a helper answers
+  inline waits for its report (at most 30 minutes), so an answer is never cut short. When the
+  plugin cannot read the session's state, it leaves the message as opencode made it.
 - On opencode 2.0.16 a command for a helper runs in a child session. Running it in the user's
   session would first switch the whole session to the helper, so the user's next message would
   go to the helper. When the child finishes, opencode wakes `lead` with the report; `lead`

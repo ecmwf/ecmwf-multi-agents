@@ -25,12 +25,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
   tools, whatever was approved.
 - On opencode 1.x, typing into a running helper's own session now steers that helper. Before,
   the message switched the rest of its run to `lead`'s prompt, permissions and model.
-- Eval cases `background-scouts`, `steer` and `cancel`.
+- Eval cases `background-scouts`, `steer` and `cancel`, and `review-background` (`/review`
+  while a background scout works).
 
 ### Changed
 
 - Prompt budgets are ceilings raised only to a measured change: `lead` 2,050 tokens, helpers
   750, skills 1,450, for the background rules and the guide to them.
+
+### Fixed
+
+- On opencode 1.x, `/review` or `/progress` sent while `lead` is working (for example
+  `/progress` during a long `/go`) no longer takes over `lead`'s turn. It runs separately, and
+  `lead` then carries on with the report in view. Sent while `lead` is idle, it still answers
+  directly in your conversation.
+- On opencode 1.x, a background helper that finishes after `/review` or `/progress` now wakes
+  `lead` instead of the reviewer or scout; one that finishes during a review waits for the
+  verdict first.
 
 ## [0.2.0] - 2026-10-11
 

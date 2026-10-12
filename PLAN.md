@@ -376,15 +376,31 @@ All three summaries: `evals/results/background-helpers.md`.
 
 Both come from `/review` and `/progress` answering in the user's own session on 1.x (0.2.0).
 
-- [~] Tiago: A background helper that finishes after an inline `/review` or `/progress` wakes
+- [x] Tiago: A background helper that finishes after an inline `/review` or `/progress` wakes
   that helper instead of `lead`: opencode writes the completion as the session's current
   agent (`task.ts:234` at v1.18.35), and the inline command left it as the helper. Seen with
   the stand-in model: the reviewer answered the builder's report, and `lead` saw it only with
   the user's next message
-- [~] Tiago: `/review` or `/progress` sent while `lead` is working takes over `lead`'s turn: the
+- [x] Tiago: `/review` or `/progress` sent while `lead` is working takes over `lead`'s turn: the
   session loop continues as the agent of the newest user message, so `lead` never gets the
   result it was waiting for (seen with `lead` blocked on a foreground builder). In 0.2.0
   already; 0.1.0 ran these commands in a child session, and `lead` carried on afterwards
+
+Fixed in the plugin's `chat.message` hook (`plugin/inline.ts`), on 1.x only: a helper command
+sent while another agent works becomes the subtask form opencode gives a command that runs in
+a child session, on a message of the working agent, so `lead` finishes its step, the helper
+runs, and opencode tells `lead` to go on; a completion goes to the session's owner (the agent
+of its latest request that was not a helper's); either waits while a helper answers inline, so
+no answer is cut short. A command sent while the session is idle still answers inline, so
+0.2.0's saving stays for the common case. Verified with the stand-in on 1.18.35 and 1.19.0:
+the four scenarios failed before the change and pass after it, three rounds each, and the
+command-during-work case also without the background flag. With real models (2026-10-13,
+default profile, 1.18.35): the new `review-background` case (a background scout, then `/review`
+on a seeded bug) passes three of three, $0.29 each, every completion answered by `lead`; the
+four inline command cases pass, with the command turn at $0.021 to $0.029 as in 0.2.0 and no
+child session. Summaries: `evals/results/inline-commands.md`. Its first run exposed a check
+that read only each session's final text, which after an inline review is `lead`'s; the
+`verdict` check now reads the reviewer's own messages.
 
 Exit: gate and integration green on all three versions; the eval summary shows what a wake
 and a steer cost; `/guide` explains it in plain words.
@@ -445,3 +461,7 @@ and a steer cost; `/guide` explains it in plain words.
   60 integration tests with the plugin suite). Found on the way: 2.0.16's plugin context has
   no session list or messages, so children come from the event stream there; a steer is for
   running helpers only, a finished one is continued through the delegation tool.
+- 2026-10-13: Branch merged as #2 after Tiago's review and a second check. Two problems found
+  in that check, both from `/review` and `/progress` answering inline on 1.x (7f), fixed on
+  `main`: a command sent while another agent works no longer takes over its run, and a
+  background helper's completion wakes `lead`, not the helper that answered inline.

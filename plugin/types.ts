@@ -20,6 +20,14 @@ export interface EmbeddedHarness {
   defaultProfile: string;
   profiles: EmbeddedProfile[];
   agents: EmbeddedAgent[];
+  commands: EmbeddedCommand[];
+}
+
+/** A slash command of the harness: what the plugin needs to run it in a child session instead. */
+export interface EmbeddedCommand {
+  id: string;
+  agent: string;
+  description: string;
 }
 
 export interface EmbeddedProfile {
@@ -128,6 +136,20 @@ export interface V1Client {
   };
 }
 
+/** A model as a 1.x message names it; `variant` is the reasoning effort. */
+export interface V1ModelRef {
+  providerID?: string;
+  modelID?: string;
+  variant?: string;
+}
+
+/** The parts of a 1.x user message the plugin reads or changes before opencode saves it. */
+export interface V1UserMessage {
+  agent?: string;
+  model?: V1ModelRef;
+  time?: { created?: number };
+}
+
 export interface V1SessionInfo {
   id?: string;
   parentID?: string;
@@ -175,9 +197,12 @@ export interface V1Hooks {
   event: (input: { event?: { type?: string; properties?: { sessionID?: string; info?: { id?: string; parentID?: string } } } }) => Promise<void>;
   "chat.message": (
     input: { sessionID: string; agent?: string },
-    output: { message?: { agent?: string; model?: { providerID?: string; modelID?: string; variant?: string } } },
+    output: { message?: V1UserMessage; parts?: unknown[] },
   ) => Promise<void>;
-  "chat.params": (input: { sessionID: string; agent: string }, output: unknown) => Promise<void>;
+  /** `message` is the user message the request answers (opencode/src/session/llm/request.ts:114-121). */
+  "chat.params": (input: { sessionID: string; agent: string; message?: { model?: V1ModelRef } }, output: unknown) => Promise<void>;
+  /** Runs before a slash command creates its message (opencode/src/session/prompt.ts:1460-1464). */
+  "command.execute.before": (input: { command: string; sessionID: string; arguments?: string }, output: { parts?: unknown[] }) => Promise<void>;
   "tool.execute.before": (input: { tool: string; sessionID: string; callID?: string }, output: { args?: unknown }) => Promise<void>;
   "experimental.session.compacting": (input: { sessionID: string }, output: unknown) => Promise<void>;
   "experimental.chat.messages.transform": (

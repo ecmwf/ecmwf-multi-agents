@@ -9,6 +9,7 @@ import {
   answerMentions,
   backgroundHandoffs,
   committedLocally,
+  completionsWakeLead,
   helperSessions,
   helperTool,
   hiddenTestsPass,
@@ -443,6 +444,31 @@ export const CASES: EvalCase[] = [
       helperTool("helpers_cancel", "lead stopped the running builder with helpers_cancel"),
       helperSessions("builder", 1),
       testsPass(),
+    ],
+    baseline: false,
+  },
+  {
+    id: "review-background",
+    env: BACKGROUND,
+    title: "/review while a background scout works: the review answers inline, the scout's report still wakes lead",
+    setup: UNITS_BUG,
+    turns: [
+      {
+        turn: {
+          kind: "prompt",
+          text:
+            "Hand a scout, in the background, the job of listing every function in the stations package and its tests with a one-line purpose and who calls it; tell me as soon as it has started and end your turn. Do not change any files.",
+        },
+        waitFor: "root",
+        note: "lead ends its turn while the scout runs",
+      },
+      { turn: { kind: "command", command: "review", arguments: "" }, note: "the review, while the scout runs; its completion arrives during or after it" },
+    ],
+    checks: [
+      backgroundHandoffs(1),
+      verdict("REJECT", ["units.py"]),
+      completionsWakeLead(),
+      noChanges(WORK_FILES, "the review and the scout changed no project file"),
     ],
     baseline: false,
   },

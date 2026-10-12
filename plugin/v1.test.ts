@@ -4,7 +4,7 @@
 import { describe, expect, test } from "bun:test";
 import { createPlugin } from "./plugin.ts";
 import { LEAD_PROMPT, embeddedFixture, fakeEnvironment } from "./testing.ts";
-import type { Environment, V1Client, V1Config, V1Hooks } from "./types.ts";
+import type { Environment, V1Client, V1Config, V1Hooks, V1UserMessage } from "./types.ts";
 import { v1ProjectRoot } from "./v1.ts";
 
 const harness = embeddedFixture();
@@ -525,3 +525,224 @@ describe("v1 helper tools, guard and pinning", () => {
     expect(status).toContain("c2, builder, failed");
   });
 });
+
+describe("v1 helper commands and completions in the user's own session", () => {
+  const LEAD_MODEL = { providerID: "anthropic", modelID: "claude-opus-5-5", variant: "xhigh" };
+  const REVIEWER_MODEL = { providerID: "github-copilot", modelID: "gpt-6.1-sol", variant: "medium" };
+  const COMPLETION_TEXT = '<task id="ses_child" state="completed">\n<task_result>\nbuilder finished\n</task_result>\n</task>';
+
+  interface Box {
+    hooks: V1Hooks;
+    busy: Set<string>;
+    /** When set, reading the status fails. */
+    statusFails: boolean;
+    /** Pauses taken while waiting, and what to do at each. */
+    pauses: number;
+    onPause: (() => void) | undefined;
+    clock: number;
+  }
+
+  async function box(limitMs = 60_000): Promise<Box> {
+    const state = { busy: new Set<string>(), statusFails: false, pauses: 0, onPause: undefined as (() => void) | undefined, clock: 1_000 } as Box;
+    const client: V1Client = {
+      session: {
+        get: async ({ path }) => ({ data: path.id === "child" ? { id: path.id, agent: "builder", parentID: "root" } : { id: path.id, agent: "lead" } }),
+        status: async () => {
+          if (state.statusFails) throw new Error("server away");
+          return { data: Object.fromEntries([...state.busy].map((id) => [id, { type: "busy" }])) };
+        },
+      },
+    };
+    const plugin = createPlugin(harness, {
+      environment: () => fakeEnvironment({}),
+      schedule: (run) => run(),
+      now: () => state.clock,
+      inlineWaitLimitMs: limitMs,
+      sleep: async (ms) => {
+        state.pauses += 1;
+        state.clock += ms;
+        state.onPause?.();
+      },
+    });
+    state.hooks = await plugin.server({ client, directory: "/repo", worktree: "/repo" });
+    await state.hooks.event({ event: { type: "session.created", properties: { info: { id: "root" } } } });
+    await state.hooks.event({ event: { type: "session.created", properties: { info: { id: "child", parentID: "root" } } } });
+    return state;
+  }
+
+  /** lead's latest request in the user's session: it owns the session from then on. */
+  const leadWorks = (b: Box) => b.hooks["chat.params"]({ sessionID: "root", agent: "lead", message: { model: { ...LEAD_MODEL } } }, {});
+  /** The reviewer's request when it answers inline. */
+  const reviewerWorks = (b: Box) => b.hooks["chat.params"]({ sessionID: "root", agent: "reviewer", message: { model: { ...REVIEWER_MODEL } } }, {});
+
+  const reviewCommand = (session = "root") => ({
+    message: { agent: "reviewer", model: { ...REVIEWER_MODEL }, time: { created: 5 } },
+    parts: [{ id: "prt_1", sessionID: session, messageID: "msg_1", type: "text", text: "Review the uncommitted changes." }] as unknown[],
+  });
+  const completion = () => ({
+    message: { agent: "reviewer", model: { ...REVIEWER_MODEL }, time: { created: 5 } },
+    parts: [{ id: "prt_9", sessionID: "root", messageID: "msg_9", type: "text", synthetic: true, text: COMPLETION_TEXT }] as unknown[],
+  });
+  const send = async (b: Box, output: { message: V1UserMessage; parts: unknown[] }, session = "root", command?: string) => {
+    if (command !== undefined) await b.hooks["command.execute.before"]({ command, sessionID: session, arguments: "" }, { parts: output.parts });
+    await b.hooks["chat.message"]({ sessionID: session, agent: output.message.agent }, output);
+    return output;
+  };
+
+  test("a helper command in an idle session answers inline: nothing changes", async () => {
+    const b = await box();
+    await leadWorks(b);
+    const sent = await send(b, reviewCommand(), "root", "review");
+    expect(sent.message).toEqual({ agent: "reviewer", model: REVIEWER_MODEL, time: { created: 5 } });
+    expect((sent.parts[0] as { type: string }).type).toBe("text");
+  });
+
+  test("a helper command while lead works runs in a child session; the message becomes lead's, with lead's model", async () => {
+    const b = await box();
+    await leadWorks(b);
+    b.busy.add("root");
+    const sent = await send(b, reviewCommand(), "root", "review");
+    expect(sent.parts).toEqual([
+      {
+        id: "prt_1",
+        sessionID: "root",
+        messageID: "msg_1",
+        type: "subtask",
+        prompt: "Review the uncommitted changes.",
+        description: "Independent review of your changes",
+        agent: "reviewer",
+        model: { providerID: "github-copilot", modelID: "gpt-6.1-sol" },
+        command: "review",
+      },
+    ]);
+    expect(sent.message).toEqual({ agent: "lead", model: LEAD_MODEL, time: { created: 5 } });
+    expect(b.pauses).toBe(0);
+    // The session is lead's again for the shell guard.
+    expect(await shell(b.hooks, "root", "git push")).toBeUndefined();
+  });
+
+  test("with no request seen yet, a converted command goes to the default agent with its configured model", async () => {
+    const b = await box();
+    b.busy.add("root");
+    const sent = await send(b, reviewCommand(), "root", "review");
+    expect((sent.parts[0] as { type: string }).type).toBe("subtask");
+    expect(sent.message.agent).toBe("lead");
+    expect(sent.message.model).toEqual({ providerID: "anthropic", modelID: "claude-opus-5-5", variant: "xhigh" });
+  });
+
+  test("a completion in an idle session goes to the owner, at once", async () => {
+    const b = await box();
+    await leadWorks(b);
+    const sent = await send(b, completion());
+    expect(sent.message).toEqual({ agent: "lead", model: LEAD_MODEL, time: { created: 5 } });
+    expect((sent.parts[0] as { text: string }).text).toBe(COMPLETION_TEXT);
+    expect(b.pauses).toBe(0);
+  });
+
+  test("a completion while lead works goes to lead at once, for lead's next step", async () => {
+    const b = await box();
+    await leadWorks(b);
+    b.busy.add("root");
+    const sent = await send(b, completion());
+    expect(sent.message.agent).toBe("lead");
+    expect(b.pauses).toBe(0);
+  });
+
+  test("a completion while the reviewer answers inline waits for the verdict, then goes to lead, dated at delivery", async () => {
+    const b = await box();
+    await leadWorks(b);
+    await send(b, reviewCommand(), "root", "review");
+    await reviewerWorks(b);
+    b.busy.add("root");
+    b.onPause = () => {
+      if (b.pauses === 3) b.busy.delete("root");
+    };
+    const sent = await send(b, completion());
+    expect(b.pauses).toBe(3);
+    expect(sent.message).toEqual({ agent: "lead", model: LEAD_MODEL, time: { created: b.clock } });
+    expect(b.clock).toBeGreaterThan(1_000);
+  });
+
+  test("a helper command while another answers inline waits for it, then answers inline too", async () => {
+    const b = await box();
+    await leadWorks(b);
+    await send(b, reviewCommand(), "root", "review");
+    await reviewerWorks(b);
+    b.busy.add("root");
+    b.onPause = () => b.busy.delete("root");
+    const sent = await send(b, reviewCommand(), "root", "review");
+    expect(b.pauses).toBe(1);
+    expect(sent.message.agent).toBe("reviewer");
+    expect(sent.message.time).toEqual({ created: b.clock });
+    expect((sent.parts[0] as { type: string }).type).toBe("text");
+  });
+
+  test("a helper still answering at the limit keeps the completion, as opencode wrote it", async () => {
+    const b = await box(1_000);
+    await leadWorks(b);
+    await reviewerWorks(b);
+    b.busy.add("root");
+    const sent = await send(b, completion());
+    expect(b.pauses).toBeGreaterThan(0);
+    expect(sent.message).toEqual({ agent: "reviewer", model: REVIEWER_MODEL, time: { created: 5 } });
+  });
+
+  test("when the session's state cannot be read, messages stay as opencode made them", async () => {
+    const b = await box();
+    await leadWorks(b);
+    b.statusFails = true;
+    const command = await send(b, reviewCommand(), "root", "review");
+    expect(command.message.agent).toBe("reviewer");
+    expect((command.parts[0] as { type: string }).type).toBe("text");
+    const done = await send(b, completion());
+    expect(done.message.agent).toBe("reviewer");
+  });
+
+  test("a helper's child session is left to pinning: a command there never becomes a subtask", async () => {
+    const b = await box();
+    await b.hooks["chat.message"]({ sessionID: "child", agent: "builder" }, { message: { agent: "builder" } });
+    b.busy.add("child");
+    const sent = await send(b, reviewCommand("child"), "child", "review");
+    expect(sent.message.agent).toBe("builder");
+    expect((sent.parts[0] as { type: string }).type).toBe("text");
+  });
+
+  test("a completion that arrives between a command and its message does not take the command's name", async () => {
+    const b = await box();
+    await leadWorks(b);
+    await b.hooks["command.execute.before"]({ command: "review", sessionID: "root", arguments: "" }, { parts: [] });
+    await send(b, completion());
+    b.busy.add("root");
+    const sent = await send(b, reviewCommand());
+    expect((sent.parts[0] as { command?: string }).command).toBe("review");
+  });
+
+  test("lead's own message is never touched, and makes lead the owner with its model", async () => {
+    const b = await box();
+    b.busy.add("root");
+    const own = { message: { agent: "lead", model: { providerID: "anthropic", modelID: "claude-sonnet-5-5" } }, parts: [{ type: "text", text: "go on" }] as unknown[] };
+    await send(b, own);
+    expect(own.message).toEqual({ agent: "lead", model: { providerID: "anthropic", modelID: "claude-sonnet-5-5" } });
+    b.busy.delete("root");
+    const sent = await send(b, completion());
+    expect(sent.message.model).toEqual({ providerID: "anthropic", modelID: "claude-sonnet-5-5" });
+  });
+});
+
+test("v1: a status call that never answers leaves a helper command as it is, after the lookup timeout", async () => {
+  const client: V1Client = {
+    session: {
+      get: async ({ path }) => ({ data: { id: path.id, agent: "lead" } }),
+      status: () => new Promise(() => undefined),
+    },
+  };
+  const plugin = createPlugin(harness, { environment: () => fakeEnvironment({}), schedule: (run) => run() });
+  const hooks = await plugin.server({ client, directory: "/repo", worktree: "/repo" });
+  await hooks.event({ event: { type: "session.created", properties: { info: { id: "root" } } } });
+  const output = { message: { agent: "reviewer" }, parts: [{ type: "text", text: "Review" }] as unknown[] };
+  const started = Date.now();
+  await hooks["chat.message"]({ sessionID: "root", agent: "reviewer" }, output);
+  expect(Date.now() - started).toBeLessThan(5_000);
+  expect(output.message.agent).toBe("reviewer");
+  expect((output.parts[0] as { type: string }).type).toBe("text");
+}, 10_000);

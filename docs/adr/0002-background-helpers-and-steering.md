@@ -91,10 +91,12 @@ pinning is needed.
 
 `helpers_cancel` reports the cancel in its own result, because the platform does not wake
 the parent for a cancelled job; a helper the user cancelled shows in `helpers_status`. A
-completion that lands while a helper answers inline in the user's session (`/review` on 1.x)
-is written as that helper's and becomes part of its run: the isolation hook treats a message
-opencode wrote itself as part of the current request, so the reviewer keeps its brief and its
-steps, and `lead` reads the completion on its next turn, not as a wake.
+completion in the user's session on 1.x is written as the agent the session last ran, which
+after an inline `/review` or `/progress` is the helper. The plugin gives it to the session's
+owner, normally `lead`, so it wakes `lead` as anywhere else; one that arrives while the helper
+is still answering waits for its report first. Should the plugin let one through (it cannot
+read the session's state), the isolation hook still treats a message opencode wrote itself as
+part of the current request, so the reviewer keeps its brief and its steps.
 
 ### The 1.x flag
 

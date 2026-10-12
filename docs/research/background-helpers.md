@@ -250,6 +250,14 @@ the reviewer's request at 14.3 s held the `<task ... state="completed">` message
 user message and answered "VERDICT: APPROVE". The session's messages read `user reviewer
 "<task id=..."`, and no `lead` request followed.
 
+Follow-up, found after the branch was merged: the same happens when the completion arrives
+after the inline review has finished, because the session record still names the reviewer;
+the reviewer answers the completion and `lead` is not woken. And an inline command sent while
+`lead` works takes over `lead`'s run, because the loop runs the agent of its newest message
+(`opencode/src/session/prompt.ts:1096,1170`). The plugin now holds such a message until the
+helper's report is in, gives a completion to the session's owner, and runs a command sent
+during another agent's work in a child session (`plugin/inline.ts`, `docs/architecture.md`).
+
 ## 10. Tool ids
 
 Answer. Neither platform has a tool whose id starts with `helpers`. The direct tools `lead`

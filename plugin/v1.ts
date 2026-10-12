@@ -15,7 +15,11 @@
 // the same agent on the session record (prompt.ts:672-689).
 //
 // Helpers that answer in the user's own session (`/review`, `/progress`) get only their own
-// request in each model request; see isolate.ts.
+// request in each model request; see isolate.ts. They never take a turn from another agent and
+// never receive a background helper's completion: a helper command sent while another agent works
+// runs in a child session instead, a completion goes to the session's owner, and either waits while
+// a helper answers inline; see inline.ts. The owner is the agent of the session's latest request
+// that was not a helper's, from `chat.params`.
 //
 // The helper tools (tools-v1.ts) let lead see, redirect and stop its helpers. A message that
 // lands in a helper's child session is pinned to that helper's agent, model and effort in
@@ -37,11 +41,24 @@ import { applyToV1Config, planAgents, type AgentPlan } from "./apply.ts";
 import { processEnvironment } from "./environment.ts";
 import { checkShellCommand } from "./guard.ts";
 import { Activity, HELPER_TOOL_IDS, helperIds, pinMessage, remember, toolCallBlock } from "./helpers.ts";
+import {
+  INLINE_WAIT_LIMIT_MS,
+  Owners,
+  PendingCommands,
+  giveTo,
+  inlineAction,
+  isCompletion,
+  isSyntheticMessage,
+  sleep,
+  toSubtask,
+  waitForIdle,
+  type InlineFacts,
+} from "./inline.ts";
 import { Compactions, isolateHelperRequest } from "./isolate.ts";
 import { v1Reporter } from "./report.ts";
 import { loadSettings, mergeSettings } from "./settings.ts";
 import { v1Tools } from "./tools-v1.ts";
-import type { EmbeddedHarness, Environment, Settings, V1Hooks, V1PluginInput } from "./types.ts";
+import type { EmbeddedHarness, Environment, Settings, V1Hooks, V1PluginInput, V1UserMessage } from "./types.ts";
 
 /** opencode 1.x names its shell tool `bash` (opencode/src/tool/shell/id.ts). */
 const SHELL_TOOL = "bash";
@@ -52,6 +69,24 @@ const LOOKUP_TIMEOUT_MS = 2000;
 export interface V1Options {
   environment?: () => Environment;
   schedule?: (run: () => void, ms: number) => void;
+  /** The clock and pause a message waiting for an inline helper uses, and its limit; for tests. */
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+  inlineWaitLimitMs?: number;
+}
+
+/** The value of `promise`, or undefined when it takes longer than `ms`. */
+async function inTime<T>(promise: Promise<T>, ms: number): Promise<T | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => resolve(undefined), ms);
+    (timer as { unref?: () => void }).unref?.();
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** The project root: the git worktree, or the directory opencode runs in outside git (worktree "/"). */
@@ -155,6 +190,51 @@ export function createServer(harness: EmbeddedHarness, options: V1Options = {}) 
     };
     const tool = v1Tools({ harness, client: input?.client, agentOf: (session) => sessions.get(session), activity, helpers });
 
+    const owners = new Owners();
+    const now = options.now ?? Date.now;
+    const pending = new PendingCommands(now);
+    const waiting = { limitMs: options.inlineWaitLimitMs ?? INLINE_WAIT_LIMIT_MS, sleep: options.sleep ?? sleep, now };
+    /** Whether a session has work in progress; undefined when the server cannot say in time. */
+    const busyState = async (session: string): Promise<boolean | undefined> => {
+      const status = input?.client?.session?.status;
+      if (typeof status !== "function") return undefined;
+      const data = (await inTime(status.call(input.client?.session), LOOKUP_TIMEOUT_MS).catch(() => undefined))?.data;
+      if (data === null || data === undefined) return undefined;
+      const type = data[session]?.type;
+      return type !== undefined && type !== "idle";
+    };
+    /**
+     * A message of a helper in the user's own session: answer inline, run in a child session, go to
+     * the session's owner, or wait for the helper that answers there now (see inline.ts).
+     */
+    const shareSession = async (session: string, target: V1UserMessage, parts: unknown, command: string | undefined) => {
+      const completion = isCompletion(parts);
+      const facts = async (busy: boolean | undefined): Promise<InlineFacts> => ({
+        agent: target.agent,
+        completion,
+        busy,
+        running: sessions.get(session) ?? (await lookup(session).catch(() => undefined)),
+      });
+      let action = inlineAction(await facts(await busyState(session)), helpers);
+      if (action === "wait") {
+        // Still busy at the limit, or the state cannot be read: opencode's way stands.
+        if ((await waitForIdle(() => busyState(session), waiting)) !== false) return;
+        if (target.time !== undefined) target.time.created = now();
+        action = inlineAction(await facts(false), helpers);
+      }
+      if (action !== "owner" && action !== "subtask") return;
+      const owner = owners.get(session) ?? { agent: harness.defaultAgent };
+      const plan = plans.find((item) => item.id === owner.agent);
+      if (action === "subtask") {
+        const helper = target.agent!;
+        const known = harness.commands.find((item) => item.id === command && item.agent === helper);
+        const model = typeof target.model?.providerID === "string" && typeof target.model.modelID === "string" ? { providerID: target.model.providerID, modelID: target.model.modelID } : undefined;
+        const spec = { agent: helper, description: known?.description ?? "", ...(command !== undefined ? { command } : {}), ...(model !== undefined ? { model } : {}) };
+        if (!Array.isArray(parts) || !toSubtask(parts, spec)) return;
+      }
+      giveTo(target, owner, plan);
+    };
+
     return {
       async config(config) {
         try {
@@ -181,11 +261,21 @@ export function createServer(harness: EmbeddedHarness, options: V1Options = {}) 
         }
       },
 
+      async "command.execute.before"(command) {
+        try {
+          pending.note(command?.sessionID, command?.command);
+        } catch (error) {
+          reporter.internal("the command hook", error);
+        }
+      },
+
       async "chat.message"(message, output) {
         try {
           const session = message?.sessionID;
           const target = output?.message;
           if (typeof session === "string" && target !== undefined && target !== null) {
+            // The command that creates this message, if any; a message opencode wrote itself is none.
+            const command = isSyntheticMessage(output?.parts) ? undefined : pending.take(session);
             let helper = sessions.get(session);
             if (sessions.isChild(session) === undefined) {
               // No session.created event seen: the session predates the plugin. Ask the server
@@ -208,6 +298,11 @@ export function createServer(harness: EmbeddedHarness, options: V1Options = {}) 
               // model and effort, whoever sent it and whatever it names.
               pinMessage(target, helper, plans.find((plan) => plan.id === helper));
             }
+            if (sessions.isChild(session) === false) {
+              await shareSession(session, target, output?.parts, command);
+              const agent = target.agent;
+              if (typeof agent === "string" && !helpers.has(agent) && !TOOL_LESS_AGENTS.has(agent)) owners.note(session, agent, target.model);
+            }
           }
           // A new message starts a new run; an earlier stop or failure no longer describes it.
           activity.resume(session);
@@ -219,7 +314,10 @@ export function createServer(harness: EmbeddedHarness, options: V1Options = {}) 
 
       async "chat.params"(request) {
         try {
-          if (!TOOL_LESS_AGENTS.has(request?.agent)) sessions.set(request?.sessionID, request?.agent);
+          const agent = request?.agent;
+          if (TOOL_LESS_AGENTS.has(agent)) return;
+          sessions.set(request?.sessionID, agent);
+          if (typeof agent === "string" && !helpers.has(agent)) owners.note(request?.sessionID, agent, request?.message?.model);
         } catch (error) {
           reporter.internal("the chat.params hook", error);
         }

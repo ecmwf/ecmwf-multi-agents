@@ -256,6 +256,9 @@ export interface CheckContext {
   answers: string[];
   /** Final text of every session in the run, with its agent. */
   reports: Array<{ agent: string; sessionID: string; text: string }>;
+  /** Every session of the run as the server returned it, and which of them the turns started. */
+  sessions: SessionData[];
+  rootSessions: string[];
   /** Files added, changed or removed since setup, outside .git and Python caches. */
   changedFiles: string[];
   metrics: Metrics;
