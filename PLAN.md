@@ -78,7 +78,7 @@ Source content and generator code are written in parallel against the contracts 
 | 4 | Four agents with per-agent effort (generator and plugin; prompts and docs); Makefile and version tool; eval harness | Release 0.1.0 | done |
 | 5 | Eval runs, baseline, prompt fixes from the results | Release 0.2.0 (done); the open tasks feed the next release | in progress |
 | 6 | npm package, CI, v2 central install, docs polish | | |
-| 7 | Background helpers, steering and cancel: evidence and contract first; then plugin tools, 1.x enablement and prompts in parallel; then tests, evals and docs | Contract agreed (7a); gate and integration green on 1.18.35, 1.19.0 and 2.0.16; evals show the cost of a wake and of a steer | planned |
+| 7 | Background helpers, steering and cancel: evidence and contract first; then plugin tools, 1.x enablement and prompts in parallel; then tests, evals and docs | Contract agreed (7a); gate and integration green on 1.18.35, 1.19.0 and 2.0.16; evals show the cost of a wake and of a steer | built and measured on a branch; release open |
 
 Ownership rule for parallel work: every task owns a disjoint set of files; shared contracts
 (`docs/architecture.md`, `docs/adr/`, `src/manifest.jsonc`, `tools/types.ts`, this plan) change
@@ -333,10 +333,11 @@ Tasks, in order; **(par)** marks what can run side by side once 7a is done:
 - [x] Samet: Integration suite on 1.18.35, 1.19.0 and 2.0.16: background start and wake,
   steer mid-run, `task_id` chaining, cancel, promotion, 1.x pinning, helpers denied the
   tools
-- [~] Samet: Evals: `background-scouts` (two independent questions while the user keeps
+- [x] Samet: Evals: `background-scouts` (two independent questions while the user keeps
   talking), `steer` (the user redirects a running scout; the report names the amendment;
   cost against cancel-and-restart), `cancel`; the shared cases re-run to show no regression
-- [~] Samet: `CHANGELOG.md` entries and `docs/install.md`; release when Tiago agrees
+- [x] Samet: `CHANGELOG.md` entries and `docs/install.md`
+- [ ] Release, when Tiago agrees: merge the branch, then `make release`
 
 First real-model run of the three new cases (2026-10-12, default profile, opencode 1.18.35,
 one repeat each): all pass, $0.62 in total.
@@ -347,8 +348,13 @@ one repeat each): all pass, $0.62 in total.
 | `steer` | $0.23 (lead $0.15, scout $0.08) | 10 | One hand-off, one `helpers_steer` naming the two files, no status call, no restart; the scout's narrowed report came through the wake |
 | `cancel` | $0.15 (lead $0.13, builder $0.03) | 8 | One hand-off, one `helpers_cancel`, then `git status` and `git diff` to report what the builder had touched |
 
-Still open: the shared cases rerun against the 0.1.0 baseline, to see what the longer `lead`
-prompt costs per request.
+The shared cases rerun the same day (`answer`, `trivial-edit`, `bug-fix`, `feature`, `no-push`,
+both variants, one repeat, $1.71): all pass, `no-push` included (it failed on 0.1.0). Over
+the four comparable cases the harness mean went from $0.195 to $0.199 (+1.8 percent), the
+size of the prompt growth, while the baseline moved -1 percent on the same day; the one
+outlier, `trivial-edit` +20 percent, had the same eight requests but read more files
+(`README.md`, `git ls-files`), which is variance in diligence, not the new rules. Both
+summaries: `evals/results/background-helpers.md`.
 
 Exit: gate and integration green on all three versions; the eval summary shows what a wake
 and a steer cost; `/guide` explains it in plain words.
