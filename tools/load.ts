@@ -10,7 +10,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { type Node, type ParseError, parseTree, printParseErrorCode } from "jsonc-parser";
 import { EFFORT_PATTERN, MODEL_PATTERN } from "../plugin/settings.ts";
-import { ACTIONS, type Action, type AgentMode, type Effect, type Profile, type ProfileAgent } from "./types.ts";
+import { ACTIONS, PLATFORM_TOOL_IDS, TOOL_ID, type Action, type AgentMode, type Effect, type Profile, type ProfileAgent } from "./types.ts";
 import {
   compareBytes,
   errorCode,
@@ -384,7 +384,7 @@ function readRuleSets(value: unknown, c: Checker): Map<string, RuleSetItem[]> {
       if (entry === undefined) return;
       c.keys(entry, itemAt, RULE_SET_ITEM_KEYS, RULE_SET_ITEM_KEYS);
       const action = c.choice(entry.action, [...itemAt, "action"], ACTIONS);
-      const resource = c.text(entry.resource, [...itemAt, "resource"]);
+      const resource = readResource(entry.resource, c, [...itemAt, "resource"], action);
       if (action !== undefined && resource !== undefined) items.push({ action, resource });
     });
   }
@@ -420,10 +420,28 @@ function readPermissions(
     }
     c.keys(entry, entryAt, RULE_KEYS, RULE_KEYS);
     const action = c.choice(entry.action, [...entryAt, "action"], ACTIONS);
-    const resource = c.text(entry.resource, [...entryAt, "resource"]);
+    const resource = readResource(entry.resource, c, [...entryAt, "resource"], action);
     if (action !== undefined && resource !== undefined && effect !== undefined) out.push({ action, resource, effect });
   });
   return out;
+}
+
+/**
+ * A rule's resource. For the `tool` action it is the exact id of a tool the plugin adds, so it
+ * must look like one and must not be a tool the platforms have themselves.
+ */
+function readResource(value: unknown, c: Checker, at: KeyPath, action: Action | undefined): string | undefined {
+  const resource = c.text(value, at);
+  if (resource === undefined || action !== "tool") return resource;
+  if (!TOOL_ID.test(resource)) {
+    c.fail(at, `a tool rule names one tool id, lowercase words joined by underscores, not ${JSON.stringify(resource)}`);
+    return undefined;
+  }
+  if (PLATFORM_TOOL_IDS.has(resource)) {
+    c.fail(at, `${JSON.stringify(resource)} is a tool of opencode itself; use its own action instead of a tool rule`);
+    return undefined;
+  }
+  return resource;
 }
 
 function readPromptList(value: unknown, c: Checker, at: KeyPath, refs: MarkdownRef[]): string[] {

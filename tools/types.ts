@@ -25,8 +25,53 @@ export const ACTIONS = [
   // Code Mode in opencode 2 (tools reachable only through the `execute` tool, such as MCP
   // tools). opencode 1.x has no Code Mode, so its emitter drops these rules.
   "execute",
+  // A tool the harness plugin adds, named by its id in the resource (exact, no pattern). Both
+  // platforms key such a rule by the tool id with the pattern "*": a deny removes the tool from
+  // the agent's requests (docs/research/background-helpers.md, section 8).
+  "tool",
 ] as const;
 export type Action = (typeof ACTIONS)[number];
+/** The actions the emitters map to a platform permission key; `tool` carries its key in the resource. */
+export type MappedAction = Exclude<Action, "tool">;
+
+/** A plugin tool id: lowercase words joined by underscores, as both platforms name tools. */
+export const TOOL_ID = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/;
+/**
+ * Permission keys the platforms use for their own tools (opencode 1.x and 2.0.16 together).
+ * A `tool` rule may not name one: those are reached through the neutral actions above.
+ */
+export const PLATFORM_TOOL_IDS: ReadonlySet<string> = new Set([
+  "bash",
+  "shell",
+  "read",
+  "edit",
+  "write",
+  "patch",
+  "apply_patch",
+  "glob",
+  "grep",
+  "list",
+  "task",
+  "subagent",
+  "skill",
+  "question",
+  "webfetch",
+  "websearch",
+  "todowrite",
+  "todoread",
+  "external_directory",
+  "execute",
+  "invalid",
+  "doom_loop",
+  "lsp",
+  "list_mcp_resources",
+  "list_mcp_resource_templates",
+  "read_mcp_resource",
+  "opencode_list_mcp_resources",
+  "opencode_read_mcp_resource",
+  "session_move",
+  "session_rename",
+]);
 
 export interface Rule {
   action: Action;

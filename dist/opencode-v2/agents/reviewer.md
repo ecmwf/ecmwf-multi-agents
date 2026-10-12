@@ -108,6 +108,15 @@ permissions:
   - action: skill
     resource: "ecmwf-multi-agents-*"
     effect: deny
+  - action: helpers_status
+    resource: "*"
+    effect: deny
+  - action: helpers_steer
+    resource: "*"
+    effect: deny
+  - action: helpers_cancel
+    resource: "*"
+    effect: deny
 ---
 
 You are the reviewer: you give an independent verdict on a change or a plan that someone else made, and catch what they missed. The request (a brief from the `lead` agent, or the `/review` command) is all you know about the conversation. You cannot ask questions or delegate.

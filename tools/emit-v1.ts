@@ -16,10 +16,10 @@
 
 import { withFrontmatter, type YamlValue } from "./frontmatter.ts";
 import type {
-  Action,
   AgentMode,
   Effect,
   Emitter,
+  MappedAction,
   OutputFile,
   ResolvedAgent,
   ResolvedCommand,
@@ -35,7 +35,7 @@ export const V1_VERSIONS = ["1.18.35", "1.19.0"] as const;
  * Neutral action to opencode 1.x permission key. `null` means opencode 1.x has no such
  * feature, so rules for it have nothing to control and are left out.
  */
-export const V1_ACTIONS: Readonly<Record<Action, string | null>> = {
+export const V1_ACTIONS: Readonly<Record<MappedAction, string | null>> = {
   read: "read",
   edit: "edit", // also covers the write and apply_patch tools
   glob: "glob",
@@ -51,6 +51,7 @@ export const V1_ACTIONS: Readonly<Record<Action, string | null>> = {
   external_directory: "external_directory",
   execute: null, // Code Mode exists only in opencode 2
 };
+// A `tool` rule is keyed by the tool id in its resource, as a flat key (one effect for the tool).
 
 /**
  * Permission keys that take only one action for every resource. An object here is a schema
@@ -105,6 +106,11 @@ export function v1Color(color?: string): string | undefined {
 export function v1Permission(rules: readonly Rule[], owner = "rules"): { [key: string]: YamlValue } {
   const grouped = new Map<string, Map<string, Effect>>();
   for (const rule of rules) {
+    if (rule.action === "tool") {
+      grouped.delete(rule.resource);
+      grouped.set(rule.resource, new Map([["*", rule.effect]]));
+      continue;
+    }
     const key = V1_ACTIONS[rule.action];
     if (key === undefined) fail(`${owner}: unknown action ${JSON.stringify(rule.action)}`);
     if (key === null) continue;
@@ -124,7 +130,7 @@ export function v1Permission(rules: readonly Rule[], owner = "rules"): { [key: s
   }
   const out: { [key: string]: YamlValue } = {};
   for (const [key, patterns] of grouped) {
-    if (V1_FLAT_KEYS.has(key)) {
+    if (V1_FLAT_KEYS.has(key) || isToolKey(key, rules)) {
       out[key] = [...patterns.values()].at(-1)!;
       continue;
     }
@@ -133,6 +139,11 @@ export function v1Permission(rules: readonly Rule[], owner = "rules"): { [key: s
     out[key] = map;
   }
   return out;
+}
+
+/** True when the key comes from a `tool` rule, which opencode 1.x keeps as a flat key. */
+function isToolKey(key: string, rules: readonly Rule[]): boolean {
+  return rules.some((rule) => rule.action === "tool" && rule.resource === key);
 }
 
 export function v1AgentFile(agent: ResolvedAgent, marker: string): OutputFile {

@@ -353,7 +353,7 @@ describe("emitV2 skills", () => {
 
 describe("action and model helpers", () => {
   test("every neutral action has a v2 mapping entry", () => {
-    expect(Object.keys(V2_ACTIONS).sort()).toEqual([...ACTIONS].sort());
+    expect(Object.keys(V2_ACTIONS).sort()).toEqual(ACTIONS.filter((action) => action !== "tool").sort());
     expect(V2_ACTIONS.shell).toBe("shell");
     expect(V2_ACTIONS.delegate).toBe("subagent");
     expect(V2_ACTIONS.todo).toBeNull();
@@ -361,6 +361,22 @@ describe("action and model helpers", () => {
     expect(V2_ACTIONS.execute).toBe("execute");
   });
 
+
+  test("a tool rule is keyed by the tool id with the pattern *, in place and in order", () => {
+    expect(
+      v2Permissions([
+        { action: "tool", resource: "helpers_status", effect: "deny" },
+        { action: "todo", resource: "*", effect: "deny" },
+        { action: "shell", resource: "ls *", effect: "allow" },
+      ]),
+    ).toEqual({
+      rules: [
+        { action: "helpers_status", resource: "*", effect: "deny" },
+        { action: "shell", resource: "ls *", effect: "allow" },
+      ],
+      dropped: [{ action: "todo", resource: "*", effect: "deny" }],
+    });
+  });
   test("v2Permissions keeps order and separates dropped rules", () => {
     const result = v2Permissions([
       { action: "todo", resource: "*", effect: "deny" },
