@@ -372,6 +372,20 @@ The shared cases rerun with the baseline as plain opencode: harness mean $0.190 
 comparable cases against $0.195 on 0.1.0, baseline $0.188 against $0.190; no difference.
 All three summaries: `evals/results/background-helpers.md`.
 
+7f. Inline helper commands on opencode 1.x (found while verifying the review fixes)
+
+Both come from `/review` and `/progress` answering in the user's own session on 1.x (0.2.0).
+
+- [~] Tiago: A background helper that finishes after an inline `/review` or `/progress` wakes
+  that helper instead of `lead`: opencode writes the completion as the session's current
+  agent (`task.ts:234` at v1.18.35), and the inline command left it as the helper. Seen with
+  the stand-in model: the reviewer answered the builder's report, and `lead` saw it only with
+  the user's next message
+- [~] Tiago: `/review` or `/progress` sent while `lead` is working takes over `lead`'s turn: the
+  session loop continues as the agent of the newest user message, so `lead` never gets the
+  result it was waiting for (seen with `lead` blocked on a foreground builder). In 0.2.0
+  already; 0.1.0 ran these commands in a child session, and `lead` carried on afterwards
+
 Exit: gate and integration green on all three versions; the eval summary shows what a wake
 and a steer cost; `/guide` explains it in plain words.
 
