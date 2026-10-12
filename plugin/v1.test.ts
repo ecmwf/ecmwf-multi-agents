@@ -414,6 +414,26 @@ describe("v1 helper tools, guard and pinning", () => {
     expect(next.agent).toBe("lead");
   });
 
+  test("a child first seen mid-run (the plugin restarted) is pinned to the agent of its first message", async () => {
+    const state = fake();
+    // The server already names the sender, lead, on the record; the history still starts with the builder.
+    state.sessions.c2!.agent = "lead";
+    state.client.session!.messages = async ({ path }) => ({
+      data: path.id === "c2" ? [{ info: { role: "user", agent: "builder" } }, { info: { role: "assistant", agent: "builder" } }] : [],
+    });
+    const hooks = await hooksWith(state);
+    const fromTui = { agent: "lead", model: { providerID: "anthropic", modelID: "claude-opus-5-5", variant: "xhigh" } };
+    await hooks["chat.message"]({ sessionID: "c2", agent: "lead" }, { message: fromTui });
+    expect(fromTui).toEqual({ agent: "builder", model: { providerID: "anthropic", modelID: "claude-sonnet-5-5", variant: "high" } });
+    // From then on the session is the builder's for the tools and the guard.
+    expect(await hooks.tool.helpers_status!.execute({}, { sessionID: "root", agent: "lead" })).toContain("c2, builder, running");
+    await expect(hooks["tool.execute.before"]({ tool: "helpers_steer", sessionID: "c2" }, { args: {} })).rejects.toThrow("helpers may not use");
+    // The user's own session, first seen mid-run, is left alone: the server says it has no parent.
+    const own = { agent: "lead" };
+    await hooks["chat.message"]({ sessionID: "root", agent: "lead" }, { message: own });
+    expect(own.agent).toBe("lead");
+  });
+
   test("a continued helper no longer shows its earlier stop or failure", async () => {
     const state = fake();
     const hooks = await hooksWith(state);

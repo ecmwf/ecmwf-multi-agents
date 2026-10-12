@@ -296,6 +296,10 @@ describe("shared pieces", () => {
     expect(commandHead("git $SUB x")).toBe("git");
     expect(commandHead("python3 -m \"my mod\"")).toBe("python3");
     expect(commandHead("cd /tmp && curl -u a:b host")).toBe("cd");
+    // A program given by path shows nothing: its segments are arbitrary text.
+    expect(commandHead("/tmp/prod-token-abc/run --all")).toBe("");
+    expect(commandHead("./configure --prefix=/x")).toBe("");
+    expect(commandHead("git /tmp/token/sub")).toBe("git");
     expect(summarizeCall("bash", { command: "curl -H 'Authorization: Bearer abc' https://x" })).toBe("bash: curl");
     expect(summarizeCall("webfetch", { url: "https://user:pw@host/reset/t0k3n?token=abc#frag" })).toBe("webfetch: https://host");
     // Anything but a web URL with a host shows nothing: no scheme to strip secrets from safely.

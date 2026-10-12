@@ -59,8 +59,9 @@ redirecting it, and on both it would bypass the guard and the agent pinning.
 
 The brief stays the contract (architecture principle 3). A steer is an amendment: the helper
 follows the latest message, keeps the earlier LIMITS unless the steer lifts them, and its
-report still answers every DONE WHEN item and says under ASSUMPTIONS what the steer changed
-and what was already done before it. A steer is never an approval for a pending permission
+report still answers every DONE WHEN item and says what the steer changed and what was
+already done before it, in the section its report format has for it: ASSUMPTIONS for the
+builder, ANSWER for a scout, CHECKED for the reviewer. A steer is never an approval for a pending permission
 request and never changes a helper's permissions.
 
 ### When `lead` steers, cancels or uses the background

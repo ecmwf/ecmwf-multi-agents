@@ -542,7 +542,7 @@ class Activity {
   }
 }
 var SUBCOMMAND_PROGRAMS = new Set(["git", "gh", "make", "npm", "bun", "pip", "pip3", "cargo", "docker", "kubectl", "conda", "uv", "poetry"]);
-var PLAIN_WORD = /^[A-Za-z0-9._+\/-]+$/;
+var PLAIN_WORD = /^[A-Za-z0-9._+-]+$/;
 function commandHead(command) {
   const first = commandParts(command)[0];
   if (first === undefined)
@@ -1380,6 +1380,17 @@ function createServer(harness, options = {}) {
       const data = await fetchSession(session);
       return typeof data?.agent === "string" ? data.agent : undefined;
     };
+    const ownerOfChild = async (session) => {
+      const data = await fetchSession(session);
+      if (data === undefined || sessions.isChild(session) !== true)
+        return;
+      const messages = input?.client?.session?.messages;
+      if (typeof messages !== "function")
+        return;
+      const list = (await messages.call(input.client?.session, { path: { id: session } }))?.data ?? [];
+      const first = list.find((item) => item?.info?.role === "user")?.info?.agent;
+      return typeof first === "string" && helpers.has(first) ? first : undefined;
+    };
     const tool = v1Tools({ harness, client: input?.client, agentOf: (session) => sessions.get(session), activity, helpers });
     return {
       async config(config) {
@@ -1405,14 +1416,21 @@ function createServer(harness, options = {}) {
           const session = message?.sessionID;
           const target = output?.message;
           if (typeof session === "string" && target !== undefined && target !== null) {
-            const helper = sessions.get(session);
+            let helper = sessions.get(session);
             if (helper === undefined) {
               const first = target.agent ?? message?.agent;
               if (typeof first === "string" && helpers.has(first))
                 sessions.setChild(session, true);
-              else
-                fetchSession(session).catch((error) => reporter.internal("looking up a session", error));
-            } else if (helpers.has(helper) && sessions.isChild(session) === true) {
+              else {
+                helper = await ownerOfChild(session).catch((error) => {
+                  reporter.internal("looking up a session", error);
+                  return;
+                });
+                if (helper !== undefined)
+                  sessions.set(session, helper);
+              }
+            }
+            if (helper !== undefined && helpers.has(helper) && sessions.isChild(session) === true) {
               pinMessage(target, helper, plans.find((plan) => plan.id === helper));
             }
           }

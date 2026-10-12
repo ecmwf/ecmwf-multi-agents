@@ -29,9 +29,10 @@
 // writes the brief as the helper (task.ts:207-216), so a session whose first message is a
 // helper's is a child, and one whose first message is lead's is the user's own, where a helper
 // may answer inline later (`/review`) and must not be pinned. That decision needs no server
-// lookup, so a lookup failure cannot leave a child unpinned. The lookup remains for one corner:
-// a plugin that started after the child did sees a later message first, and then asks the
-// server for the parent; if that fails too, the helper to pin to is unknown anyway.
+// lookup, so a lookup failure cannot leave a child unpinned. One corner needs the server: a
+// plugin that started after the child did sees a later message first. It then asks for the
+// session's parent and, for a child, for the agent of its first message, which is the helper,
+// and pins from there; only if that fails is the message left as it is, and reported.
 
 import { applyToV1Config, planAgents, type AgentPlan } from "./apply.ts";
 import { processEnvironment } from "./environment.ts";
@@ -141,6 +142,20 @@ export function createServer(harness: EmbeddedHarness, options: V1Options = {}) 
       const data = await fetchSession(session);
       return typeof data?.agent === "string" ? data.agent : undefined;
     };
+    /**
+     * For a session first seen mid-run: the helper that owns it, from the agent of its first
+     * message, when the server says it is a child. Undefined for the user's own session or when
+     * the server cannot be asked.
+     */
+    const ownerOfChild = async (session: string): Promise<string | undefined> => {
+      const data = await fetchSession(session);
+      if (data === undefined || sessions.isChild(session) !== true) return undefined;
+      const messages = input?.client?.session?.messages;
+      if (typeof messages !== "function") return undefined;
+      const list = (await messages.call(input.client?.session, { path: { id: session } }))?.data ?? [];
+      const first = list.find((item) => item?.info?.role === "user")?.info?.agent;
+      return typeof first === "string" && helpers.has(first) ? first : undefined;
+    };
     const tool = v1Tools({ harness, client: input?.client, agentOf: (session) => sessions.get(session), activity, helpers });
 
     return {
@@ -168,14 +183,22 @@ export function createServer(harness: EmbeddedHarness, options: V1Options = {}) 
           const session = message?.sessionID;
           const target = output?.message;
           if (typeof session === "string" && target !== undefined && target !== null) {
-            const helper = sessions.get(session);
+            let helper = sessions.get(session);
             if (helper === undefined) {
               // First sight of this session: a helper's message means a child session; lead's
-              // means the user's own. A plugin that started mid-run asks the server instead.
+              // means the user's own, unless the plugin started mid-run and the server says the
+              // session is a child, whose helper is the agent of its first message.
               const first = target.agent ?? message?.agent;
               if (typeof first === "string" && helpers.has(first)) sessions.setChild(session, true);
-              else void fetchSession(session).catch((error: unknown) => reporter.internal("looking up a session", error));
-            } else if (helpers.has(helper) && sessions.isChild(session) === true) {
+              else {
+                helper = await ownerOfChild(session).catch((error: unknown) => {
+                  reporter.internal("looking up a session", error);
+                  return undefined;
+                });
+                if (helper !== undefined) sessions.set(session, helper);
+              }
+            }
+            if (helper !== undefined && helpers.has(helper) && sessions.isChild(session) === true) {
               // Every message in a helper's child session runs as that helper, with the helper's
               // model and effort, whoever sent it and whatever it names.
               pinMessage(target, helper, plans.find((plan) => plan.id === helper));

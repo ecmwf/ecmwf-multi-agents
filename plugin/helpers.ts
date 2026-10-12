@@ -151,8 +151,9 @@ export class Activity {
 // Programs whose first argument says what the command does (`git log`, `make check`).
 const SUBCOMMAND_PROGRAMS = new Set(["git", "gh", "make", "npm", "bun", "pip", "pip3", "cargo", "docker", "kubectl", "conda", "uv", "poetry"]);
 
-// A word that is a plain program or subcommand name: no quotes, no expansions, no separators.
-const PLAIN_WORD = /^[A-Za-z0-9._+\/-]+$/;
+// A word that is a plain program or subcommand name: no quotes, no expansions, no path
+// separators (a path's segments are arbitrary text, so `./run` or `/opt/x/run` show nothing).
+const PLAIN_WORD = /^[A-Za-z0-9._+-]+$/;
 
 /**
  * The head of a shell command: the program and, for a few programs, its subcommand. Arguments

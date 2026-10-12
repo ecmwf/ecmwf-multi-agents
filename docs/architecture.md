@@ -160,7 +160,8 @@ have them:
 | `helpers_cancel(id or all)` | Stops a helper and says so in the result (opencode 1.x does not wake `lead` for a cancel) |
 
 A steer amends the brief (principle 3): the helper follows the latest message, keeps the
-earlier LIMITS unless the steer lifts them, and reports what changed under ASSUMPTIONS. A
+earlier LIMITS unless the steer lifts them, and reports what changed in the section its
+report has for it (ASSUMPTIONS for the builder, ANSWER for a scout, CHECKED for the reviewer). A
 steer is never an approval and never changes permissions. `lead` steers when the helper's
 reading so far is still useful and the correction is small; it cancels and briefs again when
 the direction was wrong. It steers reactively, when the user asks or when a status check it

@@ -119,6 +119,8 @@ export interface V1Client {
   session?: {
     get?: (options: { path: { id: string } }) => Promise<{ data?: V1SessionInfo | null } | undefined>;
     children?: (options: { path: { id: string } }) => Promise<{ data?: V1SessionInfo[] | null } | undefined>;
+    /** The session's messages, oldest first. */
+    messages?: (options: { path: { id: string }; query?: { limit?: number } }) => Promise<{ data?: Array<{ info?: { role?: string; agent?: string } }> | null } | undefined>;
     /** Sessions with work in progress, keyed by id; idle sessions are absent. */
     status?: () => Promise<{ data?: Record<string, { type?: string }> | null } | undefined>;
     promptAsync?: (options: { path: { id: string }; body: { agent?: string; parts: Array<{ type: "text"; text: string }> } }) => Promise<unknown>;
