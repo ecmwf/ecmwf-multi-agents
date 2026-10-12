@@ -323,12 +323,26 @@ describe("v2 helper tools and guard", () => {
     expect(await host.call("helpers_status", {}, { sessionID: "root", agent: "lead" })).toContain("c1, scout, stopped");
   });
 
-  test("a session the stream did not announce is looked up through the session API", async () => {
+  test("a session the stream did not announce is looked up through the session API; its state is unknown", async () => {
     const { host } = await start({});
     host.sessions.late = { parentID: "root", agent: "scout" };
-    expect(await host.call("helpers_steer", { id: "late", text: "x" }, { sessionID: "root", agent: "lead" })).toContain('sessionID: "late"');
+    expect(await host.call("helpers_steer", { id: "late", text: "x" }, { sessionID: "root", agent: "lead" })).toContain("started before this plugin could watch it");
+    expect(host.prompts).toEqual([]);
     expect(await host.call("helpers_cancel", { id: "late" }, { sessionID: "root", agent: "lead" })).toBe("scout late is not running.");
     expect(await host.call("helpers_cancel", { id: "ghost" }, { sessionID: "root", agent: "lead" })).toContain('No session "ghost"');
+  });
+
+  test("cancel all stops the harness's running helpers only", async () => {
+    const { host } = await start({});
+    await settle();
+    host.emit("session.created", { sessionID: "c1", parentID: "root", agent: "scout" });
+    host.emit("session.execution.started", { sessionID: "c1" });
+    host.emit("session.created", { sessionID: "g1", parentID: "root", agent: "general" });
+    host.emit("session.execution.started", { sessionID: "g1" });
+    await settle();
+    expect(await host.call("helpers_cancel", { id: "all" }, { sessionID: "root", agent: "lead" })).toStartWith("Stopped scout c1.");
+    expect(host.interrupts).toEqual(["c1"]);
+    expect(await host.call("helpers_cancel", { id: "g1" }, { sessionID: "root", agent: "lead" })).toBe("g1 is not a harness helper (its agent is general).");
   });
 
   test("tool calls feed the status report's step count and last call", async () => {

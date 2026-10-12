@@ -22,9 +22,10 @@ protocol, bundled `@ai-sdk/openai-compatible` on 1.x; the same spelling of the p
 is normalized by 2.0.16). No hosted model was contacted. The stand-in records every request
 and answers by script: `lead` delegates a slow job to the builder, the builder runs `sleep`
 steps (five steps of 1.5 s in the suite, six of 2 s in the first runs quoted below) until it
-finishes or a later user message tells it to stop. The suite passes on all three binaries (19
-tests, about two minutes). The checks in sections 8 to 10 ran as one-off scripts of the same
-shape; their results are quoted.
+finishes or a later user message tells it to stop. The suite passes on all three binaries
+(twelve tests per 1.x binary and nine for 2.0.16 without the plugin, then the plugin's tools in
+the same file; about two minutes per binary). The checks in sections 8 to 11 ran as one-off
+scripts of the same shape; their results are quoted.
 
 ## Answers in one line
 
@@ -40,6 +41,7 @@ shape; their results are quoted.
 | 8 | Can the plugin add tools, and only for `lead`? | Yes on both. 1.x: the `tool` hook; 2.0.16: `ctx.tool.transform`, registered with `codemode: false` to be a direct tool. A `<tool> * deny` rule removes the tool from an agent on both |
 | 9 | What happens when a wake lands while a helper answers inline in the user's session (1.x `/review`)? | The wake is written as the session's current agent, the helper; the helper's run continues and reads it; `lead` gets no turn and sees the text on its next turn |
 | 10 | Do `helpers_*` tool ids clash with anything? | No, on any of the three versions |
+| 11 | How does the plugin see a session's children on 2.0.16? | Not through the plugin context, which has no session list and no messages; through the event stream, whose `session.created` and `session.execution.*` events carry what a status line needs |
 
 ## 1. Background hand-offs
 
@@ -160,7 +162,8 @@ has `POST /api/session/:id/background` with the same effect.
 
 Evidence, source: `v1src: opencode/src/server/routes/instance/httpapi/groups/experimental.ts:100`
 (the route), `handlers/experimental.ts:159-171` (promote running task jobs of the session),
-`opencode/src/cli/cmd/run/runtime.ts:357` (the keybind's call), `opencode/src/tool/task.ts:289-296`
+`opencode/src/cli/cmd/run/runtime.ts:357` (the call behind the keybind in the `run` command's
+runtime; `cli/cmd/run/footer.view.tsx:529-535` binds `session.background`), `opencode/src/tool/task.ts:289-296`
 (`onPromote`, `waitForPromotion`); `v2src: core/src/tool/plugin/subagent.ts:241`
 (`"backgrounded"`).
 
@@ -259,21 +262,47 @@ webfetch, websearch, write` on 2.0.16, whose Code Mode section adds `list_mcp_re
 Evidence, runtime: the function names in `lead`'s first model request, and on 2.0.16 the
 identifiers in the Code Mode section of its system prompt, read from the stand-in.
 
+## 11. The 2.0.16 event stream
+
+Answer. The plugin context's session domain is a `Pick` of the client API with `create`,
+`get`, `prompt`, `interrupt`, `wait` and a few more, but no `list` and no `message.list`, so a
+plugin cannot ask for a session's children or read its messages. The event subscription
+(`ctx.event.subscribe`) yields envelopes `{ id, created, type, location, data }` with the
+payload under `data`. The events a status line needs: `session.created` with `sessionID`,
+`parentID`, `agent` and `title`; `session.execution.started`, `.succeeded`, `.failed` and
+`.interrupted` (with `reason`); `session.renamed` with `title`; `session.agent.selected` with
+`agent`. `session.tool.called` carries the call id but not the tool name, so steps and the
+last call come from the `execute.before` tool hook, which has `tool`, `sessionID` and `agent`.
+
+Evidence, source: `v2src: plugin/src/promise/session.ts:153-169` (`SessionDomain`),
+`schema/src/session-event.ts:51-70` (`Created`), `:104-113` (`Renamed`), `:72-82`
+(`AgentSelected`), `:242-262` (`Execution`), `:471-523` (`Tool.Called`),
+`plugin/src/promise/tool.ts:39-46` (`execute.before`).
+
+Evidence, runtime (2.0.16): a probe plugin wrote the first events of a session to standard
+error: `{"id":"evt_...","type":"session.created",...,"data":{"sessionID":"ses_...",
+"projectID":"global",...}}` and `{"type":"session.execution.started","data":{"sessionID":...}}`;
+a `helpers_status` built from `event.sessionID` saw nothing until it read `event.data`.
+
 ## What the design takes from this
 
 - Build on the native background mode: no job registry, poller or queue in the plugin. The
   wake already arrives as a user message `lead` can read as a report (sections 1, 2).
-- `helpers_steer` sends to the child session: 1.x `prompt_async` with the child's agent, model
-  and variant; 2.0.16 `prompt` with `delivery: "steer"`. `lead` never uses `task_id` or
-  `sessionID` on the delegation tool, which on 1.x would only chain (sections 3, 4, 7).
+- `helpers_steer` sends to a running child: 1.x `prompt_async` naming the child's agent, from
+  which opencode resolves its model and effort; 2.0.16 `prompt` with `delivery: "steer"`. A
+  finished helper is continued through the delegation tool's continuation parameter, which
+  both platforms handle well, and which is the one thing the plugin cannot do on 2.0.16 (no
+  messages to return) (sections 3, 4, 7, 11).
 - `helpers_cancel` reports the cancel in its own result on 1.x, because the platform does not;
   `helpers_status` shows a child that the user cancelled (section 5).
 - The 1.x plugin pins messages that land in a helper's child session to that helper's agent,
   model and variant in `chat.message`, so the user can type into a running helper safely. It
   never touches the user's own session (sections 7, 9).
 - Tools are registered as direct tools (`codemode: false` on 2.0.16), denied to every helper by
-  a manifest rule, and checked again in the plugin's `execute.before` guard. The generator must
-  pass the new permission actions through as tool ids on both platforms (section 8).
+  a manifest `tool` rule that the generator writes as the platform's permission key for the
+  id, and checked again in the plugin's `execute.before` guard (section 8).
+- On 2.0.16 the plugin mirrors the sessions the event stream announces; steps and the last
+  call come from the tool hook on both platforms (section 11).
 - The 1.x flag goes into the installer's output and `doctor`; the `lead` prompt must read
   correctly without it, because the parameter then does not exist and a call with it fails
   (section 1).

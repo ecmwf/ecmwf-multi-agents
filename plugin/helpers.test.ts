@@ -4,6 +4,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   Activity,
+  HELPER_TOOL_IDS,
   HELPER_TOOLS,
   STATUS_LINES,
   TOOL_SPECS,
@@ -17,11 +18,18 @@ import {
   summarizeCall,
   targetProblem,
   toolCallBlock,
+  helperIds,
+  redact,
+  remember,
+  requiredText,
   type HelperView,
   type PinnableMessage,
 } from "./helpers.ts";
 import { embeddedFixture } from "./testing.ts";
 import { SessionTracker } from "./tools-v2.ts";
+import { load } from "../tools/load.ts";
+import { resolveHarness } from "../tools/resolve.ts";
+import path from "node:path";
 
 const harness = embeddedFixture();
 const helpers = new Set(["scout", "builder", "reviewer"]);
@@ -49,9 +57,9 @@ describe("tool specs", () => {
 describe("activity", () => {
   test("counts tool calls per session and keeps the last call summarised", () => {
     const activity = new Activity();
-    activity.note("s1", "bash", { command: "git  log   --oneline" }, 1000);
-    activity.note("s1", "read", { filePath: "/repo/a.py" }, 2000);
-    activity.note("s2", "grep", { pattern: "x".repeat(100) }, 3000);
+    activity.observe("s1", "bash", { command: "git  log   --oneline" }, 1000);
+    activity.observe("s1", "read", { filePath: "/repo/a.py" }, 2000);
+    activity.observe("s2", "grep", { pattern: "x".repeat(100) }, 3000);
     expect(activity.get("s1")).toEqual({ steps: 2, lastTool: "read: /repo/a.py", at: 2000 });
     expect(activity.get("s2")?.lastTool).toBe(`grep: ${"x".repeat(57)}...`);
     expect(activity.get("s3")).toBeUndefined();
@@ -59,13 +67,13 @@ describe("activity", () => {
 
   test("ignores calls without a session or tool, and records how a run ended", () => {
     const activity = new Activity();
-    activity.note(undefined, "bash", {});
-    activity.note("", "bash", {});
-    activity.note("s", 42, {});
+    activity.observe(undefined, "bash", {});
+    activity.observe("", "bash", {});
+    activity.observe("s", 42, {});
     expect(activity.get("s")).toBeUndefined();
     activity.end("s", "stopped", 5);
     expect(activity.get("s")).toEqual({ steps: 0, at: 5, ended: "stopped" });
-    activity.note("s", "bash", {}, 6);
+    activity.observe("s", "bash", {}, 6);
     expect(activity.get("s")?.ended).toBeUndefined();
   });
 
@@ -125,10 +133,10 @@ describe("status report", () => {
 describe("targets and texts", () => {
   test("a target must exist, be a child of the caller's session and run a helper", () => {
     expect(targetProblem(undefined, "ses_x", "ses_root", helpers)).toBe('No session "ses_x". Run helpers_status for the ids of your helpers.');
-    expect(targetProblem({ id: "ses_x", parentID: "ses_other", agent: "scout" }, "ses_x", "ses_root", helpers)).toBe("ses_x is not a helper of this session.");
-    expect(targetProblem({ id: "ses_x", parentID: "ses_root", agent: "build" }, "ses_x", "ses_root", helpers)).toBe("ses_x is not a harness helper (its agent is build).");
-    expect(targetProblem({ id: "ses_x", parentID: "ses_root", agent: "scout" }, "ses_x", "ses_root", helpers)).toBeUndefined();
-    expect(targetProblem({ id: "ses_x", parentID: "ses_root" }, "ses_x", "ses_root", helpers)).toBeUndefined();
+    expect(targetProblem({ parentID: "ses_other", agent: "scout" }, "ses_x", "ses_root", helpers)).toBe("ses_x is not a helper of this session.");
+    expect(targetProblem({ parentID: "ses_root", agent: "build" }, "ses_x", "ses_root", helpers)).toBe("ses_x is not a harness helper (its agent is build).");
+    expect(targetProblem({ parentID: "ses_root", agent: "scout" }, "ses_x", "ses_root", helpers)).toBeUndefined();
+    expect(targetProblem({ parentID: "ses_root" }, "ses_x", "ses_root", helpers)).toBeUndefined();
   });
 
   test("the steer names its sender; the results tell lead what happens next", () => {
@@ -216,5 +224,47 @@ describe("the 2.0.16 session tracker", () => {
     tracker.observe({ type: "plugin.updated", data: {} });
     tracker.observe({ type: "session.created", sessionID: "flat", parentID: "root" });
     expect(tracker.children("root").map((child) => child.id)).toEqual(["flat"]);
+  });
+});
+
+describe("shared pieces", () => {
+  test("the helper ids are the harness's subagents", () => {
+    expect([...helperIds(harness)]).toEqual(["scout", "builder", "reviewer"]);
+  });
+
+  test("the manifest denies exactly the plugin's tool ids to every helper (one source of truth, guarded here)", async () => {
+    const resolved = resolveHarness(await load(path.resolve(import.meta.dir, "..")));
+    for (const agent of resolved.agents) {
+      const denied = agent.permissions.filter((rule) => rule.action === "tool" && rule.effect === "deny").map((rule) => rule.resource);
+      if (agent.mode === "subagent") expect(denied).toEqual([...HELPER_TOOL_IDS]);
+      else expect(agent.permissions.some((rule) => rule.action === "tool")).toBe(false);
+    }
+  });
+
+  test("a required text argument must be a non-empty string", () => {
+    expect(requiredText({ id: "  x " }, "id")).toBe("x");
+    expect(() => requiredText({ id: "  " }, "id")).toThrow("id must be a non-empty string");
+    expect(() => requiredText({}, "id")).toThrow("id must be a non-empty string");
+  });
+
+  test("remember keeps insertion order and evicts the oldest entry past the cap", () => {
+    const map = new Map<string, number>();
+    remember(map, "a", 1, 2);
+    remember(map, "b", 2, 2);
+    remember(map, "a", 3, 2);
+    remember(map, "c", 4, 2);
+    expect([...map]).toEqual([
+      ["a", 3],
+      ["c", 4],
+    ]);
+  });
+
+  test("secrets are redacted from call summaries before they reach lead", () => {
+    expect(redact("curl -H 'Authorization: Bearer abc.DEF-123' https://x")).toBe("curl -H 'Authorization: Bearer [redacted]' https://x");
+    expect(redact("export API_KEY=sk-live-0123456789abcdef && run")).toBe("export API_KEY=[redacted] && run");
+    expect(redact("--token=ghp_abcdefghijklmnopqrstuvwxyz0123456789")).toBe("--token=[redacted]");
+    expect(redact("password: 'hunter2'")).toBe("password: '[redacted]'");
+    expect(redact("git log --oneline -5 stations/units.py")).toBe("git log --oneline -5 stations/units.py");
+    expect(summarizeCall("bash", { command: "export TOKEN=abc123xyz && git push" })).toBe("bash: export TOKEN=[redacted] && git push");
   });
 });

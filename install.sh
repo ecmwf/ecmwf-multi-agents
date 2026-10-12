@@ -526,13 +526,18 @@ cmd_install() {
 # environment at start, before any plugin runs (docs/research/background-helpers.md, section 1).
 BACKGROUND_FLAG=OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS
 
-# True when the flag, or opencode's blanket experimental flag, is on in this environment.
+# True when the flag is on in this environment. As opencode reads it (runtime-flags.ts:11-14 at
+# v1.18.35), an explicit value wins; OPENCODE_EXPERIMENTAL counts only when the flag is unset.
+# The variable is read by name here: it must stay the one BACKGROUND_FLAG names.
 background_enabled() {
-	for background_value in "${OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS-}" "${OPENCODE_EXPERIMENTAL-}"; do
-		case $background_value in
-		[Tt][Rr][Uu][Ee] | 1 | [Yy][Ee][Ss]) return 0 ;;
-		esac
-	done
+	if [ -n "${OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS-}" ]; then
+		background_value=$OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS
+	else
+		background_value=${OPENCODE_EXPERIMENTAL-}
+	fi
+	case $background_value in
+	[Tt][Rr][Uu][Ee] | 1 | [Yy][Ee][Ss] | [Oo][Nn]) return 0 ;;
+	esac
 	return 1
 }
 

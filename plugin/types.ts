@@ -136,17 +136,27 @@ export interface V1SessionInfo {
   time?: { created?: number; updated?: number };
 }
 
-/** A tool the plugin adds through the 1.x `tool` hook (the JSON Schema form of `args`). */
-export interface V1ToolDefinition {
+/** One JSON Schema property of a tool argument; both platforms accept this form. */
+export interface ArgSchema {
+  type: "string";
   description: string;
-  args: Record<string, { type: "string"; description: string }>;
-  execute: (args: Record<string, unknown>, context: V1ToolContext) => Promise<string>;
 }
 
-export interface V1ToolContext {
+/** What both platforms pass to a tool: the calling session and agent. */
+export interface ToolContext {
   sessionID: string;
   agent: string;
   abort?: AbortSignal;
+}
+
+/**
+ * A tool the plugin adds through the 1.x `tool` hook. `args` is the JSON Schema form, which
+ * the registry accepts next to Zod shapes (opencode/src/tool/registry.ts:125, `fromPlugin`).
+ */
+export interface V1ToolDefinition {
+  description: string;
+  args: Record<string, ArgSchema>;
+  execute: (args: Record<string, unknown>, context: ToolContext) => Promise<string>;
 }
 
 export interface V1PluginInput {
@@ -220,19 +230,13 @@ export interface V2SessionInfo {
   time?: { created?: number; updated?: number };
 }
 
-/** A tool as `editor.add` takes it (@opencode/plugin 2.0.16, promise API). */
+/** A tool as `editor.add` takes it (@opencode/plugin 2.0.16, promise/tool.ts:30). */
 export interface V2ToolInfo {
   name: string;
   description: string;
-  input: { type: "object"; properties: Record<string, { type: "string"; description: string }>; required?: string[]; additionalProperties?: boolean };
-  execute: (input: Record<string, unknown>, context: V2ToolContext) => Promise<{ content: string }>;
+  input: { type: "object"; properties: Record<string, ArgSchema>; required?: string[]; additionalProperties?: boolean };
+  execute: (input: Record<string, unknown>, context: ToolContext) => Promise<{ content: string }>;
   options?: { codemode?: boolean };
-}
-
-export interface V2ToolContext {
-  sessionID: string;
-  agent: string;
-  abort?: AbortSignal;
 }
 
 export interface V2ToolEditor {

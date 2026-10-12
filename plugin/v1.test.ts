@@ -284,8 +284,9 @@ describe("v1 helper tools, guard and pinning", () => {
         c1: { agent: "scout", parentID: "root", title: "find X", created: 1_000 },
         c2: { agent: "builder", parentID: "root", title: "fix Y", created: 2_000 },
         other: { agent: "scout", parentID: "elsewhere" },
+        general: { agent: "general", parentID: "root", title: "not ours", created: 3_000 },
       },
-      busy: new Set(["c1", "c2"]),
+      busy: new Set(["c1", "c2", "general"]),
       prompts: [],
       aborts: [],
       client: {
@@ -330,9 +331,10 @@ describe("v1 helper tools, guard and pinning", () => {
     await hooks["tool.execute.before"]({ tool: "bash", sessionID: "c1" }, { args: { command: "git log" } });
     const text = await hooks.tool.helpers_status!.execute({}, { sessionID: "root", agent: "lead" });
     const lines = text.split("\n");
-    expect(lines[0]).toBe("2 helpers in this session, newest first:");
-    expect(lines[1]).toMatch(/^c2, builder, running, 0 steps, \d+[smh].*: fix Y$/);
-    expect(lines[2]).toMatch(/^c1, scout, running, 2 steps, .*: find X; last: bash: git log$/);
+    expect(lines[0]).toBe("3 helpers in this session, newest first:");
+    expect(lines[1]).toMatch(/^general, general, running, 0 steps, .*: not ours$/);
+    expect(lines[2]).toMatch(/^c2, builder, running, 0 steps, \d+[smh].*: fix Y$/);
+    expect(lines[3]).toMatch(/^c1, scout, running, 2 steps, .*: find X; last: bash: git log$/);
     expect(await hooks.tool.helpers_status!.execute({}, { sessionID: "lonely", agent: "lead" })).toBe("No helpers in this session.");
   });
 
@@ -356,8 +358,10 @@ describe("v1 helper tools, guard and pinning", () => {
     const cancel = hooks.tool.helpers_cancel!;
     expect(await cancel.execute({ id: "c1" }, { sessionID: "root", agent: "lead" })).toStartWith("Stopped scout c1.");
     expect(await cancel.execute({ id: "c1" }, { sessionID: "root", agent: "lead" })).toBe("scout c1 is not running.");
+    // "all" stops the harness's helpers only; the general child is not ours to stop.
     expect(await cancel.execute({ id: "all" }, { sessionID: "root", agent: "lead" })).toStartWith("Stopped builder c2.");
     expect(await cancel.execute({ id: "all" }, { sessionID: "root", agent: "lead" })).toBe("No running helper to stop.");
+    expect(await cancel.execute({ id: "general" }, { sessionID: "root", agent: "lead" })).toBe("general is not a harness helper (its agent is general).");
     expect(state.aborts).toEqual(["c1", "c2"]);
     const status = await hooks.tool.helpers_status!.execute({}, { sessionID: "root", agent: "lead" });
     expect(status).toContain("c1, scout, stopped");
@@ -386,5 +390,20 @@ describe("v1 helper tools, guard and pinning", () => {
     expect(next.agent).toBe("lead");
     // After the pin, the session is known as the helper's again.
     await expect(hooks["tool.execute.before"]({ tool: "helpers_steer", sessionID: "c2" }, { args: {} })).rejects.toThrow("helpers may not use");
+  });
+
+  test("after a pin the server's record names the sender, but the tools still treat the session as the helper's", async () => {
+    const state = fake();
+    const hooks = await hooksWith(state);
+    await hooks["chat.message"]({ sessionID: "c2", agent: "builder" }, { message: { agent: "builder" } });
+    // opencode updates the record before the hook runs, so it says lead from now on.
+    state.sessions.c2!.agent = "lead";
+    await hooks["chat.message"]({ sessionID: "c2", agent: "lead" }, { message: { agent: "lead" } });
+    expect(await hooks.tool.helpers_status!.execute({}, { sessionID: "root", agent: "lead" })).toContain("c2, builder, running");
+    expect(await hooks.tool.helpers_steer!.execute({ id: "c2", text: "x" }, { sessionID: "root", agent: "lead" })).toContain("Sent to builder c2");
+    expect(state.prompts.at(-1)?.agent).toBe("builder");
+    expect(await hooks.tool.helpers_cancel!.execute({ id: "c2" }, { sessionID: "root", agent: "lead" })).toStartWith("Stopped builder c2.");
+    // A lookup for an unseen session fills the record in; it never replaces a known one.
+    expect(await hooks.tool.helpers_steer!.execute({ id: "c1", text: "x" }, { sessionID: "root", agent: "lead" })).toContain("Sent to scout c1");
   });
 });

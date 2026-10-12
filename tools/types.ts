@@ -37,8 +37,14 @@ export type MappedAction = Exclude<Action, "tool">;
 /** A plugin tool id: lowercase words joined by underscores, as both platforms name tools. */
 export const TOOL_ID = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/;
 /**
- * Permission keys the platforms use for their own tools (opencode 1.x and 2.0.16 together).
- * A `tool` rule may not name one: those are reached through the neutral actions above.
+ * Permission keys the platforms use for their own tools (opencode 1.x and 2.0.16 together), so
+ * a `tool` rule may not name one: those are reached through the neutral actions above. Sources:
+ * the direct tools of each platform (docs/research/background-helpers.md, section 10), the
+ * tool ids opencode 1.x registers besides them (opencode/src/tool/registry.ts at v1.18.35:
+ * `invalid`, `todoread`, `lsp`, `apply_patch`, `patch`, the MCP resource tools) and the
+ * permission keys it maps them to (opencode/src/permission/index.ts:204-214, `doom_loop` in
+ * emit-v1.ts), and the Code Mode names of 2.0.16. Reserving a name that is not a tool costs
+ * nothing, so the list errs on the side of more.
  */
 export const PLATFORM_TOOL_IDS: ReadonlySet<string> = new Set([
   "bash",

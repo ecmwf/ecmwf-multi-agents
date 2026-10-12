@@ -98,7 +98,7 @@
     ],
     // The tools the plugin adds for lead: see, redirect and stop its helpers. Denied to every
     // helper, so a helper never steers or cancels a sibling; the plugin guard checks again.
-    "harness-tools": [
+    "helper-tools": [
       { "action": "tool", "resource": "helpers_status" },
       { "action": "tool", "resource": "helpers_steer" },
       { "action": "tool", "resource": "helpers_cancel" }
@@ -142,7 +142,7 @@
         { "action": "todo", "resource": "*", "effect": "deny" },
         { "action": "execute", "resource": "*", "effect": "deny" },
         { "action": "skill", "resource": "ecmwf-multi-agents-*", "effect": "deny" },
-        { "use": "harness-tools", "effect": "deny" }
+        { "use": "helper-tools", "effect": "deny" }
       ]
     },
 
@@ -158,7 +158,7 @@
         { "action": "delegate", "resource": "*", "effect": "deny" },
         { "action": "question", "resource": "*", "effect": "deny" },
         { "action": "skill", "resource": "ecmwf-multi-agents-*", "effect": "deny" },
-        { "use": "harness-tools", "effect": "deny" }
+        { "use": "helper-tools", "effect": "deny" }
       ]
     },
 
@@ -178,7 +178,7 @@
         { "action": "todo", "resource": "*", "effect": "deny" },
         { "action": "execute", "resource": "*", "effect": "deny" },
         { "action": "skill", "resource": "ecmwf-multi-agents-*", "effect": "deny" },
-        { "use": "harness-tools", "effect": "deny" }
+        { "use": "helper-tools", "effect": "deny" }
       ]
     }
   },

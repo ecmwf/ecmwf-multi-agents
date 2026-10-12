@@ -30,14 +30,16 @@ one wakes it.
 The harness uses the delegation tool's background mode, the platform's completion wake and
 its session API. The plugin adds no job registry, poller, queue or wake of its own: the
 problem of waking the parent safely belongs inside the session loop, where opencode solves
-it. What the plugin adds is small and stateless: three tools and one message rewrite.
+it. What the plugin adds is small and keeps no job registry: three tools, two in-memory records
+of what the hooks and events showed (tool calls per session, and on opencode 2 the sessions the
+event stream announced), and one message rewrite.
 
 ### Three tools for `lead`
 
 | Tool | Does | 1.x | 2.0.16 |
 |---|---|---|---|
-| `helpers_status` | Lists the helpers of this session: agent, title, state, steps taken, elapsed time, last tool call. At most twelve lines | `session.children`, `session.status`, `session.messages` | `GET /api/session` by parent, messages |
-| `helpers_steer(id, text)` | Sends an amendment to a running or finished helper, keeping its context | `session.prompt_async` with the helper's own agent, model and variant | `session.prompt` with `delivery: "steer"` |
+| `helpers_status` | Lists the helpers of this session: agent, title, state, steps taken, elapsed time, last tool call. At most twelve lines | `session.children` and `session.status`; steps and last call from the plugin's tool hook | The sessions the event stream announced (`session.created`, `session.execution.*`); steps and last call from the tool hook. The plugin context offers no session list and no messages |
+| `helpers_steer(id, text)` | Sends an amendment to a running helper, keeping its context. A finished helper is continued through the delegation tool's continuation parameter instead | `session.prompt_async` naming the helper's agent; opencode fills in that agent's model and effort | `session.prompt` with `delivery: "steer"` |
 | `helpers_cancel(id or all)` | Stops a helper and says so in its result | `session.abort` | `interrupt` |
 
 A target must be a helper child of the caller's session; anything else is refused. The tools
@@ -105,9 +107,10 @@ budgets are raised with the prompt changes, by the measured size of the addition
 
 ## Consequences
 
-- `src/manifest.jsonc`: permission rules for the three tool ids on every helper, and the
-  generator passes actions it does not map through as tool ids on both platforms
-  (`tools/load.ts`, `tools/emit-v1.ts`, `tools/emit-v2.ts`).
+- `src/manifest.jsonc`: a `tool` rule per tool id on every helper. The generator writes the
+  rule as the platform's permission key for that id (`tools/load.ts` validates the id,
+  `tools/emit-v1.ts` and `tools/emit-v2.ts` write it); a unit test holds the manifest's ids
+  equal to the plugin's.
 - `plugin/`: the tools, the guard rule, the 1.x pinning, and unit tests; the opt-in suite
   `plugin/background.integration.test.ts` pins the platform mechanics and grows the tool
   scenarios.

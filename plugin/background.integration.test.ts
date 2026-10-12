@@ -28,7 +28,7 @@ import { bundlePlugin } from "../tools/bundle-plugin.ts";
 import { emitV1 } from "../tools/emit-v1.ts";
 import { V2_VERSION, emitV2 } from "../tools/emit-v2.ts";
 import type { OutputFile, ResolvedHarness } from "../tools/types.ts";
-import { HELPER_TOOLS } from "./helpers.ts";
+import { HELPER_TOOLS, STATUS_LINES } from "./helpers.ts";
 import { resolvedFixture } from "./testing.ts";
 
 const enabled = process.env.ECMWF_MULTI_AGENTS_INTEGRATION === "1";
@@ -507,7 +507,7 @@ for (const bin of v1Bins) {
         expect(output).toContain(`${target.id}, builder, running`);
         expect(output).toMatch(/\d+ steps?, \d+s/);
         expect(output).toContain("last: bash: sleep");
-        expect(output.split("\n").length).toBeLessThanOrEqual(12);
+        expect(output.split("\n").length).toBeLessThanOrEqual(STATUS_LINES);
       }, 120_000);
 
       test("helpers_steer reaches the running builder as the builder; it stops there and lead is woken", async () => {
@@ -570,6 +570,11 @@ for (const bin of v1Bins) {
         expect(answered.reply).toMatch(/^builder stopped/);
         expect(model.all(tag).some((item) => item.agent !== "builder" && item.users.some((user) => user.startsWith("STOP")))).toBe(false);
         expect(await wake(tag)).toContain("builder stopped");
+        // The server's record now names lead (it is updated before the hook), but the tools
+        // still know the session as the builder's.
+        expect((await pluginApi<{ agent?: string }>("GET", `/session/${target.id}`)).agent).toBe("lead");
+        await tell(session, `STATUS ${tag}`);
+        expect((await toolPart(session, HELPER_TOOLS.status)).state?.output).toContain(`${target.id}, builder, done`);
       }, 120_000);
     });
   });
@@ -767,7 +772,7 @@ describe.skipIf(!v2Available)(`background helpers in opencode ${V2_VERSION}`, ()
       expect(output).toContain("One helper in this session");
       expect(output).toContain(`${target!.id}, builder, running`);
       expect(output).toContain("last: shell: sleep");
-      expect(output.split("\n").length).toBeLessThanOrEqual(12);
+      expect(output.split("\n").length).toBeLessThanOrEqual(STATUS_LINES);
     }, 120_000);
 
     test("helpers_steer reaches the running builder; it stops there and lead is woken", async () => {

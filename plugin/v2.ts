@@ -26,7 +26,7 @@
 
 import { applyToV2Agents, planAgents, type AgentPlan } from "./apply.ts";
 import { processEnvironment } from "./environment.ts";
-import { Activity, toolCallBlock } from "./helpers.ts";
+import { Activity, helperIds, toolCallBlock } from "./helpers.ts";
 import { v2Reporter, type Reporter } from "./report.ts";
 import { loadSettings, mergeSettings } from "./settings.ts";
 import { SessionTracker, v2Tools } from "./tools-v2.ts";
@@ -142,11 +142,11 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
         });
       }
 
-      const helpers = new Set(harness.agents.filter((agent) => agent.mode === "subagent").map((agent) => agent.id));
+      const helpers = helperIds(harness);
       const tracker = new SessionTracker();
       const activity = new Activity();
       if (typeof ctx.tool?.transform === "function") {
-        const tools = v2Tools({ harness, ctx, tracker, activity, plans, helpers });
+        const tools = v2Tools({ harness, ctx, tracker, activity, helpers });
         await ctx.tool.transform((editor) => {
           try {
             for (const tool of tools) editor.add(tool);
@@ -161,7 +161,7 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
           try {
             message = toolCallBlock(harness, call?.agent, call?.tool);
             // A refused call is not a step the helper took.
-            if (message === undefined) activity.note(call?.sessionID, call?.tool, call?.input);
+            if (message === undefined) activity.observe(call?.sessionID, call?.tool, call?.input);
           } catch (error) {
             reporter.internal("the tool guard", error);
             return;

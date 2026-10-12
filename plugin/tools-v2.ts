@@ -7,7 +7,6 @@
 // `session.created` carries the parent and the agent, `session.execution.*` the state. The
 // tracker only mirrors what the platform publishes; it starts and stops nothing.
 
-import type { AgentPlan } from "./apply.ts";
 import {
   Activity,
   HELPER_TOOLS,
@@ -15,16 +14,17 @@ import {
   cancelledResult,
   formatStatus,
   notRunningResult,
+  remember,
+  requiredText,
   steerText,
   steeredResult,
   targetProblem,
+  unknownStateResult,
   type HelperState,
   type HelperView,
-  type SessionFacts,
+  type TargetSession,
 } from "./helpers.ts";
-import type { EmbeddedHarness, V2Context, V2Event, V2ToolContext, V2ToolInfo } from "./types.ts";
-
-const MAX_TRACKED = 5000;
+import type { EmbeddedHarness, ToolContext, V2Context, V2Event, V2ToolInfo } from "./types.ts";
 
 export interface TrackedSession {
   id: string;
@@ -42,7 +42,8 @@ export class SessionTracker {
 
   /**
    * Feed one event; anything that is not a session event is ignored. The subscription yields
-   * an envelope (`id`, `created`, `type`, `location`) with the payload under `data`.
+   * an envelope (`id`, `created`, `type`, `location`) with the payload under `data`; the event
+   * types and fields are those of schema/src/session-event.ts at v2.0.16 (research, section 11).
    */
   observe(envelope: V2Event | undefined, now: number = Date.now()): void {
     if (typeof envelope?.type !== "string") return;
@@ -61,12 +62,7 @@ export class SessionTracker {
           ...(typeof event.agent === "string" ? { agent: event.agent } : {}),
           ...(typeof event.title === "string" ? { title: event.title } : {}),
         };
-        this.sessions.delete(id);
-        this.sessions.set(id, created);
-        if (this.sessions.size > MAX_TRACKED) {
-          const oldest = this.sessions.keys().next().value;
-          if (oldest !== undefined) this.sessions.delete(oldest);
-        }
+        remember(this.sessions, id, created);
         return;
       }
       case "session.execution.started":
@@ -113,36 +109,29 @@ export interface V2ToolDeps {
   ctx: V2Context;
   tracker: SessionTracker;
   activity: Activity;
-  plans: readonly AgentPlan[];
   helpers: ReadonlySet<string>;
 }
 
-function fail(message: string): never {
-  throw new Error(message);
-}
+type SessionApi = Required<NonNullable<V2Context["session"]>>;
 
-function sessionApi(ctx: V2Context) {
+function sessionApi(ctx: V2Context): SessionApi {
   const api = ctx.session;
   if (api?.get === undefined || api.prompt === undefined || api.interrupt === undefined) {
-    fail("this opencode does not offer the session API the helper tools need");
+    throw new Error("this opencode does not offer the session API the helper tools need");
   }
-  return api as Required<NonNullable<V2Context["session"]>>;
+  return api as SessionApi;
 }
 
 /** The v2 tool definitions; `editor.add` takes each as it is. */
 export function v2Tools(deps: V2ToolDeps): V2ToolInfo[] {
   const { harness, tracker, activity, helpers } = deps;
-  const text = (args: Record<string, unknown>, key: string): string => {
-    const value = args[key];
-    if (typeof value !== "string" || value.trim() === "") fail(`${key} must be a non-empty string`);
-    return value.trim();
-  };
-  const factsOf = async (id: string): Promise<SessionFacts | undefined> => {
+  /** The target as the tracker knows it, else as the server describes it (state unknown then). */
+  const targetOf = async (id: string): Promise<(TargetSession & { state: HelperState }) | undefined> => {
     const tracked = tracker.get(id);
-    if (tracked !== undefined) return { id, parentID: tracked.parentID, ...(tracked.agent === undefined ? {} : { agent: tracked.agent }) };
+    if (tracked !== undefined) return { parentID: tracked.parentID, agent: tracked.agent ?? "helper", state: tracked.state };
     const info = await sessionApi(deps.ctx).get({ sessionID: id }).catch(() => undefined);
     if (info === undefined || info === null) return undefined;
-    return { id, parentID: info.parentID, ...(typeof info.agent === "string" ? { agent: info.agent } : {}) };
+    return { parentID: info.parentID, agent: typeof info.agent === "string" ? info.agent : "helper", state: "unknown" };
   };
   const view = (session: { id: string; agent?: string; title?: string; state: HelperState; startedAt: number; updatedAt: number }): HelperView => {
     const record = activity.get(session.id);
@@ -159,7 +148,7 @@ export function v2Tools(deps: V2ToolDeps): V2ToolInfo[] {
       ...(record?.lastTool === undefined ? {} : { lastTool: record.lastTool }),
     };
   };
-  const define = (spec: (typeof TOOL_SPECS)[keyof typeof TOOL_SPECS], run: (args: Record<string, unknown>, context: V2ToolContext) => Promise<string>): V2ToolInfo => ({
+  const define = (spec: (typeof TOOL_SPECS)[keyof typeof TOOL_SPECS], run: (args: Record<string, unknown>, context: ToolContext) => Promise<string>): V2ToolInfo => ({
     name: spec.id,
     description: spec.description,
     input: { type: "object", properties: spec.args, required: Object.keys(spec.args), additionalProperties: false },
@@ -172,30 +161,34 @@ export function v2Tools(deps: V2ToolDeps): V2ToolInfo[] {
     define(TOOL_SPECS.status, async (_args, context) => formatStatus(tracker.children(context.sessionID).map(view))),
 
     define(TOOL_SPECS.steer, async (args, context) => {
-      const id = text(args, "id");
-      const message = text(args, "text");
-      const target = await factsOf(id);
+      const id = requiredText(args, "id");
+      const message = requiredText(args, "text");
+      const target = await targetOf(id);
       const problem = targetProblem(target, id, context.sessionID, helpers);
       if (problem !== undefined) return problem;
-      const agent = target!.agent ?? "helper";
-      if (tracker.get(id)?.state !== "running") return notRunningResult(agent, id, `sessionID: ${JSON.stringify(id)}`);
+      const { agent, state } = target!;
+      const continuation = `sessionID: ${JSON.stringify(id)}`;
+      if (state === "unknown") return unknownStateResult(agent!, id, continuation);
+      if (state !== "running") return notRunningResult(agent!, id, continuation);
       await sessionApi(deps.ctx).prompt({ sessionID: id, text: steerText(message, harness.defaultAgent), delivery: "steer" });
-      return steeredResult(agent, id);
+      return steeredResult(agent!, id);
     }),
 
     define(TOOL_SPECS.cancel, async (args, context) => {
-      const id = text(args, "id");
+      const id = requiredText(args, "id");
       const targets: Array<{ agent: string; id: string }> = [];
       if (id === "all") {
+        // Only the harness's own helpers; a child of another kind is left to its owner.
         for (const child of tracker.children(context.sessionID)) {
-          if (child.state === "running") targets.push({ id: child.id, agent: child.agent ?? "helper" });
+          const agent = child.agent ?? "helper";
+          if (child.state === "running" && helpers.has(agent)) targets.push({ id: child.id, agent });
         }
       } else {
-        const target = await factsOf(id);
+        const target = await targetOf(id);
         const problem = targetProblem(target, id, context.sessionID, helpers);
         if (problem !== undefined) return problem;
-        if (tracker.get(id)?.state !== "running") return `${target!.agent ?? "helper"} ${id} is not running.`;
-        targets.push({ id, agent: target!.agent ?? "helper" });
+        if (target!.state !== "running") return `${target!.agent} ${id} is not running.`;
+        targets.push({ id, agent: target!.agent! });
       }
       for (const target of targets) {
         await sessionApi(deps.ctx).interrupt({ sessionID: target.id });
@@ -205,5 +198,3 @@ export function v2Tools(deps: V2ToolDeps): V2ToolInfo[] {
     }),
   ];
 }
-
-export const HELPER_TOOL_NAMES = [HELPER_TOOLS.status, HELPER_TOOLS.steer, HELPER_TOOLS.cancel] as const;

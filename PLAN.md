@@ -304,9 +304,9 @@ Tasks, in order; **(par)** marks what can run side by side once 7a is done:
 
 - [x] Samet: **(par)** `helpers_status`, `helpers_steer`, `helpers_cancel` registered through
   the plugin `tool` hook on both platforms, with the client calls per platform (1.x:
-  `session.children`, `session.status`, `session.messages`, `session.prompt_async` with the
-  child's agent, model and variant, `session.abort`; 2.0.16: `GET /api/session` by parent,
-  `prompt` with `delivery: steer`, `interrupt`); refuse a target that is not a helper child
+  `session.children`, `session.status`, `session.prompt_async` naming the child's agent,
+  `session.abort`; 2.0.16: the event stream for children and state, `prompt` with
+  `delivery: steer`, `interrupt`); refuse a target that is not a helper child
   of the caller's session; output of `helpers_status` at most twelve lines
 - [x] Samet: **(par)** Guard: helpers denied the three tools in `tool.execute.before` whatever
   was approved, like the shell guard; unit tests
@@ -391,6 +391,15 @@ and a steer cost; `/guide` explains it in plain words.
   mechanics against their source and a stand-in model on 1.18.35 and 2.0.23 (table in the
   phase). opencode's own background mode is enough; the plugin adds status, steer and cancel
   for `lead` and pins 1.x child sessions to their helper.
+- 2026-10-12: Independent review of the branch (five criteria: simplification, naming, comments
+  and docs, duplicate sources of truth, the gate). Fixed: the tools lost a pinned helper because
+  opencode updates the session record before the `chat.message` hook, so the plugin's own record
+  now wins; contract and ADR said a steer reaches a finished helper, the code says running only;
+  the ADR table described the planned mechanism, not the built one; the manifest's tool ids
+  and the plugin's had no guard, now a unit test; `cancel all` stopped children that are not
+  helpers; secrets in a helper's last command were echoed into `lead`'s context, now redacted;
+  `doctor` let the blanket experimental flag override an explicit false. Shared pieces moved
+  into `plugin/helpers.ts`; the research note gained the 2.0.16 event stream section.
 - 2026-10-12: Phase 7a and 7c done by Samet on a branch: research note, ADR 0002, the
   contract, `tool` rules in the generator and manifest, and the plugin's three tools, guard
   and 1.x pinning, verified on 1.18.35, 1.19.0 and 2.0.16 (`plugin/background.integration.test.ts`,

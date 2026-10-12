@@ -21,12 +21,14 @@
 // lands in a helper's child session is pinned to that helper's agent, model and effort in
 // `chat.message`, because the run takes them from the latest user message and the TUI sends
 // lead's when the user types there (docs/research/background-helpers.md, section 7). The hook
-// receives the message object that is then saved (prompt.ts:1000 and :1046 at v1.18.35).
+// receives the message object that is then saved (prompt.ts:1000 and :1046 at v1.18.35). The
+// session record is updated before the hook runs (prompt.ts:672-689), so after a pin it names
+// the sender; the plugin's own record of a session's agent therefore wins over the server's.
 
 import { applyToV1Config, planAgents, type AgentPlan } from "./apply.ts";
 import { processEnvironment } from "./environment.ts";
 import { checkShellCommand } from "./guard.ts";
-import { Activity, HELPER_TOOL_IDS, pinMessage, toolCallBlock } from "./helpers.ts";
+import { Activity, HELPER_TOOL_IDS, helperIds, pinMessage, remember, toolCallBlock } from "./helpers.ts";
 import { Compactions, isolateHelperRequest } from "./isolate.ts";
 import { v1Reporter } from "./report.ts";
 import { loadSettings, mergeSettings } from "./settings.ts";
@@ -38,7 +40,6 @@ const SHELL_TOOL = "bash";
 /** Built-in agents that make model requests inside a session but never call tools. */
 const TOOL_LESS_AGENTS = new Set(["title", "summary", "compaction"]);
 const LOOKUP_TIMEOUT_MS = 2000;
-const MAX_SESSIONS = 5000;
 
 export interface V1Options {
   environment?: () => Environment;
@@ -60,15 +61,8 @@ class SessionAgents {
 
   set(session: unknown, agent: unknown): void {
     if (typeof session !== "string" || typeof agent !== "string" || agent === "") return;
-    this.agents.delete(session);
-    this.agents.set(session, agent);
-    if (this.agents.size > MAX_SESSIONS) {
-      const oldest = this.agents.keys().next().value;
-      if (oldest !== undefined) {
-        this.agents.delete(oldest);
-        this.children.delete(oldest);
-      }
-    }
+    remember(this.agents, session, agent);
+    for (const child of this.children.keys()) if (!this.agents.has(child)) this.children.delete(child);
   }
 
   get(session: string): string | undefined {
@@ -108,10 +102,13 @@ export function createServer(harness: EmbeddedHarness, options: V1Options = {}) 
     }
 
     const sessions = new SessionAgents();
-    const helpers = new Set(harness.agents.filter((agent) => agent.mode === "subagent").map((agent) => agent.id));
+    const helpers = helperIds(harness);
     const compactions = new Compactions();
     const activity = new Activity();
-    /** The session record from the server, within a short timeout; undefined when unavailable. */
+    /**
+     * The session record from the server, within a short timeout; undefined when unavailable. It
+     * fills in what the plugin has not seen and never replaces a known agent (see the header).
+     */
     const fetchSession = async (session: string) => {
       const get = input?.client?.session?.get;
       if (typeof get !== "function") return undefined;
@@ -124,7 +121,7 @@ export function createServer(harness: EmbeddedHarness, options: V1Options = {}) 
         const result = await Promise.race([get.call(input.client?.session, { path: { id: session } }), timeout]);
         const data = result?.data;
         if (data === null || data === undefined) return undefined;
-        if (typeof data.agent === "string") sessions.set(session, data.agent);
+        if (typeof data.agent === "string" && sessions.get(session) === undefined) sessions.set(session, data.agent);
         sessions.setChild(session, typeof data.parentID === "string" && data.parentID !== "");
         return data;
       } finally {
@@ -139,9 +136,11 @@ export function createServer(harness: EmbeddedHarness, options: V1Options = {}) 
       const known = sessions.isChild(session);
       if (known !== undefined) return known;
       await fetchSession(session);
-      return sessions.isChild(session) ?? false;
+      const found = sessions.isChild(session);
+      if (found === undefined) reporter.internal("looking up a session", new Error(`no answer for ${session} within ${LOOKUP_TIMEOUT_MS} ms; a message there may run as its sender`));
+      return found ?? false;
     };
-    const tool = v1Tools({ harness, client: input?.client, agentOf: (session) => sessions.get(session), activity, plans, helpers });
+    const tool = v1Tools({ harness, client: input?.client, agentOf: (session) => sessions.get(session), activity, helpers });
 
     return {
       async config(config) {
@@ -195,7 +194,7 @@ export function createServer(harness: EmbeddedHarness, options: V1Options = {}) 
             }
           }
           // A refused call is not a step the helper took.
-          if (message === undefined) activity.note(call?.sessionID, call?.tool, output?.args);
+          if (message === undefined) activity.observe(call?.sessionID, call?.tool, output?.args);
         } catch (error) {
           reporter.internal("the tool guard", error);
           return;

@@ -51,7 +51,6 @@ export const V1_ACTIONS: Readonly<Record<MappedAction, string | null>> = {
   external_directory: "external_directory",
   execute: null, // Code Mode exists only in opencode 2
 };
-// A `tool` rule is keyed by the tool id in its resource, as a flat key (one effect for the tool).
 
 /**
  * Permission keys that take only one action for every resource. An object here is a schema
@@ -105,10 +104,13 @@ export function v1Color(color?: string): string | undefined {
  */
 export function v1Permission(rules: readonly Rule[], owner = "rules"): { [key: string]: YamlValue } {
   const grouped = new Map<string, Map<string, Effect>>();
+  // Keys from `tool` rules: the tool id, written flat (one effect for the whole tool).
+  const toolKeys = new Set<string>();
   for (const rule of rules) {
     if (rule.action === "tool") {
       grouped.delete(rule.resource);
       grouped.set(rule.resource, new Map([["*", rule.effect]]));
+      toolKeys.add(rule.resource);
       continue;
     }
     const key = V1_ACTIONS[rule.action];
@@ -130,7 +132,7 @@ export function v1Permission(rules: readonly Rule[], owner = "rules"): { [key: s
   }
   const out: { [key: string]: YamlValue } = {};
   for (const [key, patterns] of grouped) {
-    if (V1_FLAT_KEYS.has(key) || isToolKey(key, rules)) {
+    if (V1_FLAT_KEYS.has(key) || toolKeys.has(key)) {
       out[key] = [...patterns.values()].at(-1)!;
       continue;
     }
@@ -139,11 +141,6 @@ export function v1Permission(rules: readonly Rule[], owner = "rules"): { [key: s
     out[key] = map;
   }
   return out;
-}
-
-/** True when the key comes from a `tool` rule, which opencode 1.x keeps as a flat key. */
-function isToolKey(key: string, rules: readonly Rule[]): boolean {
-  return rules.some((rule) => rule.action === "tool" && rule.resource === key);
 }
 
 export function v1AgentFile(agent: ResolvedAgent, marker: string): OutputFile {

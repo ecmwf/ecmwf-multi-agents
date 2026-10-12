@@ -64,9 +64,9 @@ denies `git push` globally gets an approval prompt in `lead` instead.
 | Harness skills (`ecmwf-multi-agents-*`) | user policy | deny | deny | deny |
 | Todo list (opencode 1.x) | user policy | deny | platform default (denied) | deny |
 | Code Mode (opencode 2) | user policy | deny | user policy | deny |
-| Harness tools (`helpers_status`, `helpers_steer`, `helpers_cancel`) | user policy | deny | deny | deny |
+| Helper tools (`helpers_status`, `helpers_steer`, `helpers_cancel`) | user policy | deny | deny | deny |
 
-The harness tools come from the plugin (see Background helpers). A `tool` rule in the manifest
+The helper tools come from the plugin (see Background helpers). A `tool` rule in the manifest
 names one tool id; the emitters write it as that id's own permission key, which on both
 platforms removes a denied tool from the agent's requests, and the plugin refuses a helper's
 call again at execution time, like the shell guard. Without the plugin the tools do not exist
@@ -154,7 +154,7 @@ have them:
 | Tool | Does |
 |---|---|
 | `helpers_status` | The helpers of this session: agent, title, state, steps taken, elapsed time, last tool call. At most twelve lines |
-| `helpers_steer(id, text)` | Sends an amendment to a running or finished helper. The text reaches the helper at its next step; its context and prompt cache stay |
+| `helpers_steer(id, text)` | Sends an amendment to a running helper. The text reaches it at its next step; its context and prompt cache stay. A finished helper is continued through the delegation tool's continuation parameter instead |
 | `helpers_cancel(id or all)` | Stops a helper and says so in the result (opencode 1.x does not wake `lead` for a cancel) |
 
 A steer amends the brief (principle 3): the helper follows the latest message, keeps the

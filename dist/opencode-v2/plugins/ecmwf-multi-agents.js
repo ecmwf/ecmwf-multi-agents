@@ -482,30 +482,42 @@ var TOOL_SPECS = {
   },
   cancel: {
     id: HELPER_TOOLS.cancel,
-    description: 'Stop one helper, or every helper of this session with id "all". A helper stops at its current step; ' + "nothing it changed is undone, so check the files it was working on.",
+    description: 'Stop one of your helpers, or every running helper of this session with id "all". A helper stops at ' + "its current step; nothing it changed is undone, so check the files it was working on.",
     args: {
       id: { type: "string", description: `A helper's session id, or "all".` }
     }
   }
 };
+function helperIds(harness) {
+  return new Set(harness.agents.filter((agent) => agent.mode === "subagent").map((agent) => agent.id));
+}
+function requiredText(args, key) {
+  const value = args[key];
+  if (typeof value !== "string" || value.trim() === "")
+    throw new Error(`${key} must be a non-empty string`);
+  return value.trim();
+}
+function remember(map, key, value, max = MAX_TRACKED) {
+  map.delete(key);
+  map.set(key, value);
+  if (map.size > max) {
+    const oldest = map.keys().next().value;
+    if (oldest !== undefined)
+      map.delete(oldest);
+  }
+}
 
 class Activity {
   records = new Map;
-  note(sessionID, tool, input, now = Date.now()) {
+  observe(sessionID, tool, input, now = Date.now()) {
     if (typeof sessionID !== "string" || sessionID === "" || typeof tool !== "string")
       return;
     const record = this.records.get(sessionID) ?? { steps: 0, at: now };
-    this.records.delete(sessionID);
     record.steps += 1;
     record.lastTool = summarizeCall(tool, input);
     record.at = now;
     delete record.ended;
-    this.records.set(sessionID, record);
-    if (this.records.size > MAX_TRACKED) {
-      const oldest = this.records.keys().next().value;
-      if (oldest !== undefined)
-        this.records.delete(oldest);
-    }
+    remember(this.records, sessionID, record);
   }
   end(sessionID, ended, now = Date.now()) {
     if (typeof sessionID !== "string" || sessionID === "")
@@ -513,18 +525,29 @@ class Activity {
     const record = this.records.get(sessionID) ?? { steps: 0, at: now };
     record.ended = ended;
     record.at = now;
-    this.records.set(sessionID, record);
+    remember(this.records, sessionID, record);
   }
   get(sessionID) {
     return this.records.get(sessionID);
   }
+}
+var SECRET_PATTERNS = [
+  [/\b(bearer\s+)[A-Za-z0-9._~+/=-]+/gi, "$1[redacted]"],
+  [/\b((?:api[_-]?)?(?:key|token|secret|password|passwd|pwd|auth)[a-z0-9_-]*)(\s*[=:]\s*|\s+)(["']?)(?!bearer\b|\[redacted\])([^\s"']+)\3/gi, "$1$2$3[redacted]$3"],
+  [/\b(?=[A-Za-z0-9_-]*[0-9])(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{32,}\b/g, "[redacted]"]
+];
+function redact(text) {
+  let out = text;
+  for (const [pattern, replacement] of SECRET_PATTERNS)
+    out = out.replace(pattern, replacement);
+  return out;
 }
 function summarizeCall(tool, input) {
   const args = input !== null && typeof input === "object" ? input : {};
   const detail = ["command", "pattern", "filePath", "path", "url", "query", "description", "prompt"].map((key) => args[key]).find((value) => typeof value === "string" && value.trim() !== "");
   if (detail === undefined)
     return tool;
-  const flat = detail.replace(/\s+/g, " ").trim();
+  const flat = redact(detail.replace(/\s+/g, " ").trim());
   return `${tool}: ${flat.length > SUMMARY_LENGTH ? `${flat.slice(0, SUMMARY_LENGTH - 3)}...` : flat}`;
 }
 function formatStatus(helpers, now = Date.now()) {
@@ -578,6 +601,9 @@ function steeredResult(agent, id) {
 }
 function notRunningResult(agent, id, continuation) {
   return `${agent} ${id} is not running, so there is nothing to redirect. To continue it with its context, use the delegation tool with ${continuation}; it answers like a new hand-off.`;
+}
+function unknownStateResult(agent, id, continuation) {
+  return `${agent} ${id} started before this plugin could watch it, so its state is unknown and it cannot be redirected here. If it has finished, continue it with the delegation tool with ${continuation}; otherwise wait for its report.`;
 }
 function cancelledResult(cancelled) {
   if (cancelled.length === 0)
@@ -1146,13 +1172,10 @@ function loadSettings(harness, environment, projectRoot) {
 }
 
 // plugin/tools-v1.ts
-function fail(message) {
-  throw new Error(message);
-}
-function session(client) {
+function sessionApi(client) {
   const api = client?.session;
   if (api?.children === undefined || api.status === undefined || api.promptAsync === undefined || api.abort === undefined || api.get === undefined) {
-    fail("this opencode does not offer the session API the helper tools need");
+    throw new Error("this opencode does not offer the session API the helper tools need");
   }
   return api;
 }
@@ -1160,19 +1183,16 @@ async function busySessions(api) {
   const status = (await api.status())?.data ?? {};
   return new Set(Object.entries(status).filter(([, value]) => value?.type === "busy").map(([id]) => id));
 }
-function facts(info, id, agentOf) {
-  if (info === null || info === undefined)
-    return;
-  const agent = typeof info.agent === "string" ? info.agent : agentOf(id);
-  return { id, parentID: info.parentID, ...agent === undefined ? {} : { agent } };
-}
 function v1Tools(deps) {
   const { harness, activity, helpers } = deps;
-  const text = (args, key) => {
-    const value = args[key];
-    if (typeof value !== "string" || value.trim() === "")
-      fail(`${key} must be a non-empty string`);
-    return value.trim();
+  const agentOf = (id, info) => deps.agentOf(id) ?? (typeof info?.agent === "string" ? info.agent : "helper");
+  const targetOf = async (api, id) => {
+    const info = (await api.get({ path: { id } }).catch(() => {
+      return;
+    }))?.data;
+    if (info === null || info === undefined)
+      return;
+    return { parentID: info.parentID, agent: agentOf(id, info) };
   };
   const children = async (api, context) => {
     const list = (await api.children({ path: { id: context.sessionID } }))?.data ?? [];
@@ -1182,15 +1202,13 @@ function v1Tools(deps) {
     description: TOOL_SPECS.status.description,
     args: TOOL_SPECS.status.args,
     async execute(_args, context) {
-      const api = session(deps.client);
+      const api = sessionApi(deps.client);
       const [list, busy] = await Promise.all([children(api, context), busySessions(api)]);
-      const now = Date.now();
       const views = list.map((item) => {
         const record = activity.get(item.id);
-        const agent = (typeof item.agent === "string" ? item.agent : deps.agentOf(item.id)) ?? "helper";
         return {
           id: item.id,
-          agent,
+          agent: agentOf(item.id, item),
           title: typeof item.title === "string" ? item.title : "",
           state: busy.has(item.id) ? "running" : record?.ended ?? "done",
           steps: record?.steps ?? 0,
@@ -1199,23 +1217,21 @@ function v1Tools(deps) {
           ...record?.lastTool === undefined ? {} : { lastTool: record.lastTool }
         };
       });
-      return formatStatus(views, now);
+      return formatStatus(views);
     }
   };
   const steer = {
     description: TOOL_SPECS.steer.description,
     args: TOOL_SPECS.steer.args,
     async execute(args, context) {
-      const id = text(args, "id");
-      const message = text(args, "text");
-      const api = session(deps.client);
-      const target = facts((await api.get({ path: { id } }).catch(() => {
-        return;
-      }))?.data, id, deps.agentOf);
+      const id = requiredText(args, "id");
+      const message = requiredText(args, "text");
+      const api = sessionApi(deps.client);
+      const target = await targetOf(api, id);
       const problem = targetProblem(target, id, context.sessionID, helpers);
       if (problem !== undefined)
         return problem;
-      const agent = target.agent ?? "helper";
+      const agent = target.agent;
       if (!(await busySessions(api)).has(id))
         return notRunningResult(agent, id, `task_id: ${JSON.stringify(id)}`);
       await api.promptAsync({ path: { id }, body: { agent, parts: [{ type: "text", text: steerText(message, harness.defaultAgent) }] } });
@@ -1226,26 +1242,24 @@ function v1Tools(deps) {
     description: TOOL_SPECS.cancel.description,
     args: TOOL_SPECS.cancel.args,
     async execute(args, context) {
-      const id = text(args, "id");
-      const api = session(deps.client);
+      const id = requiredText(args, "id");
+      const api = sessionApi(deps.client);
       const busy = await busySessions(api);
       const targets = [];
       if (id === "all") {
         for (const item of await children(api, context)) {
-          if (!busy.has(item.id))
-            continue;
-          targets.push({ id: item.id, agent: (typeof item.agent === "string" ? item.agent : deps.agentOf(item.id)) ?? "helper" });
+          const agent = agentOf(item.id, item);
+          if (busy.has(item.id) && helpers.has(agent))
+            targets.push({ id: item.id, agent });
         }
       } else {
-        const target = facts((await api.get({ path: { id } }).catch(() => {
-          return;
-        }))?.data, id, deps.agentOf);
+        const target = await targetOf(api, id);
         const problem = targetProblem(target, id, context.sessionID, helpers);
         if (problem !== undefined)
           return problem;
         if (!busy.has(id))
-          return `${target.agent ?? "helper"} ${id} is not running.`;
-        targets.push({ id, agent: target.agent ?? "helper" });
+          return `${target.agent} ${id} is not running.`;
+        targets.push({ id, agent: target.agent });
       }
       for (const target of targets) {
         await api.abort({ path: { id: target.id } });
@@ -1261,7 +1275,6 @@ function v1Tools(deps) {
 var SHELL_TOOL = "bash";
 var TOOL_LESS_AGENTS = new Set(["title", "summary", "compaction"]);
 var LOOKUP_TIMEOUT_MS = 2000;
-var MAX_SESSIONS = 5000;
 function v1ProjectRoot(input) {
   const worktree = input?.worktree;
   if (typeof worktree === "string" && worktree !== "" && worktree !== "/")
@@ -1275,15 +1288,10 @@ class SessionAgents {
   set(session, agent) {
     if (typeof session !== "string" || typeof agent !== "string" || agent === "")
       return;
-    this.agents.delete(session);
-    this.agents.set(session, agent);
-    if (this.agents.size > MAX_SESSIONS) {
-      const oldest = this.agents.keys().next().value;
-      if (oldest !== undefined) {
-        this.agents.delete(oldest);
-        this.children.delete(oldest);
-      }
-    }
+    remember(this.agents, session, agent);
+    for (const child of this.children.keys())
+      if (!this.agents.has(child))
+        this.children.delete(child);
   }
   get(session) {
     return this.agents.get(session);
@@ -1318,7 +1326,7 @@ function createServer(harness, options = {}) {
       reporter.internal("planning the agents", error);
     }
     const sessions = new SessionAgents;
-    const helpers = new Set(harness.agents.filter((agent) => agent.mode === "subagent").map((agent) => agent.id));
+    const helpers = helperIds(harness);
     const compactions = new Compactions;
     const activity = new Activity;
     const fetchSession = async (session) => {
@@ -1335,7 +1343,7 @@ function createServer(harness, options = {}) {
         const data = result?.data;
         if (data === null || data === undefined)
           return;
-        if (typeof data.agent === "string")
+        if (typeof data.agent === "string" && sessions.get(session) === undefined)
           sessions.set(session, data.agent);
         sessions.setChild(session, typeof data.parentID === "string" && data.parentID !== "");
         return data;
@@ -1352,9 +1360,12 @@ function createServer(harness, options = {}) {
       if (known !== undefined)
         return known;
       await fetchSession(session);
-      return sessions.isChild(session) ?? false;
+      const found = sessions.isChild(session);
+      if (found === undefined)
+        reporter.internal("looking up a session", new Error(`no answer for ${session} within ${LOOKUP_TIMEOUT_MS} ms; a message there may run as its sender`));
+      return found ?? false;
     };
-    const tool = v1Tools({ harness, client: input?.client, agentOf: (session) => sessions.get(session), activity, plans, helpers });
+    const tool = v1Tools({ harness, client: input?.client, agentOf: (session) => sessions.get(session), activity, helpers });
     return {
       async config(config) {
         try {
@@ -1404,7 +1415,7 @@ function createServer(harness, options = {}) {
             }
           }
           if (message === undefined)
-            activity.note(call?.sessionID, call?.tool, output?.args);
+            activity.observe(call?.sessionID, call?.tool, output?.args);
         } catch (error) {
           reporter.internal("the tool guard", error);
           return;
@@ -1436,8 +1447,6 @@ function createServer(harness, options = {}) {
 }
 
 // plugin/tools-v2.ts
-var MAX_TRACKED2 = 5000;
-
 class SessionTracker {
   sessions = new Map;
   observe(envelope, now = Date.now()) {
@@ -1459,13 +1468,7 @@ class SessionTracker {
           ...typeof event.agent === "string" ? { agent: event.agent } : {},
           ...typeof event.title === "string" ? { title: event.title } : {}
         };
-        this.sessions.delete(id);
-        this.sessions.set(id, created);
-        if (this.sessions.size > MAX_TRACKED2) {
-          const oldest = this.sessions.keys().next().value;
-          if (oldest !== undefined)
-            this.sessions.delete(oldest);
-        }
+        remember(this.sessions, id, created);
         return;
       }
       case "session.execution.started":
@@ -1507,34 +1510,25 @@ class SessionTracker {
     return [...this.sessions.values()].filter((session) => session.parentID === parent);
   }
 }
-function fail2(message) {
-  throw new Error(message);
-}
-function sessionApi(ctx) {
+function sessionApi2(ctx) {
   const api = ctx.session;
   if (api?.get === undefined || api.prompt === undefined || api.interrupt === undefined) {
-    fail2("this opencode does not offer the session API the helper tools need");
+    throw new Error("this opencode does not offer the session API the helper tools need");
   }
   return api;
 }
 function v2Tools(deps) {
   const { harness, tracker, activity, helpers } = deps;
-  const text = (args, key) => {
-    const value = args[key];
-    if (typeof value !== "string" || value.trim() === "")
-      fail2(`${key} must be a non-empty string`);
-    return value.trim();
-  };
-  const factsOf = async (id) => {
+  const targetOf = async (id) => {
     const tracked = tracker.get(id);
     if (tracked !== undefined)
-      return { id, parentID: tracked.parentID, ...tracked.agent === undefined ? {} : { agent: tracked.agent } };
-    const info = await sessionApi(deps.ctx).get({ sessionID: id }).catch(() => {
+      return { parentID: tracked.parentID, agent: tracked.agent ?? "helper", state: tracked.state };
+    const info = await sessionApi2(deps.ctx).get({ sessionID: id }).catch(() => {
       return;
     });
     if (info === undefined || info === null)
       return;
-    return { id, parentID: info.parentID, ...typeof info.agent === "string" ? { agent: info.agent } : {} };
+    return { parentID: info.parentID, agent: typeof info.agent === "string" ? info.agent : "helper", state: "unknown" };
   };
   const view = (session) => {
     const record = activity.get(session.id);
@@ -1560,44 +1554,47 @@ function v2Tools(deps) {
   return [
     define(TOOL_SPECS.status, async (_args, context) => formatStatus(tracker.children(context.sessionID).map(view))),
     define(TOOL_SPECS.steer, async (args, context) => {
-      const id = text(args, "id");
-      const message = text(args, "text");
-      const target = await factsOf(id);
+      const id = requiredText(args, "id");
+      const message = requiredText(args, "text");
+      const target = await targetOf(id);
       const problem = targetProblem(target, id, context.sessionID, helpers);
       if (problem !== undefined)
         return problem;
-      const agent = target.agent ?? "helper";
-      if (tracker.get(id)?.state !== "running")
-        return notRunningResult(agent, id, `sessionID: ${JSON.stringify(id)}`);
-      await sessionApi(deps.ctx).prompt({ sessionID: id, text: steerText(message, harness.defaultAgent), delivery: "steer" });
+      const { agent, state } = target;
+      const continuation = `sessionID: ${JSON.stringify(id)}`;
+      if (state === "unknown")
+        return unknownStateResult(agent, id, continuation);
+      if (state !== "running")
+        return notRunningResult(agent, id, continuation);
+      await sessionApi2(deps.ctx).prompt({ sessionID: id, text: steerText(message, harness.defaultAgent), delivery: "steer" });
       return steeredResult(agent, id);
     }),
     define(TOOL_SPECS.cancel, async (args, context) => {
-      const id = text(args, "id");
+      const id = requiredText(args, "id");
       const targets = [];
       if (id === "all") {
         for (const child of tracker.children(context.sessionID)) {
-          if (child.state === "running")
-            targets.push({ id: child.id, agent: child.agent ?? "helper" });
+          const agent = child.agent ?? "helper";
+          if (child.state === "running" && helpers.has(agent))
+            targets.push({ id: child.id, agent });
         }
       } else {
-        const target = await factsOf(id);
+        const target = await targetOf(id);
         const problem = targetProblem(target, id, context.sessionID, helpers);
         if (problem !== undefined)
           return problem;
-        if (tracker.get(id)?.state !== "running")
-          return `${target.agent ?? "helper"} ${id} is not running.`;
-        targets.push({ id, agent: target.agent ?? "helper" });
+        if (target.state !== "running")
+          return `${target.agent} ${id} is not running.`;
+        targets.push({ id, agent: target.agent });
       }
       for (const target of targets) {
-        await sessionApi(deps.ctx).interrupt({ sessionID: target.id });
+        await sessionApi2(deps.ctx).interrupt({ sessionID: target.id });
         activity.end(target.id, "stopped");
       }
       return cancelledResult(targets);
     })
   ];
 }
-var HELPER_TOOL_NAMES = [HELPER_TOOLS.status, HELPER_TOOLS.steer, HELPER_TOOLS.cancel];
 
 // plugin/v2.ts
 var FALLBACK_MS = 3000;
@@ -1702,11 +1699,11 @@ function createSetup(harness, options = {}) {
           }
         });
       }
-      const helpers = new Set(harness.agents.filter((agent) => agent.mode === "subagent").map((agent) => agent.id));
+      const helpers = helperIds(harness);
       const tracker = new SessionTracker;
       const activity = new Activity;
       if (typeof ctx.tool?.transform === "function") {
-        const tools = v2Tools({ harness, ctx, tracker, activity, plans, helpers });
+        const tools = v2Tools({ harness, ctx, tracker, activity, helpers });
         await ctx.tool.transform((editor) => {
           try {
             for (const tool of tools)
@@ -1722,7 +1719,7 @@ function createSetup(harness, options = {}) {
           try {
             message = toolCallBlock(harness, call?.agent, call?.tool);
             if (message === undefined)
-              activity.note(call?.sessionID, call?.tool, call?.input);
+              activity.observe(call?.sessionID, call?.tool, call?.input);
           } catch (error) {
             reporter.internal("the tool guard", error);
             return;

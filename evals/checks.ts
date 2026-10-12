@@ -465,7 +465,7 @@ function completedCalls(ctx: CheckContext, agent: string, tool: string, input?: 
   return ctx.metrics.toolCalls.filter((call) => call.agent === agent && call.tool === tool && call.status === "completed" && (input === undefined || input(call.input)));
 }
 
-/** lead started at least `count` helpers in the background. */
+/** lead started at least `count` helpers in the background (the delegation tool is `task` on 1.x, `subagent` on 2). */
 export function backgroundHandoffs(count = 1, recordOnly: Variant[] = []): Check {
   return {
     id: "background-handoffs",
@@ -473,8 +473,10 @@ export function backgroundHandoffs(count = 1, recordOnly: Variant[] = []): Check
     variants: ["harness"],
     recordOnly,
     run(ctx) {
-      const calls = completedCalls(ctx, "lead", "task", (input) => input.background === true);
-      return calls.length >= count ? ok(`${calls.length} background hand-off(s)`) : fail(`${calls.length} background hand-off(s); task calls: ${completedCalls(ctx, "lead", "task").length}`);
+      const background = (input: Record<string, unknown>) => input.background === true;
+      const calls = [...completedCalls(ctx, "lead", "task", background), ...completedCalls(ctx, "lead", "subagent", background)];
+      const all = completedCalls(ctx, "lead", "task").length + completedCalls(ctx, "lead", "subagent").length;
+      return calls.length >= count ? ok(`${calls.length} background hand-off(s)`) : fail(`${calls.length} background hand-off(s) of ${all} hand-off(s)`);
     },
   };
 }
