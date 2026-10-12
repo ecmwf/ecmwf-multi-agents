@@ -440,10 +440,14 @@ Prompt budgets, checked by the generator at about four characters per token:
 
 | Kind | Budget |
 |---|---|
-| `lead` prompt | 1,800 tokens |
-| Helper prompt | 700 tokens |
+| `lead` prompt | 2,050 tokens |
+| Helper prompt | 750 tokens |
 | Command template | 500 tokens |
-| Skill | 1,200 tokens |
+| Skill | 1,450 tokens |
+
+A budget is a ceiling, not a target. It is raised only to the measured size of a change,
+rounded up to the next 50, and the manifest records why; the evals then show what the
+change costs per request.
 
 Every generated agent, command and skill file carries the comment
 `# managed by ecmwf-multi-agents` in its frontmatter, and the bundled plugin starts with

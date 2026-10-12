@@ -15,8 +15,12 @@
   "workDir": ".ecmwf-multi-agents",
   "marker": "# managed by ecmwf-multi-agents",
 
-  // Approximate tokens, counted as characters / 4.
-  "budgets": { "lead": 1800, "helper": 700, "command": 500, "skill": 1200 },
+  // Approximate tokens, counted as characters / 4. A budget is a ceiling, raised only to the
+  // measured size of a change, rounded up to the next 50, with the reason here:
+  // - lead 1800 -> 2050, helper 700 -> 750, skill 1200 -> 1450: the background helper rules
+  //   (hand off in the background or not, read a completion as a report, steer or cancel) and
+  //   the users' guide to them. Measured 2010, 712 and 1439 (docs/adr/0002).
+  "budgets": { "lead": 2050, "helper": 750, "command": 500, "skill": 1450 },
 
   // Named lists of {action, resource}. A permission entry {"use": name, "effect": e}
   // expands to one rule per item, all with effect e.

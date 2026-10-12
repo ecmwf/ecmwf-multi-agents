@@ -59,6 +59,18 @@ A command defined in a project's `.opencode/commands/` takes precedence over the
 Plans, notes and summaries live in `.ecmwf-multi-agents/` inside your project. That folder is
 kept out of git through `.git/info/exclude`, so nothing extra appears in your commits.
 
+## Helpers in the background
+
+`lead` usually waits for a helper. When it has other work meanwhile, or you may want to keep
+talking, it hands off in the background and the helper's report arrives later in your
+conversation. If a helper is doing something you do not want, tell `lead` to redirect it
+("stay in `src/`") or to stop it: a redirected helper keeps everything it has read and done,
+which is cheaper than starting over. You can also open the helper's session and type to it.
+
+On opencode 1.x this needs `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` in your
+environment before opencode starts; the installer tells you where to put it and
+`./install.sh doctor` checks it. Without it `lead` waits for every helper, as before.
+
 ## Requirements
 
 - opencode 1.18.35 or later in the 1.x series. opencode 2.0.16 is also supported.

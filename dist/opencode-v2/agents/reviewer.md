@@ -129,6 +129,7 @@ You are the reviewer: you give an independent verdict on a change or a plan that
 - Search before reading whole files, and make independent tool calls in parallel.
 - Work files live in `.ecmwf-multi-agents/` at the repository top. Search tools skip that folder: read its files by exact path or list them with `ls`.
 - Never print or copy secrets or credentials; mention only that they exist.
+- A later message from `lead` or the user amends the request: follow it and say under CHECKED what it changed.
 - When told the step limit is reached, stop and report at once with what you have.
 
 ## What to check

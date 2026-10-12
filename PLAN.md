@@ -262,7 +262,7 @@ Decisions to agree with Tiago before 7c starts (shared contracts change):
 | When `lead` uses background | When it has other work meanwhile (answer the user, next plan task) or the user may want to keep talking. Each completion wakes `lead` once, so three background scouts cost up to three `lead` turns where three parallel foreground scouts cost one; `/onboard` stays foreground |
 | 1.x child pinning | The plugin's `chat.message` hook rewrites `agent`, `model` and `variant` of a message that lands in a helper's child session to that helper's own, so typing into a running helper steers it instead of switching it to `lead`. Never applied to the user's own session (`/review` and `/progress` run there by design) |
 | 1.x cancel gap | `helpers_cancel` reports the cancel in its own result; a user-side cancel shows in `helpers_status`. No injected wake |
-| Budgets | `lead` is at 1,792 of 1,800 tokens and the skills within 14; the new rules need room. Raise in 7a with the prompt diff as the justification |
+| Budgets | `lead` is at 1,792 of 1,800 tokens and the skills within 14; the new rules need room. Raised with the prompts to the measured size, rounded up to the next 50: `lead` 2,050 (measured 2,010, the background section nets 218 after trims), helpers 750 (712), skills 1,450 (the guide, 1,439). Each `lead` request grows by about 1.5 percent; a cached prefix on Anthropic and OpenAI models |
 
 Tasks, in order; **(par)** marks what can run side by side once 7a is done:
 
@@ -313,15 +313,15 @@ Tasks, in order; **(par)** marks what can run side by side once 7a is done:
 
 7d. Prompts
 
-- [~] Samet: **(par)** `lead`: background rule, reading `<task>` and `<subagent>` wakes as
+- [x] Samet: **(par)** `lead`: background rule, reading `<task>` and `<subagent>` wakes as
   reports (check DONE WHEN as for any report, never re-run the helper's checks twice), steer
   versus cancel rule, no polling, the two safety limits; a running helper is reached only
   through `helpers_steer`, never through `task_id` or `sessionID` on the delegation tool, so
   every redirect passes the guard and carries the helper's own agent and model
-- [~] Samet: **(par)** `scout`, `builder`, `reviewer`: a later message amends the brief;
+- [x] Samet: **(par)** `scout`, `builder`, `reviewer`: a later message amends the brief;
   report what changed and what was already done before it; on 1.x the step limit counts the
   whole run, so a steer near the limit gets "stop and report"
-- [~] Samet: **(par)** `/guide` skill and README: the user's path (open the helper's session
+- [x] Samet: **(par)** `/guide` skill and README: the user's path (open the helper's session
   and type; the `session.background` keybind; "ask `lead` to redirect or stop it")
 
 7e. Verification and release
@@ -340,8 +340,8 @@ and a steer cost; `/guide` explains it in plain words.
 ## Open questions
 
 - npm scope for the plugin package (the repository is github.com/ecmwf/ecmwf-multi-agents).
-- Prompt budgets (`lead` 1,800 tokens, helpers 700, commands 500, skills 1,200) are nearly
-  full; raise them or trim prompts, informed by eval results.
+- Prompt budgets are ceilings raised only to a measured change (see Phase 7, Budgets). The
+  evals after Phase 7 show whether the `lead` additions cost more than their size explains.
 - `/onboard` is shadowed in projects that define their own `onboard` command (some local
   projects do). Kept as requested; renaming to `survey` would avoid it.
 
