@@ -7,7 +7,7 @@
 // helpers' lifecycle, and the plugin only observes it through the hooks it already receives.
 
 import { commandParts, withoutAssignments } from "./guard.ts";
-import type { ArgSchema, EmbeddedHarness, EmbeddedRule } from "./types.ts";
+import type { ArgSchema, EmbeddedHarness } from "./types.ts";
 
 export const HELPER_TOOLS = {
   status: "helpers_status",
@@ -178,15 +178,17 @@ function urlHead(url: string): string {
 
 /**
  * `tool: what it was asked`, short, from fields that cannot carry a secret: a command's head,
- * a path, a URL without its query, or the model's own description. Patterns, queries and
- * prompts are left out.
+ * a URL without its query, a path, or the agent a hand-off named. Free text the model wrote
+ * (descriptions, prompts, patterns, queries) is left out.
  */
 export function summarizeCall(tool: string, input: unknown): string {
   const args = input !== null && typeof input === "object" ? (input as Record<string, unknown>) : {};
   const text = (key: string) => (typeof args[key] === "string" && (args[key] as string).trim() !== "" ? (args[key] as string) : undefined);
   const command = text("command");
   const url = text("url");
-  const detail = command !== undefined ? commandHead(command) : url !== undefined ? urlHead(url) : (text("filePath") ?? text("path") ?? text("description"));
+  const named = text("subagent_type") ?? text("agent");
+  const detail =
+    command !== undefined ? commandHead(command) : url !== undefined ? urlHead(url) : (text("filePath") ?? text("path") ?? (named !== undefined && PLAIN_WORD.test(named) ? named : undefined));
   if (detail === undefined || detail === "") return tool;
   const flat = detail.replace(/\s+/g, " ").trim();
   return `${tool}: ${flat.length > SUMMARY_LENGTH ? `${flat.slice(0, SUMMARY_LENGTH - 3)}...` : flat}`;
@@ -289,26 +291,17 @@ export function cancelledResult(cancelled: readonly { agent: string; id: string 
 // ---------------------------------------------------------------------------------------------
 // Guard: helpers never call these tools, whatever was approved.
 
-/** The effect of the last matching `tool` rule for an agent, or undefined when none matches. */
-export function toolRuleEffect(rules: readonly EmbeddedRule[], tool: string): EmbeddedRule["effect"] | undefined {
-  for (let i = rules.length - 1; i >= 0; i--) {
-    const rule = rules[i]!;
-    if (rule.resource === tool || rule.resource === "*") return rule.effect;
-  }
-  return undefined;
-}
-
 /**
- * The error to raise when `agentId` may not call `tool`. The tools belong to lead alone: a
- * harness helper is refused by its own `tool` rules, and every other caller, including an
- * unknown one, is refused because the tools are not for it (the platform's default rules would
- * otherwise let any agent reach a plugin tool).
+ * The error to raise when `agentId` may not call `tool`: every caller but lead, including an
+ * unknown one. The manifest's `tool` rules already keep the tools out of the helpers' requests;
+ * this check is independent of them, so a changed or missing rule cannot open a path, and it
+ * also covers agents outside the harness, which the platform's default rules would let reach a
+ * plugin tool.
  */
 export function toolCallBlock(harness: EmbeddedHarness, agentId: string | undefined, tool: string): string | undefined {
   if (!HELPER_TOOL_IDS.includes(tool)) return undefined;
   if (agentId === harness.defaultAgent) return undefined;
   const agent = harness.agents.find((item) => item.id === agentId);
-  if (agent !== undefined && agent.mode === "subagent" && toolRuleEffect(agent.tools, tool) !== "deny") return undefined;
   const who = agent?.mode === "subagent" ? "helpers" : (agentId ?? "an unknown agent");
   return `${harness.name}: ${who} may not use ${tool}; only ${harness.defaultAgent} sees, redirects or stops helpers. Do not try another way: say in your report what is needed.`;
 }

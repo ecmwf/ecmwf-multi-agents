@@ -34,8 +34,6 @@ export interface EmbeddedAgent {
   mode: "primary" | "subagent";
   /** The agent's resolved neutral rules for the `shell` action, in order (last match wins). */
   shell: EmbeddedRule[];
-  /** The agent's `tool` rules: the resource is a plugin tool id (helpers.ts). */
-  tools: EmbeddedRule[];
 }
 
 export interface EmbeddedRule {

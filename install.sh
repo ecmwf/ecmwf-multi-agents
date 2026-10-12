@@ -529,11 +529,14 @@ BACKGROUND_FLAG=OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS
 # True when the flag is on in this environment. As opencode reads it (runtime-flags.ts:11-14 at
 # v1.18.35), an explicit value wins; OPENCODE_EXPERIMENTAL counts only when the flag is unset.
 # The variable is read by name here: it must stay the one BACKGROUND_FLAG names.
+# On success BACKGROUND_SOURCE names the variable that turned them on.
 background_enabled() {
 	if [ "${OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS+set}" = set ]; then
 		background_value=$OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS
+		BACKGROUND_SOURCE=$BACKGROUND_FLAG
 	else
 		background_value=${OPENCODE_EXPERIMENTAL-}
+		BACKGROUND_SOURCE=OPENCODE_EXPERIMENTAL
 	fi
 	case $background_value in
 	[Tt][Rr][Uu][Ee] | 1 | [Yy][Ee][Ss] | [Oo][Nn]) return 0 ;;
@@ -545,7 +548,7 @@ background_advice() {
 	[ "$PLATFORM" = v1 ] || return 0
 	say ""
 	if background_enabled; then
-		say "Background helpers are on ($BACKGROUND_FLAG is set)."
+		say "Background helpers are on ($BACKGROUND_SOURCE is set)."
 		return 0
 	fi
 	say "For helpers that work in the background while you keep talking, opencode 1.x needs"
@@ -728,7 +731,7 @@ cmd_doctor() {
 
 	if [ "$PLATFORM" = v1 ]; then
 		if background_enabled; then
-			ok "background helpers are on ($BACKGROUND_FLAG)"
+			ok "background helpers are on ($BACKGROUND_SOURCE)"
 		else
 			note "background helpers are off: lead waits for every helper. To turn them on, set $BACKGROUND_FLAG=true in the environment before opencode starts (see docs/install.md)"
 		fi

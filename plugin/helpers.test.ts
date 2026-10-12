@@ -170,11 +170,10 @@ describe("guard", () => {
     expect(toolCallBlock(harness, "build", "bash")).toBeUndefined();
   });
 
-  test("a helper's own tool rules decide for it: a tool its rules do not deny is not refused by the guard", () => {
+  test("the refusal does not depend on the manifest's rules: a helper added without any is refused too", () => {
     const extended = embeddedFixture();
-    extended.agents.push({ id: "tester", mode: "subagent", shell: [], tools: [{ resource: "helpers_cancel", effect: "deny" }] });
-    expect(toolCallBlock(extended, "tester", "helpers_cancel")).toBeDefined();
-    expect(toolCallBlock(extended, "tester", "helpers_status")).toBeUndefined();
+    extended.agents.push({ id: "tester", mode: "subagent", shell: [] });
+    for (const tool of Object.values(HELPER_TOOLS)) expect(toolCallBlock(extended, "tester", tool)).toContain("helpers may not use");
   });
 });
 
@@ -294,6 +293,9 @@ describe("shared pieces", () => {
     expect(summarizeCall("webfetch", { url: "https://user:pw@host/path?token=abc#frag" })).toBe("webfetch: https://host/path");
     expect(summarizeCall("grep", { pattern: "password = ", path: "/repo/src" })).toBe("grep: /repo/src");
     expect(summarizeCall("websearch", { query: "secret stuff" })).toBe("websearch");
-    expect(summarizeCall("task", { description: "slow job", prompt: "the brief" })).toBe("task: slow job");
+    // Free text the model wrote is never shown; a hand-off shows the agent it named.
+    expect(summarizeCall("task", { description: "job with a password: hunter2", prompt: "the brief", subagent_type: "scout" })).toBe("task: scout");
+    expect(summarizeCall("subagent", { description: "d", prompt: "p", agent: "builder" })).toBe("subagent: builder");
+    expect(summarizeCall("task", { description: "slow job", prompt: "the brief" })).toBe("task");
   });
 });

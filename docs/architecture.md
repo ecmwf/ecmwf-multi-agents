@@ -68,9 +68,10 @@ denies `git push` globally gets an approval prompt in `lead` instead.
 
 The helper tools come from the plugin (see Background helpers). A `tool` rule in the manifest
 names one tool id; the emitters write it as that id's own permission key, which on both
-platforms removes a denied tool from the agent's requests, and the plugin refuses every call
-that is not `lead`'s at execution time, like the shell guard: a helper's whatever was
-approved, and any other agent's, because the platform's default rules would let it reach a
+platforms removes a denied tool from the agent's requests. The plugin also refuses, at
+execution time and independently of those rules, every call to these tools that does not
+come from `lead`: a helper's call, whatever was approved, as the shell guard does, and any
+other agent's call, because the platform's default rules would let such an agent reach a
 plugin tool. Without the plugin the tools do not exist and the rules are inert.
 
 opencode 1.x denies the todo list to every subagent by default, and opencode 2 has none.
