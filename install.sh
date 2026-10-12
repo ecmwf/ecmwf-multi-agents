@@ -510,14 +510,57 @@ cmd_install() {
 		say "  Lmod:      setenv(\"OPENCODE_CONFIG_DIR\", \"$CONFIG_DIR\")"
 		say "  Tcl:       setenv OPENCODE_CONFIG_DIR $CONFIG_DIR"
 		say "See docs/install.md for making the folder read-only."
+		background_advice
 		;;
 	*)
 		say "Next: restart opencode. lead becomes the default agent, unless your opencode"
 		say "config names another default_agent; press Tab to switch agents. Type /guide to"
 		say "learn more, and run ./install.sh doctor to check the installation."
+		background_advice
 		;;
 	esac
 	[ -z "$CONFLICTS" ] || exit 1
+}
+
+# On opencode 1.x, background hand-offs exist only behind a flag that opencode reads from its
+# environment at start, before any plugin runs (docs/research/background-helpers.md, section 1).
+BACKGROUND_FLAG=OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS
+
+# True when the flag is on in this environment. As opencode reads it (runtime-flags.ts:11-14 at
+# v1.18.35), an explicit value wins; OPENCODE_EXPERIMENTAL counts only when the flag is unset.
+# The variable is read by name here: it must stay the one BACKGROUND_FLAG names.
+# On success BACKGROUND_SOURCE names the variable that turned them on.
+background_enabled() {
+	if [ "${OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS+set}" = set ]; then
+		background_value=$OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS
+		BACKGROUND_SOURCE=$BACKGROUND_FLAG
+	else
+		background_value=${OPENCODE_EXPERIMENTAL-}
+		BACKGROUND_SOURCE=OPENCODE_EXPERIMENTAL
+	fi
+	case $background_value in
+	[Tt][Rr][Uu][Ee] | 1 | [Yy][Ee][Ss] | [Oo][Nn]) return 0 ;;
+	esac
+	return 1
+}
+
+background_advice() {
+	[ "$PLATFORM" = v1 ] || return 0
+	say ""
+	if background_enabled; then
+		say "Background helpers are on ($BACKGROUND_SOURCE is set)."
+		return 0
+	fi
+	say "For helpers that work in the background while you keep talking, opencode 1.x needs"
+	say "one environment variable before it starts, for example in your shell profile:"
+	if [ "$TARGET" = central ]; then
+		say "  sh, bash:  export $BACKGROUND_FLAG=true"
+		say "  Lmod:      setenv(\"$BACKGROUND_FLAG\", \"true\")"
+		say "  Tcl:       setenv $BACKGROUND_FLAG true"
+	else
+		say "  export $BACKGROUND_FLAG=true"
+	fi
+	say "Without it, lead waits for every helper, as before."
 }
 
 # ---------------------------------------------------------------- doctor
@@ -683,6 +726,14 @@ cmd_doctor() {
 			else
 				note "profile $EFFECTIVE_PROFILE: not available:$doctor_missing. Connect the provider with \"opencode auth login\", or choose another profile in your settings file."
 			fi
+		fi
+	fi
+
+	if [ "$PLATFORM" = v1 ]; then
+		if background_enabled; then
+			ok "background helpers are on ($BACKGROUND_SOURCE)"
+		else
+			note "background helpers are off: lead waits for every helper. To turn them on, set $BACKGROUND_FLAG=true in the environment before opencode starts (see docs/install.md)"
 		fi
 	fi
 

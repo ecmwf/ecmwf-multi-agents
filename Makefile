@@ -14,8 +14,8 @@ REUSE      ?= reuse
 SHELLCHECK ?= shellcheck
 
 INTEGRATION_TESTS := tools/emit-v1.integration.test.ts tools/emit-v2.integration.test.ts \
-	plugin/plugin.integration.test.ts tests/install.integration.test.ts \
-	evals/run.integration.test.ts
+	plugin/plugin.integration.test.ts plugin/background.integration.test.ts \
+	tests/install.integration.test.ts evals/run.integration.test.ts
 
 # `make release X.Y.Z` (positional) or `make release VERSION=X.Y.Z`. A VERSION inherited from
 # the environment is ignored so a stray shell variable can never start a release.

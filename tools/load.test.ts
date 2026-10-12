@@ -348,10 +348,27 @@ describe("top level", () => {
       m.ruleSets.writes.push({ action: "bash", resource: "" });
     });
     expect(await problemsOf({ manifest: m })).toEqual([
-      'src/manifest.jsonc: ruleSets.writes[2].action: must be "read", "edit", "glob", "grep", "list", "shell", "delegate", "skill", "question", "webfetch", "websearch", "todo", "external_directory" or "execute", not "bash"',
+      'src/manifest.jsonc: ruleSets.writes[2].action: must be "read", "edit", "glob", "grep", "list", "shell", "delegate", "skill", "question", "webfetch", "websearch", "todo", "external_directory", "execute" or "tool", not "bash"',
       "src/manifest.jsonc: ruleSets.writes[2].resource: must be a non-empty string, not an empty string",
       'src/manifest.jsonc: ruleSets.empty: must be a non-empty list of {"action", "resource"} items, not an empty list',
       'src/manifest.jsonc: ruleSets.flat: must be a non-empty list of {"action", "resource"} items, not "git *"',
+    ]);
+  });
+
+  test("a tool rule names one plugin tool id, never a pattern or a tool of opencode itself", async () => {
+    const m = edited((m) => {
+      m.ruleSets.writes.push({ action: "tool", resource: "helpers_*" });
+      m.ruleSets.writes.push({ action: "tool", resource: "Helpers" });
+      m.ruleSets.writes.push({ action: "tool", resource: "bash" });
+      m.ruleSets.writes.push({ action: "tool", resource: "helpers_status" });
+      m.agents.scout.permissions.push({ action: "tool", resource: "session_move", effect: "deny" });
+      m.agents.scout.permissions.push({ action: "tool", resource: "helpers_cancel", effect: "deny" });
+    });
+    expect(await problemsOf({ manifest: m })).toEqual([
+      'src/manifest.jsonc: ruleSets.writes[2].resource: a tool rule names one tool id, lowercase words joined by underscores, not "helpers_*"',
+      'src/manifest.jsonc: ruleSets.writes[3].resource: a tool rule names one tool id, lowercase words joined by underscores, not "Helpers"',
+      'src/manifest.jsonc: ruleSets.writes[4].resource: "bash" is a tool of opencode itself; use its own action instead of a tool rule',
+      'src/manifest.jsonc: agents.scout.permissions[1].resource: "session_move" is a tool of opencode itself; use its own action instead of a tool rule',
     ]);
   });
 });
@@ -435,7 +452,7 @@ describe("agents", () => {
     });
     expect(await problemsOf({ manifest: m })).toEqual([
       "src/manifest.jsonc: agents.lead.permissions[0].use: names no rule set; rule sets: writes",
-      'src/manifest.jsonc: agents.lead.permissions[1].action: must be "read", "edit", "glob", "grep", "list", "shell", "delegate", "skill", "question", "webfetch", "websearch", "todo", "external_directory" or "execute", not "bash"',
+      'src/manifest.jsonc: agents.lead.permissions[1].action: must be "read", "edit", "glob", "grep", "list", "shell", "delegate", "skill", "question", "webfetch", "websearch", "todo", "external_directory", "execute" or "tool", not "bash"',
       'src/manifest.jsonc: agents.lead.permissions[2].effect: must be "allow", "ask" or "deny", not "maybe"',
       'src/manifest.jsonc: agents.lead.permissions[4]: must be an object, not "deny all"',
       "src/manifest.jsonc: agents.lead.permissions[5].resource: required key is missing",

@@ -135,7 +135,7 @@ function makeBox(versions: { opencode?: string; opencode2?: string } = { opencod
   return box;
 }
 
-function run(box: Box, args: string[], cwd = box.dir): { code: number; out: string } {
+function run(box: Box, args: string[], cwd = box.dir, extra: Record<string, string> = {}): { code: number; out: string } {
   const env: Record<string, string> = {
     HOME: box.home,
     XDG_CONFIG_HOME: path.join(box.home, ".config"),
@@ -143,6 +143,7 @@ function run(box: Box, args: string[], cwd = box.dir): { code: number; out: stri
     TMPDIR: box.dir,
     ECMWF_MULTI_AGENTS_DIST: box.dist,
     LC_ALL: "C",
+    ...extra,
   };
   const result = Bun.spawnSync(["sh", INSTALL, ...args], { cwd, env, stdout: "pipe", stderr: "pipe" });
   return { code: result.exitCode, out: `${result.stdout.toString()}${result.stderr.toString()}` };
@@ -425,6 +426,49 @@ describe("uninstall", () => {
   test("--purge is only for uninstall", () => {
     const box = makeBox();
     expect(run(box, ["--purge"]).out).toContain("--purge only works with uninstall");
+  });
+});
+
+describe("background helpers on opencode 1.x", () => {
+  const FLAG = "OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS";
+
+  test("an install for opencode 1.x says how to turn them on, unless they already are", () => {
+    const box = makeBox({ opencode: "1.18.35" });
+    const { code, out } = run(box, []);
+    expect(code).toBe(0);
+    expect(out).toContain(`  export ${FLAG}=true`);
+    expect(out).toContain("Without it, lead waits for every helper");
+    const again = run(box, [], box.dir, { [FLAG]: "true" });
+    expect(again.out).toContain(`Background helpers are on (${FLAG} is set)`);
+    expect(again.out).not.toContain(`export ${FLAG}`);
+  });
+
+  test("a central install gives the module file forms", () => {
+    const box = makeBox({ opencode: "1.18.35" });
+    const { out } = run(box, ["--central", path.join(box.dir, "shared")]);
+    expect(out).toContain(`Lmod:      setenv("${FLAG}", "true")`);
+    expect(out).toContain(`Tcl:       setenv ${FLAG} true`);
+  });
+
+  test("an install for opencode 2 says nothing about the flag", () => {
+    const box = makeBox({ opencode2: "opencode v2.0.16" });
+    const { out } = run(box, []);
+    expect(out).not.toContain(FLAG);
+  });
+
+  test("doctor warns when they are off and is satisfied by the flag or opencode's blanket experimental flag", () => {
+    const box = makeBox({ opencode: "1.18.35" });
+    run(box, []);
+    expect(run(box, ["doctor"]).out).toContain("WARN  background helpers are off: lead waits for every helper");
+    expect(run(box, ["doctor"], box.dir, { [FLAG]: "true" }).out).toContain(`OK    background helpers are on (${FLAG})`);
+    expect(run(box, ["doctor"], box.dir, { [FLAG]: "1" }).out).toContain("OK    background helpers are on");
+    expect(run(box, ["doctor"], box.dir, { OPENCODE_EXPERIMENTAL: "true" }).out).toContain("OK    background helpers are on (OPENCODE_EXPERIMENTAL)");
+    expect(run(box, ["doctor"], box.dir, { [FLAG]: "false" }).out).toContain("WARN  background helpers are off");
+    // An explicit value wins over the blanket flag, as it does in opencode.
+    expect(run(box, ["doctor"], box.dir, { [FLAG]: "false", OPENCODE_EXPERIMENTAL: "true" }).out).toContain("WARN  background helpers are off");
+    expect(run(box, ["doctor"], box.dir, { [FLAG]: "on" }).out).toContain("OK    background helpers are on");
+    // Set but empty is an explicit value too, and it is not true.
+    expect(run(box, ["doctor"], box.dir, { [FLAG]: "", OPENCODE_EXPERIMENTAL: "true" }).out).toContain("WARN  background helpers are off");
   });
 });
 

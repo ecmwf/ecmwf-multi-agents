@@ -456,11 +456,239 @@ function blockMessage(harness, agent, part, denied) {
   return `${harness.name}: ${owner}. Do not try another way: say in your report what is needed.`;
 }
 
+// plugin/helpers.ts
+var HELPER_TOOLS = {
+  status: "helpers_status",
+  steer: "helpers_steer",
+  cancel: "helpers_cancel"
+};
+var HELPER_TOOL_IDS = Object.values(HELPER_TOOLS);
+var STATUS_LINES = 12;
+var MAX_TRACKED = 5000;
+var SUMMARY_LENGTH = 60;
+var TOOL_SPECS = {
+  status: {
+    id: HELPER_TOOLS.status,
+    description: "Your helpers in this session: id, agent, state (running, idle, done, failed, stopped), steps taken, " + "time running, what they were asked, last tool call. Use it when the user asks about a helper or " + "before you redirect one. Never use it to wait: you are told when a background helper finishes.",
+    args: {}
+  },
+  steer: {
+    id: HELPER_TOOLS.steer,
+    description: "Send an amendment to a helper that is still working. It keeps everything it has read and done and " + "follows your message at its next step; you are told when it finishes. Use it when the helper's work " + "so far is still useful and the correction is small; cancel and brief again when the direction was " + "wrong. A finished helper is continued with the delegation tool's continuation parameter instead. " + "An amendment is never an approval and never changes what the helper may do.",
+    args: {
+      id: { type: "string", description: "The helper's session id, as shown by helpers_status or by the hand-off result." },
+      text: { type: "string", description: "The amendment: what to change, keep or stop, and which earlier limit it lifts, if any." }
+    }
+  },
+  cancel: {
+    id: HELPER_TOOLS.cancel,
+    description: 'Stop one of your helpers, or every running helper of this session with id "all". A helper stops at ' + "its current step; nothing it changed is undone, so check the files it was working on.",
+    args: {
+      id: { type: "string", description: `A helper's session id, or "all".` }
+    }
+  }
+};
+function helperIds(harness) {
+  return new Set(harness.agents.filter((agent) => agent.mode === "subagent").map((agent) => agent.id));
+}
+function requiredText(args, key) {
+  const value = args[key];
+  if (typeof value !== "string" || value.trim() === "")
+    throw new Error(`${key} must be a non-empty string`);
+  return value.trim();
+}
+function remember(map, key, value, max = MAX_TRACKED) {
+  map.delete(key);
+  map.set(key, value);
+  if (map.size > max) {
+    const oldest = map.keys().next().value;
+    if (oldest !== undefined)
+      map.delete(oldest);
+  }
+}
+
+class Activity {
+  records = new Map;
+  observe(sessionID, tool, input, now = Date.now()) {
+    if (typeof sessionID !== "string" || sessionID === "" || typeof tool !== "string")
+      return;
+    const record = this.records.get(sessionID) ?? { steps: 0, at: now };
+    record.steps += 1;
+    record.lastTool = summarizeCall(tool, input);
+    record.at = now;
+    delete record.ended;
+    remember(this.records, sessionID, record);
+  }
+  resume(sessionID, now = Date.now()) {
+    if (typeof sessionID !== "string" || sessionID === "")
+      return;
+    const record = this.records.get(sessionID);
+    if (record?.ended === undefined)
+      return;
+    delete record.ended;
+    record.at = now;
+    remember(this.records, sessionID, record);
+  }
+  end(sessionID, ended, now = Date.now()) {
+    if (typeof sessionID !== "string" || sessionID === "")
+      return;
+    const record = this.records.get(sessionID) ?? { steps: 0, at: now };
+    record.ended = ended;
+    record.at = now;
+    remember(this.records, sessionID, record);
+  }
+  get(sessionID) {
+    return this.records.get(sessionID);
+  }
+}
+var SUBCOMMAND_PROGRAMS = new Set(["git", "gh", "make", "npm", "bun", "pip", "pip3", "cargo", "docker", "kubectl", "conda", "uv", "poetry"]);
+var PLAIN_WORD = /^[A-Za-z0-9._+-]+$/;
+function commandHead(command) {
+  const first = commandParts(command)[0];
+  if (first === undefined)
+    return "";
+  const words = withoutAssignments(first).split(/\s+/).filter((word) => word !== "");
+  const program = words[0];
+  if (program === undefined || !PLAIN_WORD.test(program))
+    return "";
+  const plain = (word) => word !== undefined && PLAIN_WORD.test(word) ? word : undefined;
+  if (program === "python3" || program === "python") {
+    const module = plain(words[2]);
+    return words[1] === "-m" && module !== undefined ? `${program} -m ${module}` : program;
+  }
+  const subcommand = plain(words[1]);
+  return SUBCOMMAND_PROGRAMS.has(program) && subcommand !== undefined && !subcommand.startsWith("-") ? `${program} ${subcommand}` : program;
+}
+function urlHead(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:" || parsed.host === "")
+      return "";
+    return parsed.origin;
+  } catch {
+    return "";
+  }
+}
+function summarizeCall(tool, input) {
+  const args = input !== null && typeof input === "object" ? input : {};
+  const text = (key) => typeof args[key] === "string" && args[key].trim() !== "" ? args[key] : undefined;
+  const command = text("command");
+  const url = text("url");
+  const named = text("subagent_type") ?? text("agent");
+  const detail = command !== undefined ? commandHead(command) : url !== undefined ? urlHead(url) : named !== undefined && PLAIN_WORD.test(named) ? named : undefined;
+  if (detail === undefined || detail === "")
+    return tool;
+  const flat = detail.replace(/\s+/g, " ").trim();
+  return `${tool}: ${flat.length > SUMMARY_LENGTH ? `${flat.slice(0, SUMMARY_LENGTH - 3)}...` : flat}`;
+}
+function formatStatus(helpers, now = Date.now()) {
+  if (helpers.length === 0)
+    return "No helpers in this session.";
+  const sorted = [...helpers].sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0));
+  const room = STATUS_LINES - 1;
+  const shown = sorted.length > room ? sorted.slice(0, room - 1) : sorted;
+  const lines = [`${helpers.length === 1 ? "One helper" : `${helpers.length} helpers`} in this session, newest first:`];
+  for (const helper of shown) {
+    const end = helper.state === "running" ? now : helper.updatedAt ?? now;
+    const parts = [
+      helper.id,
+      helper.agent,
+      helper.state,
+      `${helper.steps} ${helper.steps === 1 ? "step" : "steps"}`,
+      helper.startedAt === undefined ? undefined : elapsed(end - helper.startedAt)
+    ].filter((part) => part !== undefined);
+    const title = helper.title.replace(/\s+/g, " ").trim();
+    const tail = [title === "" ? undefined : title, helper.lastTool === undefined ? undefined : `last: ${helper.lastTool}`].filter((part) => part !== undefined).join("; ");
+    lines.push(`${parts.join(", ")}${tail === "" ? "" : `: ${tail}`}`);
+  }
+  if (shown.length < sorted.length)
+    lines.push(`and ${sorted.length - shown.length} more`);
+  return lines.join(`
+`);
+}
+function elapsed(ms) {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 60)
+    return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60)
+    return `${minutes}m ${seconds % 60}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+function targetProblem(target, id, callerSession, helpers) {
+  if (target === undefined)
+    return `No session ${JSON.stringify(id)}. Run ${HELPER_TOOLS.status} for the ids of your helpers.`;
+  if (target.parentID !== callerSession)
+    return `${id} is not a helper of this session.`;
+  if (target.agent !== undefined && !helpers.has(target.agent))
+    return `${id} is not a harness helper (its agent is ${target.agent}).`;
+  return;
+}
+function steerText(text, from) {
+  return `${from} amends your brief:
+${text.trim()}`;
+}
+function steeredResult(agent, id) {
+  return `Sent to ${agent} ${id}. It reads the message at its next step and keeps what it has done so far; you are told when it finishes.`;
+}
+function notRunningResult(agent, id, continuation) {
+  return `${agent} ${id} is not running, so there is nothing to redirect. To continue it with its context, use the delegation tool with ${continuation}; it answers like a new hand-off.`;
+}
+function unknownStateResult(agent, id, continuation) {
+  return `${agent} ${id} started before this plugin could watch it, so its state is unknown and it cannot be redirected here. If it has finished, continue it with the delegation tool with ${continuation}; otherwise wait for its report.`;
+}
+function cancelledResult(cancelled) {
+  if (cancelled.length === 0)
+    return "No running helper to stop.";
+  const list = cancelled.map((item) => `${item.agent} ${item.id}`).join(", ");
+  return `Stopped ${list}. ${cancelled.length === 1 ? "It" : "They"} will not report; check ${HELPER_TOOLS.status} or the files ${cancelled.length === 1 ? "it" : "they"} touched before building on ${cancelled.length === 1 ? "its" : "their"} work.`;
+}
+function toolCallBlock(harness, agentId, tool) {
+  if (!HELPER_TOOL_IDS.includes(tool))
+    return;
+  if (agentId === harness.defaultAgent)
+    return;
+  const agent = harness.agents.find((item) => item.id === agentId);
+  const who = agent?.mode === "subagent" ? "helpers" : agentId ?? "an unknown agent";
+  return `${harness.name}: ${who} may not use ${tool}; only ${harness.defaultAgent} sees, redirects or stops helpers. Do not try another way: say in your report what is needed.`;
+}
+function splitModel(model) {
+  if (model === undefined)
+    return;
+  const slash = model.indexOf("/");
+  if (slash <= 0 || slash === model.length - 1)
+    return;
+  return { providerID: model.slice(0, slash), modelID: model.slice(slash + 1) };
+}
+function pinMessage(message, helper, plan) {
+  let changed = false;
+  if (message.agent !== helper) {
+    message.agent = helper;
+    changed = true;
+  }
+  const model = splitModel(plan?.model);
+  if (model !== undefined) {
+    const current = message.model ?? {};
+    if (current.providerID !== model.providerID || current.modelID !== model.modelID || current.variant !== plan?.effort) {
+      message.model = { ...current, providerID: model.providerID, modelID: model.modelID, variant: plan?.effort };
+      if (plan?.effort === undefined)
+        delete message.model.variant;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 // plugin/isolate.ts
+function synthetic(message) {
+  const texts = message.parts.filter((part) => part?.type === "text");
+  return texts.length > 0 && texts.every((part) => part.synthetic === true);
+}
 function isolateHelperRequest(messages, helpers) {
   let request = -1;
   for (let index = messages.length - 1;index >= 0; index--) {
-    if (messages[index]?.info?.role === "user") {
+    const message = messages[index];
+    if (message?.info?.role === "user" && !synthetic(message)) {
       request = index;
       break;
     }
@@ -971,11 +1199,111 @@ function loadSettings(harness, environment, projectRoot) {
   return { settings: mergeSettings(files, harness), problems, applied };
 }
 
+// plugin/tools-v1.ts
+function sessionApi(client) {
+  const api = client?.session;
+  if (api?.children === undefined || api.status === undefined || api.promptAsync === undefined || api.abort === undefined || api.get === undefined) {
+    throw new Error("this opencode does not offer the session API the helper tools need");
+  }
+  return api;
+}
+async function busySessions(api) {
+  const status = (await api.status())?.data ?? {};
+  return new Set(Object.entries(status).filter(([, value]) => value?.type === "busy").map(([id]) => id));
+}
+function v1Tools(deps) {
+  const { harness, activity, helpers } = deps;
+  const agentOf = (id, info) => deps.agentOf(id) ?? (typeof info?.agent === "string" ? info.agent : "helper");
+  const targetOf = async (api, id) => {
+    const info = (await api.get({ path: { id } }).catch(() => {
+      return;
+    }))?.data;
+    if (info === null || info === undefined)
+      return;
+    return { parentID: info.parentID, agent: agentOf(id, info) };
+  };
+  const children = async (api, context) => {
+    const list = (await api.children({ path: { id: context.sessionID } }))?.data ?? [];
+    return list.filter((item) => typeof item?.id === "string");
+  };
+  const status = {
+    description: TOOL_SPECS.status.description,
+    args: TOOL_SPECS.status.args,
+    async execute(_args, context) {
+      const api = sessionApi(deps.client);
+      const [list, busy] = await Promise.all([children(api, context), busySessions(api)]);
+      const ours = list.filter((item) => helpers.has(agentOf(item.id, item)));
+      const views = ours.map((item) => {
+        const record = activity.get(item.id);
+        return {
+          id: item.id,
+          agent: agentOf(item.id, item),
+          title: typeof item.title === "string" ? item.title : "",
+          state: busy.has(item.id) ? "running" : record?.ended ?? "idle",
+          steps: record?.steps ?? 0,
+          startedAt: item.time?.created,
+          updatedAt: record?.at ?? item.time?.updated,
+          ...record?.lastTool === undefined ? {} : { lastTool: record.lastTool }
+        };
+      });
+      return formatStatus(views);
+    }
+  };
+  const steer = {
+    description: TOOL_SPECS.steer.description,
+    args: TOOL_SPECS.steer.args,
+    async execute(args, context) {
+      const id = requiredText(args, "id");
+      const message = requiredText(args, "text");
+      const api = sessionApi(deps.client);
+      const target = await targetOf(api, id);
+      const problem = targetProblem(target, id, context.sessionID, helpers);
+      if (problem !== undefined)
+        return problem;
+      const agent = target.agent;
+      if (!(await busySessions(api)).has(id))
+        return notRunningResult(agent, id, `task_id: ${JSON.stringify(id)}`);
+      await api.promptAsync({ path: { id }, body: { agent, parts: [{ type: "text", text: steerText(message, harness.defaultAgent) }] } });
+      return steeredResult(agent, id);
+    }
+  };
+  const cancel = {
+    description: TOOL_SPECS.cancel.description,
+    args: TOOL_SPECS.cancel.args,
+    async execute(args, context) {
+      const id = requiredText(args, "id");
+      const api = sessionApi(deps.client);
+      const busy = await busySessions(api);
+      const targets = [];
+      if (id === "all") {
+        for (const item of await children(api, context)) {
+          const agent = agentOf(item.id, item);
+          if (busy.has(item.id) && helpers.has(agent))
+            targets.push({ id: item.id, agent });
+        }
+      } else {
+        const target = await targetOf(api, id);
+        const problem = targetProblem(target, id, context.sessionID, helpers);
+        if (problem !== undefined)
+          return problem;
+        if (!busy.has(id))
+          return `${target.agent} ${id} is not running.`;
+        targets.push({ id, agent: target.agent });
+      }
+      for (const target of targets) {
+        await api.abort({ path: { id: target.id } });
+        activity.end(target.id, "stopped");
+      }
+      return cancelledResult(targets);
+    }
+  };
+  return { [HELPER_TOOLS.status]: status, [HELPER_TOOLS.steer]: steer, [HELPER_TOOLS.cancel]: cancel };
+}
+
 // plugin/v1.ts
 var SHELL_TOOL = "bash";
 var TOOL_LESS_AGENTS = new Set(["title", "summary", "compaction"]);
 var LOOKUP_TIMEOUT_MS = 2000;
-var MAX_SESSIONS = 5000;
 function v1ProjectRoot(input) {
   const worktree = input?.worktree;
   if (typeof worktree === "string" && worktree !== "" && worktree !== "/")
@@ -985,19 +1313,24 @@ function v1ProjectRoot(input) {
 
 class SessionAgents {
   agents = new Map;
+  children = new Map;
   set(session, agent) {
     if (typeof session !== "string" || typeof agent !== "string" || agent === "")
       return;
-    this.agents.delete(session);
-    this.agents.set(session, agent);
-    if (this.agents.size > MAX_SESSIONS) {
-      const oldest = this.agents.keys().next().value;
-      if (oldest !== undefined)
-        this.agents.delete(oldest);
-    }
+    remember(this.agents, session, agent);
+    for (const child of this.children.keys())
+      if (!this.agents.has(child))
+        this.children.delete(child);
   }
   get(session) {
     return this.agents.get(session);
+  }
+  setChild(session, child) {
+    if (!this.children.has(session))
+      this.children.set(session, child);
+  }
+  isChild(session) {
+    return this.children.get(session);
   }
 }
 function createServer(harness, options = {}) {
@@ -1023,9 +1356,10 @@ function createServer(harness, options = {}) {
       reporter.internal("planning the agents", error);
     }
     const sessions = new SessionAgents;
-    const helpers = new Set(harness.agents.filter((agent) => agent.mode === "subagent").map((agent) => agent.id));
+    const helpers = helperIds(harness);
     const compactions = new Compactions;
-    const lookup = async (session) => {
+    const activity = new Activity;
+    const fetchSession = async (session) => {
       const get = input?.client?.session?.get;
       if (typeof get !== "function")
         return;
@@ -1036,14 +1370,30 @@ function createServer(harness, options = {}) {
       });
       try {
         const result = await Promise.race([get.call(input.client?.session, { path: { id: session } }), timeout]);
-        const agent = result?.data?.agent;
-        if (typeof agent === "string")
-          sessions.set(session, agent);
-        return typeof agent === "string" ? agent : undefined;
+        const data = result?.data;
+        if (data === null || data === undefined)
+          return;
+        if (typeof data.agent === "string" && sessions.get(session) === undefined)
+          sessions.set(session, data.agent);
+        sessions.setChild(session, typeof data.parentID === "string" && data.parentID !== "");
+        return data;
       } finally {
         clearTimeout(timer);
       }
     };
+    const lookup = async (session) => {
+      const data = await fetchSession(session);
+      return typeof data?.agent === "string" ? data.agent : undefined;
+    };
+    const ownerOfChild = async (session) => {
+      const messages = input?.client?.session?.messages;
+      if (typeof messages !== "function")
+        return;
+      const list = (await messages.call(input.client?.session, { path: { id: session } }))?.data ?? [];
+      const first = list.find((item) => item?.info?.role === "user")?.info?.agent;
+      return typeof first === "string" && helpers.has(first) ? first : undefined;
+    };
+    const tool = v1Tools({ harness, client: input?.client, agentOf: (session) => sessions.get(session), activity, helpers });
     return {
       async config(config) {
         try {
@@ -1054,9 +1404,47 @@ function createServer(harness, options = {}) {
           reporter.internal("the config hook", error);
         }
       },
+      tool,
+      async event(input) {
+        try {
+          const event = input?.event;
+          if (event?.type === "session.created") {
+            const info = event.properties?.info;
+            if (typeof info?.id === "string")
+              sessions.setChild(info.id, typeof info.parentID === "string" && info.parentID !== "");
+          } else if (event?.type === "session.error") {
+            activity.end(event.properties?.sessionID, "failed");
+          }
+        } catch (error) {
+          reporter.internal("the event hook", error);
+        }
+      },
       async "chat.message"(message, output) {
         try {
-          sessions.set(message?.sessionID, output?.message?.agent ?? message?.agent);
+          const session = message?.sessionID;
+          const target = output?.message;
+          if (typeof session === "string" && target !== undefined && target !== null) {
+            let helper = sessions.get(session);
+            if (sessions.isChild(session) === undefined) {
+              try {
+                await fetchSession(session);
+                if (sessions.isChild(session) === true && (helper === undefined || !helpers.has(helper))) {
+                  const owner = await ownerOfChild(session);
+                  if (owner !== undefined) {
+                    sessions.set(session, owner);
+                    helper = owner;
+                  }
+                }
+              } catch (error) {
+                reporter.internal("looking up a session", error);
+              }
+            }
+            if (helper !== undefined && helpers.has(helper) && sessions.isChild(session) === true) {
+              pinMessage(target, helper, plans.find((plan) => plan.id === helper));
+            }
+          }
+          activity.resume(session);
+          sessions.set(session, output?.message?.agent ?? message?.agent);
         } catch (error) {
           reporter.internal("the chat.message hook", error);
         }
@@ -1070,21 +1458,35 @@ function createServer(harness, options = {}) {
         }
       },
       async "tool.execute.before"(call, output) {
-        let block;
-        try {
-          if (call?.tool !== SHELL_TOOL)
+        let message;
+        if (HELPER_TOOL_IDS.includes(call?.tool)) {
+          try {
+            const agent = sessions.get(call.sessionID) ?? await lookup(call.sessionID);
+            message = toolCallBlock(harness, agent, call.tool);
+          } catch (error) {
+            reporter.internal("verifying the caller of a helper tool", error);
+            message = toolCallBlock(harness, undefined, call.tool);
+          }
+        } else if (call?.tool === SHELL_TOOL) {
+          try {
+            const command = output?.args?.command;
+            if (typeof command === "string") {
+              const agent = sessions.get(call.sessionID) ?? await lookup(call.sessionID);
+              message = checkShellCommand(harness, agent, command, platform)?.message;
+            }
+          } catch (error) {
+            reporter.internal("the shell guard", error);
             return;
-          const command = output?.args?.command;
-          if (typeof command !== "string")
-            return;
-          const agent = sessions.get(call.sessionID) ?? await lookup(call.sessionID);
-          block = checkShellCommand(harness, agent, command, platform);
-        } catch (error) {
-          reporter.internal("the shell guard", error);
-          return;
+          }
         }
-        if (block !== undefined)
-          throw new Error(block.message);
+        try {
+          if (message === undefined)
+            activity.observe(call?.sessionID, call?.tool, output?.args);
+        } catch (error) {
+          reporter.internal("recording a tool call", error);
+        }
+        if (message !== undefined)
+          throw new Error(message);
       },
       async "experimental.session.compacting"(compaction) {
         try {
@@ -1107,6 +1509,175 @@ function createServer(harness, options = {}) {
       }
     };
   };
+}
+
+// plugin/tools-v2.ts
+class SessionTracker {
+  sessions = new Map;
+  observe(envelope, now = Date.now()) {
+    if (typeof envelope?.type !== "string")
+      return;
+    const data = envelope.data;
+    const event = { ...envelope, ...data !== null && typeof data === "object" ? data : {}, type: envelope.type };
+    const id = event.sessionID;
+    if (typeof id !== "string" || id === "")
+      return;
+    switch (event.type) {
+      case "session.created": {
+        const created = {
+          id,
+          state: "unknown",
+          startedAt: now,
+          updatedAt: now,
+          ...typeof event.parentID === "string" ? { parentID: event.parentID } : {},
+          ...typeof event.agent === "string" ? { agent: event.agent } : {},
+          ...typeof event.title === "string" ? { title: event.title } : {}
+        };
+        remember(this.sessions, id, created);
+        return;
+      }
+      case "session.execution.started":
+        return this.update(id, "running", now);
+      case "session.execution.succeeded":
+        return this.update(id, "done", now);
+      case "session.execution.failed":
+        return this.update(id, "failed", now);
+      case "session.execution.interrupted":
+        return this.update(id, "stopped", now);
+      case "session.renamed":
+        if (typeof event.title === "string")
+          this.update(id, undefined, now, event.title);
+        return;
+      case "session.agent.selected":
+        if (typeof event.agent === "string") {
+          const session = this.sessions.get(id);
+          if (session !== undefined)
+            session.agent = event.agent;
+        }
+        return;
+      default:
+        return;
+    }
+  }
+  update(id, state, now, title) {
+    const session = this.sessions.get(id) ?? { id, state: "unknown", startedAt: now, updatedAt: now };
+    if (state !== undefined)
+      session.state = state;
+    if (title !== undefined)
+      session.title = title;
+    session.updatedAt = now;
+    remember(this.sessions, id, session);
+  }
+  get(id) {
+    return this.sessions.get(id);
+  }
+  complete(id, facts) {
+    const session = this.sessions.get(id);
+    if (session === undefined)
+      return;
+    if (session.parentID === undefined && facts.parentID !== undefined)
+      session.parentID = facts.parentID;
+    if (session.agent === undefined && facts.agent !== undefined)
+      session.agent = facts.agent;
+  }
+  children(parent) {
+    return [...this.sessions.values()].filter((session) => session.parentID === parent);
+  }
+}
+function sessionApi2(ctx) {
+  const api = ctx.session;
+  if (api?.get === undefined || api.prompt === undefined || api.interrupt === undefined) {
+    throw new Error("this opencode does not offer the session API the helper tools need");
+  }
+  return api;
+}
+function v2Tools(deps) {
+  const { harness, tracker, activity, helpers } = deps;
+  const stateOf = (session) => {
+    const record = activity.get(session.id);
+    return session.state === "running" && record?.ended !== undefined && record.at >= session.updatedAt ? record.ended : session.state;
+  };
+  const targetOf = async (id) => {
+    const tracked = tracker.get(id);
+    if (tracked !== undefined && tracked.parentID !== undefined && tracked.agent !== undefined) {
+      return { parentID: tracked.parentID, agent: tracked.agent, state: stateOf(tracked) };
+    }
+    const info = await sessionApi2(deps.ctx).get({ sessionID: id }).catch(() => {
+      return;
+    });
+    if (info === undefined || info === null)
+      return tracked === undefined ? undefined : { parentID: tracked.parentID, agent: tracked.agent ?? "helper", state: stateOf(tracked) };
+    const parentID = tracked?.parentID ?? info.parentID;
+    const agent = tracked?.agent ?? (typeof info.agent === "string" ? info.agent : "helper");
+    if (tracked !== undefined) {
+      tracker.complete(id, { parentID, agent });
+      return { parentID, agent, state: stateOf(tracked) };
+    }
+    return { parentID, agent, state: "unknown" };
+  };
+  const view = (session) => {
+    const record = activity.get(session.id);
+    return {
+      id: session.id,
+      agent: session.agent ?? "helper",
+      title: session.title ?? "",
+      state: stateOf(session),
+      steps: record?.steps ?? 0,
+      startedAt: session.startedAt,
+      updatedAt: session.updatedAt,
+      ...record?.lastTool === undefined ? {} : { lastTool: record.lastTool }
+    };
+  };
+  const define = (spec, run) => ({
+    name: spec.id,
+    description: spec.description,
+    input: { type: "object", properties: spec.args, required: Object.keys(spec.args), additionalProperties: false },
+    execute: async (input, context) => ({ content: await run(input ?? {}, context) }),
+    options: { codemode: false }
+  });
+  return [
+    define(TOOL_SPECS.status, async (_args, context) => formatStatus(tracker.children(context.sessionID).filter((child) => child.agent === undefined || helpers.has(child.agent)).map(view))),
+    define(TOOL_SPECS.steer, async (args, context) => {
+      const id = requiredText(args, "id");
+      const message = requiredText(args, "text");
+      const target = await targetOf(id);
+      const problem = targetProblem(target, id, context.sessionID, helpers);
+      if (problem !== undefined)
+        return problem;
+      const { agent, state } = target;
+      const continuation = `sessionID: ${JSON.stringify(id)}`;
+      if (state === "unknown")
+        return unknownStateResult(agent, id, continuation);
+      if (state !== "running")
+        return notRunningResult(agent, id, continuation);
+      await sessionApi2(deps.ctx).prompt({ sessionID: id, text: steerText(message, harness.defaultAgent), delivery: "steer" });
+      return steeredResult(agent, id);
+    }),
+    define(TOOL_SPECS.cancel, async (args, context) => {
+      const id = requiredText(args, "id");
+      const targets = [];
+      if (id === "all") {
+        for (const child of tracker.children(context.sessionID)) {
+          const agent = child.agent ?? "helper";
+          if (stateOf(child) === "running" && helpers.has(agent))
+            targets.push({ id: child.id, agent });
+        }
+      } else {
+        const target = await targetOf(id);
+        const problem = targetProblem(target, id, context.sessionID, helpers);
+        if (problem !== undefined)
+          return problem;
+        if (target.state !== "running")
+          return `${target.agent} ${id} is not running.`;
+        targets.push({ id, agent: target.agent });
+      }
+      for (const target of targets) {
+        await sessionApi2(deps.ctx).interrupt({ sessionID: target.id });
+        activity.end(target.id, "stopped");
+      }
+      return cancelledResult(targets);
+    })
+  ];
 }
 
 // plugin/v2.ts
@@ -1152,7 +1723,7 @@ class LateTransform {
     this.stopped = true;
   }
 }
-function watchActivations(ctx, onActivation, reporter, fallbackMs) {
+function watchEvents(ctx, onActivation, onEvent, reporter, fallbackMs) {
   const controller = new AbortController;
   let seen = false;
   const subscribe = ctx.event?.subscribe;
@@ -1161,14 +1732,20 @@ function watchActivations(ctx, onActivation, reporter, fallbackMs) {
       for await (const event of subscribe.call(ctx.event, { signal: controller.signal })) {
         if (controller.signal.aborted)
           return;
-        if (event?.type !== "plugin.updated")
+        if (event?.type === "plugin.updated") {
+          seen = true;
+          onActivation();
           continue;
-        seen = true;
-        onActivation();
+        }
+        try {
+          onEvent(event);
+        } catch (error) {
+          reporter.internal("reading an event", error);
+        }
       }
     })().catch((error) => {
       if (!controller.signal.aborted)
-        reporter.internal("watching plugin activations", error);
+        reporter.internal("watching events", error);
     });
   }
   const timer = setTimeout(() => {
@@ -1206,6 +1783,35 @@ function createSetup(harness, options = {}) {
           }
         });
       }
+      const helpers = helperIds(harness);
+      const tracker = new SessionTracker;
+      const activity = new Activity;
+      if (typeof ctx.tool?.transform === "function") {
+        const tools = v2Tools({ harness, ctx, tracker, activity, helpers });
+        await ctx.tool.transform((editor) => {
+          try {
+            for (const tool of tools)
+              editor.add(tool);
+          } catch (error) {
+            reporter.internal("the tool transform", error);
+          }
+        });
+      }
+      if (typeof ctx.tool?.hook === "function") {
+        await ctx.tool.hook("execute.before", (call) => {
+          let message;
+          try {
+            message = toolCallBlock(harness, call?.agent, call?.tool);
+            if (message === undefined)
+              activity.observe(call?.sessionID, call?.tool, call?.input);
+          } catch (error) {
+            reporter.internal("the tool guard", error);
+            return;
+          }
+          if (message !== undefined)
+            throw new Error(message);
+        });
+      }
       const late = new LateTransform(ctx, (editor) => {
         try {
           reporter.report(applyToV2Agents(editor, harness, settings, plans));
@@ -1213,7 +1819,7 @@ function createSetup(harness, options = {}) {
           reporter.internal("the agent transform", error);
         }
       }, reporter);
-      const stopWatching = watchActivations(ctx, () => void late.register(), reporter, options.fallbackMs ?? FALLBACK_MS);
+      const stopWatching = watchEvents(ctx, () => void late.register(), (event) => tracker.observe(event), reporter, options.fallbackMs ?? FALLBACK_MS);
       return async () => {
         stopWatching();
         late.stop();

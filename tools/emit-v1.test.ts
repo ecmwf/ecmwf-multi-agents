@@ -269,8 +269,9 @@ describe("emitV1", () => {
       external_directory: "external_directory",
       execute: null,
     });
-    const all = ACTIONS.map((action): Rule => ({ action, resource: "*", effect: "deny" }));
-    const mapped = ACTIONS.map((action) => V1_ACTIONS[action]).filter((key): key is string => key !== null);
+    const mappable = ACTIONS.filter((action): action is Exclude<Rule["action"], "tool"> => action !== "tool");
+    const all = mappable.map((action): Rule => ({ action, resource: "*", effect: "deny" }));
+    const mapped = mappable.map((action) => V1_ACTIONS[action]).filter((key): key is string => key !== null);
     expect(Object.keys(v1Permission(all))).toEqual(mapped);
     expect(file(files, "agents/builder.md").data.permission).toEqual({
       read: { "*.env": "deny" },
@@ -284,6 +285,17 @@ describe("emitV1", () => {
     });
   });
 
+
+  test("a tool rule becomes a flat key named by the tool id, one effect for the tool, last rule wins", () => {
+    expect(
+      v1Permission([
+        { action: "tool", resource: "helpers_status", effect: "deny" },
+        { action: "shell", resource: "ls *", effect: "allow" },
+        { action: "tool", resource: "helpers_steer", effect: "deny" },
+        { action: "tool", resource: "helpers_status", effect: "allow" },
+      ]),
+    ).toEqual({ bash: { "ls *": "allow" }, helpers_steer: "deny", helpers_status: "allow" });
+  });
   test("drops rules for actions opencode 1.x does not have", () => {
     const rules: Rule[] = [
       { action: "execute", resource: "*", effect: "deny" },
@@ -339,6 +351,7 @@ describe("emitV1", () => {
     ];
     for (const rules of lists) {
       const neutral = rules.flatMap((rule) => {
+        if (rule.action === "tool") return [{ permission: rule.resource, pattern: "*", action: rule.effect }];
         const permission = V1_ACTIONS[rule.action];
         return permission === null ? [] : [{ permission, pattern: rule.resource, action: rule.effect }];
       });

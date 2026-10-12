@@ -114,7 +114,9 @@ export async function runCase(item: EvalCase, options: RunOptions): Promise<RunR
     writeConfig(box, config);
     if (options.auth.kind === "link") linkAuth(box, options.auth.target);
 
-    const env = baseEnv({ OPENCODE_DISABLE_LSP_DOWNLOAD: "1", OPENCODE_DISABLE_SHARE: "1", ...options.env });
+    // A case may need a platform flag (the background cases on 1.x); the others, and the
+    // baseline, run opencode as people run it, so the numbers compare with earlier results.
+    const env = baseEnv({ OPENCODE_DISABLE_LSP_DOWNLOAD: "1", OPENCODE_DISABLE_SHARE: "1", ...item.env, ...options.env });
     const sessionModel = typeof config.model === "string" ? config.model : undefined;
     let sessions: SessionData[] = [];
     let failure: unknown;
@@ -170,6 +172,7 @@ export async function runCase(item: EvalCase, options: RunOptions): Promise<RunR
           errors,
           log,
           ...(options.pollMs ? { pollMs: options.pollMs } : {}),
+          ...(step.waitFor ? { waitFor: step.waitFor } : {}),
         });
         turnRecord.durationMs = Date.now() - turnStart;
         turnRecord.status = result.status;

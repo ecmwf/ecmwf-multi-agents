@@ -15,9 +15,9 @@
 
 import { withFrontmatter, type YamlValue } from "./frontmatter.ts";
 import type {
-  Action,
   AgentMode,
   Emitter,
+  MappedAction,
   OutputFile,
   ResolvedAgent,
   ResolvedCommand,
@@ -33,7 +33,7 @@ export const V2_VERSION = "2.0.16";
  * Neutral action to opencode 2.0.16 permission action. `null` means 2.0.16 has no such
  * action, so rules for it are left out and recorded as a frontmatter comment.
  */
-export const V2_ACTIONS: Readonly<Record<Action, string | null>> = {
+export const V2_ACTIONS: Readonly<Record<MappedAction, string | null>> = {
   read: "read",
   edit: "edit", // also covers the write and patch tools
   glob: "glob",
@@ -91,6 +91,11 @@ export interface V2Permissions {
 export function v2Permissions(rules: readonly Rule[]): V2Permissions {
   const out: V2Permissions = { rules: [], dropped: [] };
   for (const rule of rules) {
+    // A tool rule is keyed by the tool id, with the pattern "*" (the tool takes no resource).
+    if (rule.action === "tool") {
+      out.rules.push({ action: rule.resource, resource: "*", effect: rule.effect });
+      continue;
+    }
     const action = V2_ACTIONS[rule.action];
     if (action === null) out.dropped.push(rule);
     else out.rules.push({ action, resource: rule.resource, effect: rule.effect });

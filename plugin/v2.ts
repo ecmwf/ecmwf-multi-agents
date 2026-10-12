@@ -18,12 +18,19 @@
 //
 // The default agent is the opposite case: it is set by a transform registered during setup, so
 // opencode's loader, which runs later, applies a `default_agent` from a config file over it.
+//
+// The helper tools (tools-v2.ts) are added by a tool transform registered during setup, which
+// is enough: nothing later removes a tool another plugin added. The `execute.before` hook
+// refuses a helper's call to them and feeds the activity tracker; the event subscription feeds
+// the session tracker besides watching for activations.
 
 import { applyToV2Agents, planAgents, type AgentPlan } from "./apply.ts";
 import { processEnvironment } from "./environment.ts";
+import { Activity, helperIds, toolCallBlock } from "./helpers.ts";
 import { v2Reporter, type Reporter } from "./report.ts";
 import { loadSettings, mergeSettings } from "./settings.ts";
-import type { EmbeddedHarness, Environment, Settings, V2AgentEditor, V2Cleanup, V2Context, V2Registration } from "./types.ts";
+import { SessionTracker, v2Tools } from "./tools-v2.ts";
+import type { EmbeddedHarness, Environment, Settings, V2AgentEditor, V2Cleanup, V2Context, V2Event, V2Registration } from "./types.ts";
 
 /** Registers anyway when no `plugin.updated` arrives, in case the first one came before the subscription. */
 export const FALLBACK_MS = 3000;
@@ -75,7 +82,7 @@ class LateTransform {
   }
 }
 
-function watchActivations(ctx: V2Context, onActivation: () => void, reporter: Reporter, fallbackMs: number): () => void {
+function watchEvents(ctx: V2Context, onActivation: () => void, onEvent: (event: V2Event) => void, reporter: Reporter, fallbackMs: number): () => void {
   const controller = new AbortController();
   let seen = false;
   const subscribe = ctx.event?.subscribe;
@@ -83,12 +90,19 @@ function watchActivations(ctx: V2Context, onActivation: () => void, reporter: Re
     void (async () => {
       for await (const event of subscribe.call(ctx.event, { signal: controller.signal })) {
         if (controller.signal.aborted) return;
-        if (event?.type !== "plugin.updated") continue;
-        seen = true;
-        onActivation();
+        if (event?.type === "plugin.updated") {
+          seen = true;
+          onActivation();
+          continue;
+        }
+        try {
+          onEvent(event);
+        } catch (error) {
+          reporter.internal("reading an event", error);
+        }
       }
     })().catch((error: unknown) => {
-      if (!controller.signal.aborted) reporter.internal("watching plugin activations", error);
+      if (!controller.signal.aborted) reporter.internal("watching events", error);
     });
   }
   const timer = setTimeout(() => {
@@ -128,6 +142,35 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
         });
       }
 
+      const helpers = helperIds(harness);
+      const tracker = new SessionTracker();
+      const activity = new Activity();
+      if (typeof ctx.tool?.transform === "function") {
+        const tools = v2Tools({ harness, ctx, tracker, activity, helpers });
+        await ctx.tool.transform((editor) => {
+          try {
+            for (const tool of tools) editor.add(tool);
+          } catch (error) {
+            reporter.internal("the tool transform", error);
+          }
+        });
+      }
+      if (typeof ctx.tool?.hook === "function") {
+        await ctx.tool.hook("execute.before", (call) => {
+          let message: string | undefined;
+          try {
+            message = toolCallBlock(harness, call?.agent, call?.tool);
+            // A refused call is not a step the helper took.
+            if (message === undefined) activity.observe(call?.sessionID, call?.tool, call?.input);
+          } catch (error) {
+            reporter.internal("the tool guard", error);
+            return;
+          }
+          // The one deliberate throw: opencode refuses the call and tells the model why.
+          if (message !== undefined) throw new Error(message);
+        });
+      }
+
       const late = new LateTransform(
         ctx,
         (editor) => {
@@ -140,7 +183,7 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
         },
         reporter,
       );
-      const stopWatching = watchActivations(ctx, () => void late.register(), reporter, options.fallbackMs ?? FALLBACK_MS);
+      const stopWatching = watchEvents(ctx, () => void late.register(), (event) => tracker.observe(event), reporter, options.fallbackMs ?? FALLBACK_MS);
       return async () => {
         stopWatching();
         late.stop();

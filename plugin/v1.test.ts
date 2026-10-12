@@ -155,12 +155,22 @@ describe("v1 server", () => {
     expect(record.lookups).toEqual([]);
   });
 
-  test("an agent switch in a session is followed", async () => {
+  test("an agent switch is followed in the user's own session, and pinned back in a helper's child session", async () => {
     const hooks = await start({});
-    await hooks["chat.message"]({ sessionID: "s" }, { message: { agent: "builder" } });
-    expect(await shell(hooks, "s", "git push")).toBeDefined();
-    await hooks["chat.message"]({ sessionID: "s" }, { message: { agent: "lead" } });
-    expect(await shell(hooks, "s", "git push")).toBeUndefined();
+    // The user's session: lead first, a helper answering inline, lead again.
+    await hooks["chat.message"]({ sessionID: "own" }, { message: { agent: "lead" } });
+    await hooks["chat.message"]({ sessionID: "own" }, { message: { agent: "reviewer" } });
+    expect(await shell(hooks, "own", "git push")).toBeDefined();
+    await hooks["chat.message"]({ sessionID: "own" }, { message: { agent: "lead" } });
+    expect(await shell(hooks, "own", "git push")).toBeUndefined();
+    // A child session (announced by session.created): the builder first, then a message that
+    // names lead, which is pinned back.
+    await hooks.event({ event: { type: "session.created", properties: { info: { id: "child", parentID: "own" } } } });
+    await hooks["chat.message"]({ sessionID: "child" }, { message: { agent: "builder" } });
+    const pinned = { agent: "lead" };
+    await hooks["chat.message"]({ sessionID: "child" }, { message: pinned });
+    expect(pinned.agent).toBe("builder");
+    expect(await shell(hooks, "child", "git push")).toBeDefined();
   });
 
   test("an unknown session is looked up once through the client", async () => {
@@ -265,5 +275,253 @@ describe("v1 helper requests in the user's session", () => {
     await hooks["experimental.chat.messages.transform"]({}, { messages: [null, undefined] as never });
     await hooks["experimental.session.compacting"](null as never, null);
     expect(record.logs.filter((log) => log.level === "error")).toEqual([]);
+  });
+});
+
+describe("v1 helper tools, guard and pinning", () => {
+  interface Fake {
+    client: V1Client;
+    sessions: Record<string, { agent?: string; parentID?: string; title?: string; created?: number }>;
+    busy: Set<string>;
+    prompts: Array<{ id: string; agent?: string; text: string }>;
+    aborts: string[];
+  }
+
+  function fake(): Fake {
+    const state: Fake = {
+      sessions: {
+        root: { agent: "lead" },
+        c1: { agent: "scout", parentID: "root", title: "find X", created: 1_000 },
+        c2: { agent: "builder", parentID: "root", title: "fix Y", created: 2_000 },
+        other: { agent: "scout", parentID: "elsewhere" },
+        general: { agent: "general", parentID: "root", title: "not ours", created: 3_000 },
+      },
+      busy: new Set(["c1", "c2", "general"]),
+      prompts: [],
+      aborts: [],
+      client: {
+        session: {
+          get: async ({ path }) => ({ data: state.sessions[path.id] === undefined ? null : { id: path.id, ...state.sessions[path.id] } }),
+          children: async ({ path }) => ({
+            data: Object.entries(state.sessions)
+              .filter(([, info]) => info.parentID === path.id)
+              .map(([id, info]) => ({ id, agent: info.agent, title: info.title, time: { created: info.created } })),
+          }),
+          status: async () => ({ data: Object.fromEntries([...state.busy].map((id) => [id, { type: "busy" }])) }),
+          promptAsync: async ({ path, body }) => {
+            state.prompts.push({ id: path.id, agent: body.agent, text: body.parts[0]!.text });
+            return {};
+          },
+          abort: async ({ path }) => {
+            state.busy.delete(path.id);
+            state.aborts.push(path.id);
+            return {};
+          },
+        },
+      },
+    };
+    return state;
+  }
+
+  async function hooksWith(state: Fake): Promise<V1Hooks> {
+    const plugin = createPlugin(harness, { environment: () => fakeEnvironment({}), schedule: (run) => run() });
+    return plugin.server({ client: state.client, directory: "/repo", worktree: "/repo" });
+  }
+
+  /** opencode announces a session: `session.created` with the parent, if any. */
+  const created = (hooks: V1Hooks, id: string, parentID?: string) => hooks.event({ event: { type: "session.created", properties: { info: { id, ...(parentID ? { parentID } : {}) } } } });
+
+  test("the tool hook offers the three tools", async () => {
+    const hooks = await hooksWith(fake());
+    expect(Object.keys(hooks.tool)).toEqual(["helpers_status", "helpers_steer", "helpers_cancel"]);
+    expect(hooks.tool.helpers_steer!.args.id!.type).toBe("string");
+  });
+
+  test("helpers_status lists the children of the caller's session with their activity", async () => {
+    const state = fake();
+    const hooks = await hooksWith(state);
+    await hooks["tool.execute.before"]({ tool: "grep", sessionID: "c1" }, { args: { pattern: "foo" } });
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID: "c1" }, { args: { command: "git log" } });
+    const text = await hooks.tool.helpers_status!.execute({}, { sessionID: "root", agent: "lead" });
+    const lines = text.split("\n");
+    // The general child is not a harness helper and is left out, as cancel leaves it alone.
+    expect(lines[0]).toBe("2 helpers in this session, newest first:");
+    expect(lines[1]).toMatch(/^c2, builder, running, 0 steps, \d+[smh].*: fix Y$/);
+    expect(lines[2]).toMatch(/^c1, scout, running, 2 steps, .*: find X; last: bash: git log$/);
+    expect(text).not.toContain("general");
+    expect(await hooks.tool.helpers_status!.execute({}, { sessionID: "lonely", agent: "lead" })).toBe("No helpers in this session.");
+  });
+
+  test("helpers_steer sends the amendment to a running child as its own agent", async () => {
+    const state = fake();
+    const hooks = await hooksWith(state);
+    const steer = hooks.tool.helpers_steer!;
+    expect(await steer.execute({ id: "c1", text: " skip the tests " }, { sessionID: "root", agent: "lead" })).toContain("Sent to scout c1");
+    expect(state.prompts).toEqual([{ id: "c1", agent: "scout", text: "lead amends your brief:\nskip the tests" }]);
+    expect(await steer.execute({ id: "other", text: "x" }, { sessionID: "root", agent: "lead" })).toBe("other is not a helper of this session.");
+    expect(await steer.execute({ id: "nope", text: "x" }, { sessionID: "root", agent: "lead" })).toContain('No session "nope"');
+    state.busy.delete("c1");
+    expect(await steer.execute({ id: "c1", text: "x" }, { sessionID: "root", agent: "lead" })).toContain('task_id: "c1"');
+    expect(state.prompts).toHaveLength(1);
+    await expect(steer.execute({ id: "c1", text: "  " }, { sessionID: "root", agent: "lead" })).rejects.toThrow("text must be a non-empty string");
+  });
+
+  test("helpers_cancel aborts one child or all running children and remembers them as stopped", async () => {
+    const state = fake();
+    const hooks = await hooksWith(state);
+    const cancel = hooks.tool.helpers_cancel!;
+    expect(await cancel.execute({ id: "c1" }, { sessionID: "root", agent: "lead" })).toStartWith("Stopped scout c1.");
+    expect(await cancel.execute({ id: "c1" }, { sessionID: "root", agent: "lead" })).toBe("scout c1 is not running.");
+    // "all" stops the harness's helpers only; the general child is not ours to stop.
+    expect(await cancel.execute({ id: "all" }, { sessionID: "root", agent: "lead" })).toStartWith("Stopped builder c2.");
+    expect(await cancel.execute({ id: "all" }, { sessionID: "root", agent: "lead" })).toBe("No running helper to stop.");
+    expect(await cancel.execute({ id: "general" }, { sessionID: "root", agent: "lead" })).toBe("general is not a harness helper (its agent is general).");
+    expect(state.aborts).toEqual(["c1", "c2"]);
+    const status = await hooks.tool.helpers_status!.execute({}, { sessionID: "root", agent: "lead" });
+    expect(status).toContain("c1, scout, stopped");
+    expect(status).toContain("c2, builder, stopped");
+  });
+
+  test("the guard refuses a helper's call to the tools, looking the agent up when unseen", async () => {
+    const state = fake();
+    const hooks = await hooksWith(state);
+    await expect(hooks["tool.execute.before"]({ tool: "helpers_cancel", sessionID: "c2" }, { args: { id: "c1" } })).rejects.toThrow("helpers may not use helpers_cancel");
+    await hooks["tool.execute.before"]({ tool: "helpers_status", sessionID: "root" }, { args: {} });
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID: "c2" }, { args: { command: "ls" } });
+  });
+
+  test("a helper tool call whose caller cannot be verified is refused, not let through", async () => {
+    const state = fake();
+    state.client.session!.get = async () => {
+      throw new Error("server away");
+    };
+    const hooks = await hooksWith(state);
+    await expect(hooks["tool.execute.before"]({ tool: "helpers_steer", sessionID: "unseen" }, { args: {} })).rejects.toThrow("an unknown agent may not use helpers_steer");
+    // The shell guard keeps its earlier behaviour: a failed lookup is reported and the call goes on.
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID: "unseen" }, { args: { command: "git push" } });
+  });
+
+  test("a child announced by session.created is pinned even when the server is unreachable", async () => {
+    const state = fake();
+    state.client.session!.get = async () => {
+      throw new Error("server away");
+    };
+    const hooks = await hooksWith(state);
+    await created(hooks, "c9", "root");
+    await hooks["chat.message"]({ sessionID: "c9", agent: "scout" }, { message: { agent: "scout" } });
+    const fromTui = { agent: "lead", model: { providerID: "anthropic", modelID: "claude-opus-5-5", variant: "xhigh" } };
+    await hooks["chat.message"]({ sessionID: "c9", agent: "lead" }, { message: fromTui });
+    expect(fromTui).toEqual({ agent: "scout", model: { providerID: "anthropic", modelID: "claude-sonnet-5-5", variant: "medium" } });
+  });
+
+  test("a session that starts with /review stays the user's: the next message goes back to lead", async () => {
+    const state = fake();
+    const hooks = await hooksWith(state);
+    // A root session: session.created without a parent, then the reviewer answering inline first.
+    await created(hooks, "fresh");
+    await hooks["chat.message"]({ sessionID: "fresh", agent: "reviewer" }, { message: { agent: "reviewer" } });
+    await hooks["chat.params"]({ sessionID: "fresh", agent: "reviewer" }, {});
+    const next = { agent: "lead", model: { providerID: "anthropic", modelID: "claude-opus-5-5", variant: "xhigh" } };
+    await hooks["chat.message"]({ sessionID: "fresh", agent: "lead" }, { message: next });
+    expect(next).toEqual({ agent: "lead", model: { providerID: "anthropic", modelID: "claude-opus-5-5", variant: "xhigh" } });
+    expect(await shell(hooks, "fresh", "git push")).toBeUndefined();
+    // The same without any event: the server says the session has no parent.
+    await hooks["chat.message"]({ sessionID: "root", agent: "reviewer" }, { message: { agent: "reviewer" } });
+    const again = { agent: "lead" };
+    await hooks["chat.message"]({ sessionID: "root", agent: "lead" }, { message: again });
+    expect(again.agent).toBe("lead");
+  });
+
+  test("when the parent cannot be known, nothing is pinned", async () => {
+    const state = fake();
+    state.client.session!.get = async () => {
+      throw new Error("server away");
+    };
+    const hooks = await hooksWith(state);
+    await hooks["chat.message"]({ sessionID: "mystery", agent: "scout" }, { message: { agent: "scout" } });
+    const next = { agent: "lead" };
+    await hooks["chat.message"]({ sessionID: "mystery", agent: "lead" }, { message: next });
+    expect(next.agent).toBe("lead");
+  });
+
+  test("a child created before the plugin started is pinned to the agent of its first message, after the server confirms the parent", async () => {
+    const state = fake();
+    // No session.created was seen. The server record already names the sender, lead; the history
+    // still starts with the builder.
+    state.sessions.c2!.agent = "lead";
+    state.client.session!.messages = async ({ path }) => ({
+      data: path.id === "c2" ? [{ info: { role: "user", agent: "builder" } }, { info: { role: "assistant", agent: "builder" } }] : [],
+    });
+    const hooks = await hooksWith(state);
+    const fromTui = { agent: "lead", model: { providerID: "anthropic", modelID: "claude-opus-5-5", variant: "xhigh" } };
+    await hooks["chat.message"]({ sessionID: "c2", agent: "lead" }, { message: fromTui });
+    expect(fromTui).toEqual({ agent: "builder", model: { providerID: "anthropic", modelID: "claude-sonnet-5-5", variant: "high" } });
+    // From then on the session is the builder's for the tools and the guard.
+    expect(await hooks.tool.helpers_status!.execute({}, { sessionID: "root", agent: "lead" })).toContain("c2, builder, running");
+    await expect(hooks["tool.execute.before"]({ tool: "helpers_steer", sessionID: "c2" }, { args: {} })).rejects.toThrow("helpers may not use");
+    // The user's own session, first seen mid-run, is left alone: the server says it has no parent.
+    const own = { agent: "lead" };
+    await hooks["chat.message"]({ sessionID: "root", agent: "lead" }, { message: own });
+    expect(own.agent).toBe("lead");
+  });
+
+  test("a continued helper no longer shows its earlier stop or failure", async () => {
+    const state = fake();
+    const hooks = await hooksWith(state);
+    expect(await hooks.tool.helpers_cancel!.execute({ id: "c1" }, { sessionID: "root", agent: "lead" })).toStartWith("Stopped scout c1.");
+    expect(await hooks.tool.helpers_status!.execute({}, { sessionID: "root", agent: "lead" })).toContain("c1, scout, stopped");
+    // lead continues it with task_id; the new message starts a new run that answers without a tool call.
+    await hooks["chat.message"]({ sessionID: "c1", agent: "scout" }, { message: { agent: "scout" } });
+    expect(await hooks.tool.helpers_status!.execute({}, { sessionID: "root", agent: "lead" })).toContain("c1, scout, idle");
+  });
+
+  test("a message that names another agent in a helper's child session is pinned to the helper; the user's own session is left alone", async () => {
+    const state = fake();
+    const hooks = await hooksWith(state);
+    await created(hooks, "c2", "root");
+    await hooks["chat.message"]({ sessionID: "c2", agent: "builder" }, { message: { agent: "builder", model: { providerID: "anthropic", modelID: "claude-sonnet-5-5", variant: "high" } } });
+    const fromTui = { agent: "lead", model: { providerID: "anthropic", modelID: "claude-opus-5-5", variant: "xhigh" } };
+    await hooks["chat.message"]({ sessionID: "c2", agent: "lead" }, { message: fromTui });
+    expect(fromTui).toEqual({ agent: "builder", model: { providerID: "anthropic", modelID: "claude-sonnet-5-5", variant: "high" } });
+    // A message that names the helper but another model or effort is pinned too.
+    const sameAgent = { agent: "builder", model: { providerID: "anthropic", modelID: "claude-opus-5-5", variant: "max" } };
+    await hooks["chat.message"]({ sessionID: "c2", agent: "builder" }, { message: sameAgent });
+    expect(sameAgent.model).toEqual({ providerID: "anthropic", modelID: "claude-sonnet-5-5", variant: "high" });
+    // The reviewer answered inline in the root session; the next message there is lead's.
+    await hooks["chat.params"]({ sessionID: "root", agent: "reviewer" }, {});
+    const next = { agent: "lead", model: { providerID: "anthropic", modelID: "claude-opus-5-5", variant: "xhigh" } };
+    await hooks["chat.message"]({ sessionID: "root", agent: "lead" }, { message: next });
+    expect(next.agent).toBe("lead");
+    // After the pin, the session is known as the helper's again.
+    await expect(hooks["tool.execute.before"]({ tool: "helpers_steer", sessionID: "c2" }, { args: {} })).rejects.toThrow("helpers may not use");
+  });
+
+  test("after a pin the server's record names the sender, but the tools still treat the session as the helper's", async () => {
+    const state = fake();
+    const hooks = await hooksWith(state);
+    await created(hooks, "c2", "root");
+    await hooks["chat.message"]({ sessionID: "c2", agent: "builder" }, { message: { agent: "builder" } });
+    // opencode updates the record before the hook runs, so it says lead from now on.
+    state.sessions.c2!.agent = "lead";
+    await hooks["chat.message"]({ sessionID: "c2", agent: "lead" }, { message: { agent: "lead" } });
+    expect(await hooks.tool.helpers_status!.execute({}, { sessionID: "root", agent: "lead" })).toContain("c2, builder, running");
+    expect(await hooks.tool.helpers_steer!.execute({ id: "c2", text: "x" }, { sessionID: "root", agent: "lead" })).toContain("Sent to builder c2");
+    expect(state.prompts.at(-1)?.agent).toBe("builder");
+    expect(await hooks.tool.helpers_cancel!.execute({ id: "c2" }, { sessionID: "root", agent: "lead" })).toStartWith("Stopped builder c2.");
+    // A lookup for an unseen session fills the record in; it never replaces a known one.
+    expect(await hooks.tool.helpers_steer!.execute({ id: "c1", text: "x" }, { sessionID: "root", agent: "lead" })).toContain("Sent to scout c1");
+  });
+
+  test("a helper that is no longer busy is idle, failed after a session.error, or stopped after a cancel; never assumed done", async () => {
+    const state = fake();
+    const hooks = await hooksWith(state);
+    state.busy.delete("c1");
+    state.busy.delete("c2");
+    await hooks.event({ event: { type: "session.error", properties: { sessionID: "c2" } } });
+    await hooks.event({ event: { type: "session.idle", properties: { sessionID: "c1" } } });
+    await hooks.event({});
+    const status = await hooks.tool.helpers_status!.execute({}, { sessionID: "root", agent: "lead" });
+    expect(status).toContain("c1, scout, idle");
+    expect(status).toContain("c2, builder, failed");
   });
 });

@@ -65,6 +65,14 @@ Profiles give each agent a model and an effort:
 - `copilot`: GitHub Copilot only.
 - `inherit`: every agent uses the model you pick in the session.
 
+## Helpers in the background
+
+`lead` usually waits for a helper. When it has other work meanwhile, or you may want to keep talking, it hands off in the background and the helper's report arrives later as a message in your conversation. If `lead` is waiting on a helper and you want it back, press Ctrl+B (opencode 1.x; it acts only while `lead` waits on a helper) to move the hand-off to the background.
+
+If a helper is doing something you do not want, tell `lead`: "redirect the scout: stay in src/" or "stop the builder". `lead` can list its helpers, send one an amendment that it reads at its next step while keeping what it has read so far, or stop one. You can also open the helper's own session and type to it. A stopped helper reports nothing; its changes stay on disk.
+
+On opencode 1.x, background hand-offs need `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` in the environment before opencode starts; `./install.sh doctor` checks it. Without it `lead` waits for every helper.
+
 ## Work files
 
 Plans, scout notes and the onboarding summary live in `.ecmwf-multi-agents/` at the top of the repository, kept out of git by `.git/info/exclude`.

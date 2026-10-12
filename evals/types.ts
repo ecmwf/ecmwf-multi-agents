@@ -40,6 +40,11 @@ export interface TurnStep {
   newSession?: boolean;
   /** Run this turn only when the condition holds after the earlier turns. */
   when?: (state: TurnState) => boolean;
+  /**
+   * What must be idle before the turn counts as finished: the whole session tree (default), or
+   * only the root session, so the next turn reaches lead while a background helper still runs.
+   */
+  waitFor?: "tree" | "root";
   /** Why the turn exists, for the record. */
   note?: string;
 }
@@ -289,6 +294,8 @@ export interface EvalCase {
   review?: ReviewPolicy;
   /** Changes to the default answering policy. */
   answering?: Partial<AnsweringPolicy>;
+  /** Extra environment for opencode in this case only, such as a platform flag the case needs. */
+  env?: Record<string, string>;
   checks: Check[];
   /** Whether the case also runs on plain opencode with its build agent. */
   baseline: boolean;
