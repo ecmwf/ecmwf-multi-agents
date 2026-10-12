@@ -298,15 +298,15 @@ Tasks, in order; **(par)** marks what can run side by side once 7a is done:
 
 7c. Plugin
 
-- [ ] Samet: **(par)** `helpers_status`, `helpers_steer`, `helpers_cancel` registered through
+- [~] Samet: **(par)** `helpers_status`, `helpers_steer`, `helpers_cancel` registered through
   the plugin `tool` hook on both platforms, with the client calls per platform (1.x:
   `session.children`, `session.status`, `session.messages`, `session.prompt_async` with the
   child's agent, model and variant, `session.abort`; 2.0.16: `GET /api/session` by parent,
   `prompt` with `delivery: steer`, `interrupt`); refuse a target that is not a helper child
   of the caller's session; output of `helpers_status` at most twelve lines
-- [ ] Samet: **(par)** Guard: helpers denied the three tools in `tool.execute.before` whatever
+- [~] Samet: **(par)** Guard: helpers denied the three tools in `tool.execute.before` whatever
   was approved, like the shell guard; unit tests
-- [ ] Samet: 1.x child pinning in `chat.message`; test that the isolation hook leaves a
+- [~] Samet: 1.x child pinning in `chat.message`; test that the isolation hook leaves a
   steered child session alone and that `/review` in the user's session is unaffected; decide
   from the 7a check what to do with a wake that lands during an inline `/review` (hold it,
   or tell `lead` not to start background work before a `/review`)
