@@ -92,7 +92,7 @@ export class SessionTracker {
     if (state !== undefined) session.state = state;
     if (title !== undefined) session.title = title;
     session.updatedAt = now;
-    this.sessions.set(id, session);
+    remember(this.sessions, id, session);
   }
 
   get(id: string): TrackedSession | undefined {
@@ -125,23 +125,29 @@ function sessionApi(ctx: V2Context): SessionApi {
 /** The v2 tool definitions; `editor.add` takes each as it is. */
 export function v2Tools(deps: V2ToolDeps): V2ToolInfo[] {
   const { harness, tracker, activity, helpers } = deps;
+  /**
+   * A session's state: the stream's, except that a cancel the plugin made counts at once, before
+   * the stream's interrupted event arrives.
+   */
+  const stateOf = (session: TrackedSession): HelperState => {
+    const record = activity.get(session.id);
+    return session.state === "running" && record?.ended !== undefined && record.at >= session.updatedAt ? record.ended : session.state;
+  };
   /** The target as the tracker knows it, else as the server describes it (state unknown then). */
   const targetOf = async (id: string): Promise<(TargetSession & { state: HelperState }) | undefined> => {
     const tracked = tracker.get(id);
-    if (tracked !== undefined) return { parentID: tracked.parentID, agent: tracked.agent ?? "helper", state: tracked.state };
+    if (tracked !== undefined) return { parentID: tracked.parentID, agent: tracked.agent ?? "helper", state: stateOf(tracked) };
     const info = await sessionApi(deps.ctx).get({ sessionID: id }).catch(() => undefined);
     if (info === undefined || info === null) return undefined;
     return { parentID: info.parentID, agent: typeof info.agent === "string" ? info.agent : "helper", state: "unknown" };
   };
-  const view = (session: { id: string; agent?: string; title?: string; state: HelperState; startedAt: number; updatedAt: number }): HelperView => {
+  const view = (session: TrackedSession): HelperView => {
     const record = activity.get(session.id);
-    // A cancel the plugin made counts at once; the stream's interrupted event follows.
-    const state = session.state === "running" && record?.ended !== undefined && record.at >= session.updatedAt ? record.ended : session.state;
     return {
       id: session.id,
       agent: session.agent ?? "helper",
       title: session.title ?? "",
-      state,
+      state: stateOf(session),
       steps: record?.steps ?? 0,
       startedAt: session.startedAt,
       updatedAt: session.updatedAt,
@@ -181,7 +187,7 @@ export function v2Tools(deps: V2ToolDeps): V2ToolInfo[] {
         // Only the harness's own helpers; a child of another kind is left to its owner.
         for (const child of tracker.children(context.sessionID)) {
           const agent = child.agent ?? "helper";
-          if (child.state === "running" && helpers.has(agent)) targets.push({ id: child.id, agent });
+          if (stateOf(child) === "running" && helpers.has(agent)) targets.push({ id: child.id, agent });
         }
       } else {
         const target = await targetOf(id);

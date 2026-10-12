@@ -574,7 +574,7 @@ for (const bin of v1Bins) {
         // still know the session as the builder's.
         expect((await pluginApi<{ agent?: string }>("GET", `/session/${target.id}`)).agent).toBe("lead");
         await tell(session, `STATUS ${tag}`);
-        expect((await toolPart(session, HELPER_TOOLS.status)).state?.output).toContain(`${target.id}, builder, done`);
+        expect((await toolPart(session, HELPER_TOOLS.status)).state?.output).toContain(`${target.id}, builder, idle`);
       }, 120_000);
     });
   });

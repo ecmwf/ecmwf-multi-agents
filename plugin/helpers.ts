@@ -31,9 +31,9 @@ export const TOOL_SPECS: Record<keyof typeof HELPER_TOOLS, ToolSpec> = {
   status: {
     id: HELPER_TOOLS.status,
     description:
-      "Your helpers in this session: id, agent, state, steps taken, time running, what they were asked, " +
-      "last tool call. Use it when the user asks about a helper or before you redirect one. " +
-      "Never use it to wait: you are told when a background helper finishes.",
+      "Your helpers in this session: id, agent, state (running, idle, done, failed, stopped), steps taken, " +
+      "time running, what they were asked, last tool call. Use it when the user asks about a helper or " +
+      "before you redirect one. Never use it to wait: you are told when a background helper finishes.",
     args: {},
   },
   steer: {
@@ -91,7 +91,12 @@ export function remember<V>(map: Map<string, V>, key: string, value: V, max: num
 // ---------------------------------------------------------------------------------------------
 // Activity: what the plugin learns from the tool hooks about each session.
 
-export type HelperState = "running" | "done" | "failed" | "stopped" | "unknown";
+/**
+ * running: work in progress. idle: not running, and the plugin saw no failure or cancel; its
+ * report, if any, is in lead's conversation. failed, stopped: as the plugin saw. unknown: the
+ * plugin has no record of the session at all.
+ */
+export type HelperState = "running" | "idle" | "done" | "failed" | "stopped" | "unknown";
 
 export interface ActivityRecord {
   steps: number;
@@ -100,7 +105,7 @@ export interface ActivityRecord {
   /** When the last call was seen. */
   at: number;
   /** Set by the platform entry when it learns how a run ended. */
-  ended?: Exclude<HelperState, "running" | "unknown">;
+  ended?: Exclude<HelperState, "running" | "idle" | "unknown">;
 }
 
 /** Tool calls per session, fed by the tool hooks; enough for a status line, no more. */
@@ -132,29 +137,46 @@ export class Activity {
   }
 }
 
-// Values that look like secrets in a command or query: assignments and flags of keys named like
-// one, bearer tokens, and long opaque strings. Replaced before the text reaches lead's context.
-const SECRET_PATTERNS: Array<[RegExp, string]> = [
-  [/\b(bearer\s+)[A-Za-z0-9._~+/=-]+/gi, "$1[redacted]"],
-  [/\b((?:api[_-]?)?(?:key|token|secret|password|passwd|pwd|auth)[a-z0-9_-]*)(\s*[=:]\s*|\s+)(["']?)(?!bearer\b|\[redacted\])([^\s"']+)\3/gi, "$1$2$3[redacted]$3"],
-  [/\b(?=[A-Za-z0-9_-]*[0-9])(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{32,}\b/g, "[redacted]"],
-];
+// Programs whose first argument says what the command does (`git log`, `make check`).
+const SUBCOMMAND_PROGRAMS = new Set(["git", "gh", "make", "npm", "bun", "pip", "pip3", "cargo", "docker", "kubectl", "conda", "uv", "poetry"]);
 
-/** `text` with anything that looks like a secret replaced. */
-export function redact(text: string): string {
-  let out = text;
-  for (const [pattern, replacement] of SECRET_PATTERNS) out = out.replace(pattern, replacement);
-  return out;
+/**
+ * The head of a shell command: the program and, for a few programs, its subcommand. Arguments
+ * are left out on purpose: a command line can carry a password or a token (`curl -u`, `-H
+ * Authorization`), and the status line goes into lead's context.
+ */
+export function commandHead(command: string): string {
+  const words = command.replace(/\s+/g, " ").trim().split(" ").filter((word) => word !== "" && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word));
+  const program = words[0];
+  if (program === undefined) return "";
+  if (program === "python3" || program === "python") return words[1] === "-m" && words[2] !== undefined ? `${program} -m ${words[2]}` : program;
+  const subcommand = words[1];
+  return SUBCOMMAND_PROGRAMS.has(program) && subcommand !== undefined && !subcommand.startsWith("-") ? `${program} ${subcommand}` : program;
 }
 
-/** `tool: the input's command, pattern or path`, shortened and with secrets removed. */
+/** A URL without its user information, query and fragment, which may carry tokens. */
+function urlHead(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return url.split(/[?#@]/, 1)[0] ?? url;
+  }
+}
+
+/**
+ * `tool: what it was asked`, short, from fields that cannot carry a secret: a command's head,
+ * a path, a URL without its query, or the model's own description. Patterns, queries and
+ * prompts are left out.
+ */
 export function summarizeCall(tool: string, input: unknown): string {
   const args = input !== null && typeof input === "object" ? (input as Record<string, unknown>) : {};
-  const detail = ["command", "pattern", "filePath", "path", "url", "query", "description", "prompt"]
-    .map((key) => args[key])
-    .find((value): value is string => typeof value === "string" && value.trim() !== "");
-  if (detail === undefined) return tool;
-  const flat = redact(detail.replace(/\s+/g, " ").trim());
+  const text = (key: string) => (typeof args[key] === "string" && (args[key] as string).trim() !== "" ? (args[key] as string) : undefined);
+  const command = text("command");
+  const url = text("url");
+  const detail = command !== undefined ? commandHead(command) : url !== undefined ? urlHead(url) : (text("filePath") ?? text("path") ?? text("description"));
+  if (detail === undefined || detail === "") return tool;
+  const flat = detail.replace(/\s+/g, " ").trim();
   return `${tool}: ${flat.length > SUMMARY_LENGTH ? `${flat.slice(0, SUMMARY_LENGTH - 3)}...` : flat}`;
 }
 
@@ -190,7 +212,8 @@ export function formatStatus(helpers: readonly HelperView[], now: number = Date.
       `${helper.steps} ${helper.steps === 1 ? "step" : "steps"}`,
       helper.startedAt === undefined ? undefined : elapsed(end - helper.startedAt),
     ].filter((part): part is string => part !== undefined);
-    const tail = [helper.title.trim() === "" ? undefined : helper.title.trim(), helper.lastTool === undefined ? undefined : `last: ${helper.lastTool}`]
+    const title = helper.title.replace(/\s+/g, " ").trim();
+    const tail = [title === "" ? undefined : title, helper.lastTool === undefined ? undefined : `last: ${helper.lastTool}`]
       .filter((part): part is string => part !== undefined)
       .join("; ");
     lines.push(`${parts.join(", ")}${tail === "" ? "" : `: ${tail}`}`);

@@ -530,7 +530,7 @@ BACKGROUND_FLAG=OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS
 # v1.18.35), an explicit value wins; OPENCODE_EXPERIMENTAL counts only when the flag is unset.
 # The variable is read by name here: it must stay the one BACKGROUND_FLAG names.
 background_enabled() {
-	if [ -n "${OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS-}" ]; then
+	if [ "${OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS+set}" = set ]; then
 		background_value=$OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS
 	else
 		background_value=${OPENCODE_EXPERIMENTAL-}

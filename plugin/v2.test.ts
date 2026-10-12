@@ -321,6 +321,10 @@ describe("v2 helper tools and guard", () => {
     expect(await host.call("helpers_cancel", { id: "all" }, { sessionID: "root", agent: "lead" })).toStartWith("Stopped scout c1.");
     expect(host.interrupts).toEqual(["c1"]);
     expect(await host.call("helpers_status", {}, { sessionID: "root", agent: "lead" })).toContain("c1, scout, stopped");
+    // Before the stream's interrupted event arrives, a second cancel or a steer sees the stop too.
+    expect(await host.call("helpers_cancel", { id: "c1" }, { sessionID: "root", agent: "lead" })).toBe("scout c1 is not running.");
+    expect(await host.call("helpers_steer", { id: "c1", text: "x" }, { sessionID: "root", agent: "lead" })).toContain("not running");
+    expect(host.interrupts).toEqual(["c1"]);
   });
 
   test("a session the stream did not announce is looked up through the session API; its state is unknown", async () => {

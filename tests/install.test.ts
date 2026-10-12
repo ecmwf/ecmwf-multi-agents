@@ -467,6 +467,8 @@ describe("background helpers on opencode 1.x", () => {
     // An explicit value wins over the blanket flag, as it does in opencode.
     expect(run(box, ["doctor"], box.dir, { [FLAG]: "false", OPENCODE_EXPERIMENTAL: "true" }).out).toContain("WARN  background helpers are off");
     expect(run(box, ["doctor"], box.dir, { [FLAG]: "on" }).out).toContain("OK    background helpers are on");
+    // Set but empty is an explicit value too, and it is not true.
+    expect(run(box, ["doctor"], box.dir, { [FLAG]: "", OPENCODE_EXPERIMENTAL: "true" }).out).toContain("WARN  background helpers are off");
   });
 });
 

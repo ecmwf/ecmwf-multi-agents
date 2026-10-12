@@ -168,6 +168,8 @@ export interface V1PluginInput {
 export interface V1Hooks {
   config: (config: V1Config) => Promise<void>;
   tool: Record<string, V1ToolDefinition>;
+  /** Every server event; the plugin reads `session.error` to mark a helper's run as failed. */
+  event: (input: { event?: { type?: string; properties?: { sessionID?: string } } }) => Promise<void>;
   "chat.message": (
     input: { sessionID: string; agent?: string },
     output: { message?: { agent?: string; model?: { providerID?: string; modelID?: string; variant?: string } } },

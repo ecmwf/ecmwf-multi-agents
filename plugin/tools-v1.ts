@@ -80,7 +80,8 @@ export function v1Tools(deps: V1ToolDeps): Record<string, V1ToolDefinition> {
           id: item.id,
           agent: agentOf(item.id, item),
           title: typeof item.title === "string" ? item.title : "",
-          state: busy.has(item.id) ? "running" : (record?.ended ?? "done"),
+          // Not busy means idle, not finished well: the status API lists busy sessions only.
+          state: busy.has(item.id) ? "running" : (record?.ended ?? "idle"),
           steps: record?.steps ?? 0,
           startedAt: item.time?.created,
           updatedAt: record?.at ?? item.time?.updated,

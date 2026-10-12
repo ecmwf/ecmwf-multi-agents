@@ -406,4 +406,17 @@ describe("v1 helper tools, guard and pinning", () => {
     // A lookup for an unseen session fills the record in; it never replaces a known one.
     expect(await hooks.tool.helpers_steer!.execute({ id: "c1", text: "x" }, { sessionID: "root", agent: "lead" })).toContain("Sent to scout c1");
   });
+
+  test("a helper that is no longer busy is idle, failed after a session.error, or stopped after a cancel; never assumed done", async () => {
+    const state = fake();
+    const hooks = await hooksWith(state);
+    state.busy.delete("c1");
+    state.busy.delete("c2");
+    await hooks.event({ event: { type: "session.error", properties: { sessionID: "c2" } } });
+    await hooks.event({ event: { type: "session.idle", properties: { sessionID: "c1" } } });
+    await hooks.event({});
+    const status = await hooks.tool.helpers_status!.execute({}, { sessionID: "root", agent: "lead" });
+    expect(status).toContain("c1, scout, idle");
+    expect(status).toContain("c2, builder, failed");
+  });
 });

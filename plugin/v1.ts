@@ -154,6 +154,14 @@ export function createServer(harness: EmbeddedHarness, options: V1Options = {}) 
 
       tool,
 
+      async event(input) {
+        try {
+          if (input?.event?.type === "session.error") activity.end(input.event.properties?.sessionID, "failed");
+        } catch (error) {
+          reporter.internal("the event hook", error);
+        }
+      },
+
       async "chat.message"(message, output) {
         try {
           const session = message?.sessionID;

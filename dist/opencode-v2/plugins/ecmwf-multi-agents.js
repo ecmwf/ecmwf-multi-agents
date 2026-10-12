@@ -469,7 +469,7 @@ var SUMMARY_LENGTH = 60;
 var TOOL_SPECS = {
   status: {
     id: HELPER_TOOLS.status,
-    description: "Your helpers in this session: id, agent, state, steps taken, time running, what they were asked, " + "last tool call. Use it when the user asks about a helper or before you redirect one. " + "Never use it to wait: you are told when a background helper finishes.",
+    description: "Your helpers in this session: id, agent, state (running, idle, done, failed, stopped), steps taken, " + "time running, what they were asked, last tool call. Use it when the user asks about a helper or " + "before you redirect one. Never use it to wait: you are told when a background helper finishes.",
     args: {}
   },
   steer: {
@@ -531,23 +531,34 @@ class Activity {
     return this.records.get(sessionID);
   }
 }
-var SECRET_PATTERNS = [
-  [/\b(bearer\s+)[A-Za-z0-9._~+/=-]+/gi, "$1[redacted]"],
-  [/\b((?:api[_-]?)?(?:key|token|secret|password|passwd|pwd|auth)[a-z0-9_-]*)(\s*[=:]\s*|\s+)(["']?)(?!bearer\b|\[redacted\])([^\s"']+)\3/gi, "$1$2$3[redacted]$3"],
-  [/\b(?=[A-Za-z0-9_-]*[0-9])(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{32,}\b/g, "[redacted]"]
-];
-function redact(text) {
-  let out = text;
-  for (const [pattern, replacement] of SECRET_PATTERNS)
-    out = out.replace(pattern, replacement);
-  return out;
+var SUBCOMMAND_PROGRAMS = new Set(["git", "gh", "make", "npm", "bun", "pip", "pip3", "cargo", "docker", "kubectl", "conda", "uv", "poetry"]);
+function commandHead(command) {
+  const words = command.replace(/\s+/g, " ").trim().split(" ").filter((word) => word !== "" && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word));
+  const program = words[0];
+  if (program === undefined)
+    return "";
+  if (program === "python3" || program === "python")
+    return words[1] === "-m" && words[2] !== undefined ? `${program} -m ${words[2]}` : program;
+  const subcommand = words[1];
+  return SUBCOMMAND_PROGRAMS.has(program) && subcommand !== undefined && !subcommand.startsWith("-") ? `${program} ${subcommand}` : program;
+}
+function urlHead(url) {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return url.split(/[?#@]/, 1)[0] ?? url;
+  }
 }
 function summarizeCall(tool, input) {
   const args = input !== null && typeof input === "object" ? input : {};
-  const detail = ["command", "pattern", "filePath", "path", "url", "query", "description", "prompt"].map((key) => args[key]).find((value) => typeof value === "string" && value.trim() !== "");
-  if (detail === undefined)
+  const text = (key) => typeof args[key] === "string" && args[key].trim() !== "" ? args[key] : undefined;
+  const command = text("command");
+  const url = text("url");
+  const detail = command !== undefined ? commandHead(command) : url !== undefined ? urlHead(url) : text("filePath") ?? text("path") ?? text("description");
+  if (detail === undefined || detail === "")
     return tool;
-  const flat = redact(detail.replace(/\s+/g, " ").trim());
+  const flat = detail.replace(/\s+/g, " ").trim();
   return `${tool}: ${flat.length > SUMMARY_LENGTH ? `${flat.slice(0, SUMMARY_LENGTH - 3)}...` : flat}`;
 }
 function formatStatus(helpers, now = Date.now()) {
@@ -566,7 +577,8 @@ function formatStatus(helpers, now = Date.now()) {
       `${helper.steps} ${helper.steps === 1 ? "step" : "steps"}`,
       helper.startedAt === undefined ? undefined : elapsed(end - helper.startedAt)
     ].filter((part) => part !== undefined);
-    const tail = [helper.title.trim() === "" ? undefined : helper.title.trim(), helper.lastTool === undefined ? undefined : `last: ${helper.lastTool}`].filter((part) => part !== undefined).join("; ");
+    const title = helper.title.replace(/\s+/g, " ").trim();
+    const tail = [title === "" ? undefined : title, helper.lastTool === undefined ? undefined : `last: ${helper.lastTool}`].filter((part) => part !== undefined).join("; ");
     lines.push(`${parts.join(", ")}${tail === "" ? "" : `: ${tail}`}`);
   }
   if (shown.length < sorted.length)
@@ -1210,7 +1222,7 @@ function v1Tools(deps) {
           id: item.id,
           agent: agentOf(item.id, item),
           title: typeof item.title === "string" ? item.title : "",
-          state: busy.has(item.id) ? "running" : record?.ended ?? "done",
+          state: busy.has(item.id) ? "running" : record?.ended ?? "idle",
           steps: record?.steps ?? 0,
           startedAt: item.time?.created,
           updatedAt: record?.at ?? item.time?.updated,
@@ -1377,6 +1389,14 @@ function createServer(harness, options = {}) {
         }
       },
       tool,
+      async event(input) {
+        try {
+          if (input?.event?.type === "session.error")
+            activity.end(input.event.properties?.sessionID, "failed");
+        } catch (error) {
+          reporter.internal("the event hook", error);
+        }
+      },
       async "chat.message"(message, output) {
         try {
           const session = message?.sessionID;
@@ -1501,7 +1521,7 @@ class SessionTracker {
     if (title !== undefined)
       session.title = title;
     session.updatedAt = now;
-    this.sessions.set(id, session);
+    remember(this.sessions, id, session);
   }
   get(id) {
     return this.sessions.get(id);
@@ -1519,10 +1539,14 @@ function sessionApi2(ctx) {
 }
 function v2Tools(deps) {
   const { harness, tracker, activity, helpers } = deps;
+  const stateOf = (session) => {
+    const record = activity.get(session.id);
+    return session.state === "running" && record?.ended !== undefined && record.at >= session.updatedAt ? record.ended : session.state;
+  };
   const targetOf = async (id) => {
     const tracked = tracker.get(id);
     if (tracked !== undefined)
-      return { parentID: tracked.parentID, agent: tracked.agent ?? "helper", state: tracked.state };
+      return { parentID: tracked.parentID, agent: tracked.agent ?? "helper", state: stateOf(tracked) };
     const info = await sessionApi2(deps.ctx).get({ sessionID: id }).catch(() => {
       return;
     });
@@ -1532,12 +1556,11 @@ function v2Tools(deps) {
   };
   const view = (session) => {
     const record = activity.get(session.id);
-    const state = session.state === "running" && record?.ended !== undefined && record.at >= session.updatedAt ? record.ended : session.state;
     return {
       id: session.id,
       agent: session.agent ?? "helper",
       title: session.title ?? "",
-      state,
+      state: stateOf(session),
       steps: record?.steps ?? 0,
       startedAt: session.startedAt,
       updatedAt: session.updatedAt,
@@ -1575,7 +1598,7 @@ function v2Tools(deps) {
       if (id === "all") {
         for (const child of tracker.children(context.sessionID)) {
           const agent = child.agent ?? "helper";
-          if (child.state === "running" && helpers.has(agent))
+          if (stateOf(child) === "running" && helpers.has(agent))
             targets.push({ id: child.id, agent });
         }
       } else {

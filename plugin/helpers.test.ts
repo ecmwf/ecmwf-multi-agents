@@ -18,8 +18,8 @@ import {
   summarizeCall,
   targetProblem,
   toolCallBlock,
+  commandHead,
   helperIds,
-  redact,
   remember,
   requiredText,
   type HelperView,
@@ -59,9 +59,9 @@ describe("activity", () => {
     const activity = new Activity();
     activity.observe("s1", "bash", { command: "git  log   --oneline" }, 1000);
     activity.observe("s1", "read", { filePath: "/repo/a.py" }, 2000);
-    activity.observe("s2", "grep", { pattern: "x".repeat(100) }, 3000);
+    activity.observe("s2", "read", { filePath: `/repo/${"x".repeat(100)}` }, 3000);
     expect(activity.get("s1")).toEqual({ steps: 2, lastTool: "read: /repo/a.py", at: 2000 });
-    expect(activity.get("s2")?.lastTool).toBe(`grep: ${"x".repeat(57)}...`);
+    expect(activity.get("s2")?.lastTool).toBe(`read: /repo/${"x".repeat(51)}...`);
     expect(activity.get("s3")).toBeUndefined();
   });
 
@@ -77,11 +77,10 @@ describe("activity", () => {
     expect(activity.get("s")?.ended).toBeUndefined();
   });
 
-  test("summaries use the first known input field and plain tool names otherwise", () => {
-    expect(summarizeCall("webfetch", { url: "https://x.y/z" })).toBe("webfetch: https://x.y/z");
-    expect(summarizeCall("task", { description: "slow job", prompt: "p" })).toBe("task: slow job");
+  test("summaries fall back to the plain tool name", () => {
     expect(summarizeCall("question", { questions: [] })).toBe("question");
     expect(summarizeCall("bash", null)).toBe("bash");
+    expect(summarizeCall("bash", { command: "  " })).toBe("bash");
   });
 });
 
@@ -105,6 +104,12 @@ describe("status report", () => {
   test("one line per helper: id, agent, state, steps, elapsed, title and last call", () => {
     const text = formatStatus([view("ses_1")], 91_000);
     expect(text).toBe("One helper in this session, newest first:\nses_1, scout, running, 3 steps, 1m 30s: job ses_1; last: grep: foo");
+  });
+
+  test("a title is written on one line, however it was given", () => {
+    const text = formatStatus([view("ses_1", { title: "first line\nsecond\n\tthird", lastTool: undefined })], 91_000);
+    expect(text.split("\n")).toHaveLength(2);
+    expect(text).toEndWith(": first line second third");
   });
 
   test("a finished helper's elapsed time stops at its last activity; empty title and last call are left out", () => {
@@ -217,6 +222,15 @@ describe("the 2.0.16 session tracker", () => {
     expect(tracker.children("c1")).toEqual([]);
   });
 
+  test("state updates refresh recency and respect the cap", () => {
+    const tracker = new SessionTracker();
+    for (let i = 0; i < 5; i++) tracker.observe(event("session.created", { sessionID: `s${i}`, parentID: "root" }), i);
+    for (let i = 0; i < 5; i++) tracker.observe(event("session.execution.started", { sessionID: `s${i}` }), 10 + i);
+    tracker.observe(event("session.execution.started", { sessionID: "late-unknown" }), 20);
+    expect(tracker.get("late-unknown")?.state).toBe("running");
+    expect(tracker.children("root")).toHaveLength(5);
+  });
+
   test("ignores events without a type or session, and flat payloads still work", () => {
     const tracker = new SessionTracker();
     tracker.observe(undefined);
@@ -259,12 +273,16 @@ describe("shared pieces", () => {
     ]);
   });
 
-  test("secrets are redacted from call summaries before they reach lead", () => {
-    expect(redact("curl -H 'Authorization: Bearer abc.DEF-123' https://x")).toBe("curl -H 'Authorization: Bearer [redacted]' https://x");
-    expect(redact("export API_KEY=sk-live-0123456789abcdef && run")).toBe("export API_KEY=[redacted] && run");
-    expect(redact("--token=ghp_abcdefghijklmnopqrstuvwxyz0123456789")).toBe("--token=[redacted]");
-    expect(redact("password: 'hunter2'")).toBe("password: '[redacted]'");
-    expect(redact("git log --oneline -5 stations/units.py")).toBe("git log --oneline -5 stations/units.py");
-    expect(summarizeCall("bash", { command: "export TOKEN=abc123xyz && git push" })).toBe("bash: export TOKEN=[redacted] && git push");
+  test("call summaries never carry arguments that could hold a secret: a command's head, a URL without its query, a path", () => {
+    expect(commandHead("curl -u user:s3cret https://host")).toBe("curl");
+    expect(commandHead("git  log --oneline -5")).toBe("git log");
+    expect(commandHead("TOKEN=abc python3 -m unittest -v")).toBe("python3 -m unittest");
+    expect(commandHead("make --dry-run check")).toBe("make");
+    expect(commandHead("   ")).toBe("");
+    expect(summarizeCall("bash", { command: "curl -H 'Authorization: Bearer abc' https://x" })).toBe("bash: curl");
+    expect(summarizeCall("webfetch", { url: "https://user:pw@host/path?token=abc#frag" })).toBe("webfetch: https://host/path");
+    expect(summarizeCall("grep", { pattern: "password = ", path: "/repo/src" })).toBe("grep: /repo/src");
+    expect(summarizeCall("websearch", { query: "secret stuff" })).toBe("websearch");
+    expect(summarizeCall("task", { description: "slow job", prompt: "the brief" })).toBe("task: slow job");
   });
 });
