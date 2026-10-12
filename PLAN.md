@@ -290,7 +290,7 @@ Tasks, in order; **(par)** marks what can run side by side once 7a is done:
 
 7b. Platform enablement
 
-- [ ] Samet: **(par)** opencode 1.x: `install.sh` prints and `docs/install.md` explains
+- [~] Samet: **(par)** opencode 1.x: `install.sh` prints and `docs/install.md` explains
   `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` (shell profile or module file; the plugin
   cannot set it, the flag is read before plugins load); `doctor` checks it through
   `opencode debug config` or the tool schema; without it everything degrades to foreground
