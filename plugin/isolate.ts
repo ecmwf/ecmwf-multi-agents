@@ -31,10 +31,20 @@ export interface V1MessageWithParts {
  * A session that holds only the helper's own messages (a child session, also one that lead
  * continues with a further request) is left alone.
  */
+/** A user message that opencode wrote itself, such as a background helper's completion. */
+export function synthetic(message: V1MessageWithParts): boolean {
+  const texts = message.parts.filter((part) => (part as { type?: unknown } | null)?.type === "text");
+  return texts.length > 0 && texts.every((part) => (part as { synthetic?: unknown }).synthetic === true);
+}
+
 export function isolateHelperRequest(messages: V1MessageWithParts[], helpers: ReadonlySet<string>): number {
+  // The request is the last user message the user or lead wrote. A completion opencode wrote
+  // into the session meanwhile (docs/research/background-helpers.md, section 9) is part of the
+  // helper's run, not a new request, so the helper keeps its brief and its steps.
   let request = -1;
   for (let index = messages.length - 1; index >= 0; index--) {
-    if (messages[index]?.info?.role === "user") {
+    const message = messages[index];
+    if (message?.info?.role === "user" && !synthetic(message)) {
       request = index;
       break;
     }

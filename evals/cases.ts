@@ -117,6 +117,9 @@ const SEEDED_PLANS: EvalCase["setup"] = [
 // A first turn that gives the session some history before a command, as in normal use.
 const WARM_UP = (text: string) => ({ turn: { kind: "prompt" as const, text }, note: "history before the command" });
 
+/** Background hand-offs on opencode 1.x need this flag before the server starts (docs/install.md). */
+const BACKGROUND = { OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS: "true" };
+
 const PROGRESS_CHECKS = [
   answerMentions("counts", "the report says 2 of 5 tasks are done", [{ label: "2 of 5", any: [/\b2\s*(?:of|\/|out of)\s*5\b/i] }], "all"),
   answerMentions("next", "the report names T3, the --json option, as the next task", [{ label: "T3", any: [/\bT3\b/, /--json option/i] }], "all"),
@@ -322,6 +325,7 @@ export const CASES: EvalCase[] = [
   },
   {
     id: "background-scouts",
+    env: BACKGROUND,
     title: "Two independent questions answered through background scouts while the user keeps talking",
     setup: [],
     turns: [
@@ -350,6 +354,7 @@ export const CASES: EvalCase[] = [
   },
   {
     id: "steer",
+    env: BACKGROUND,
     title: "A running scout is redirected with helpers_steer instead of restarted",
     setup: [],
     turns: [
@@ -383,7 +388,42 @@ export const CASES: EvalCase[] = [
     baseline: false,
   },
   {
+    id: "restart",
+    env: BACKGROUND,
+    title: "The same change of scope as steer, done by cancelling and starting a new scout, for comparison",
+    setup: [],
+    turns: [
+      {
+        turn: {
+          kind: "prompt",
+          text:
+            "Hand a scout, in the background, the job of listing every function in the stations package and its tests with a one-line purpose and who calls it; tell me as soon as it has started and end your turn. Do not change any files.",
+        },
+        waitFor: "root",
+        note: "lead ends its turn while the scout runs",
+      },
+      {
+        turn: {
+          kind: "prompt",
+          text: "Change of scope: I only need stations/quality.py and stations/units.py. Stop the running scout and start a new one with just that; give me its report when it arrives.",
+        },
+        note: "the cancel and restart, sent while the scout runs",
+      },
+    ],
+    checks: [
+      helperTool("helpers_cancel", "lead stopped the first scout with helpers_cancel"),
+      helperSessions("scout", 2),
+      reportMentions("scout", "the second scout's report covers quality.py and units.py", [
+        { label: "quality.py", any: [/quality\.py/] },
+        { label: "units.py", any: [/units\.py/] },
+      ]),
+      noChanges(),
+    ],
+    baseline: false,
+  },
+  {
     id: "cancel",
+    env: BACKGROUND,
     title: "A running builder is stopped with helpers_cancel and not restarted",
     setup: [],
     review: "never",

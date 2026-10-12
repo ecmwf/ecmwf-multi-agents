@@ -63,8 +63,8 @@ const ISOLATION = {
 
 /** One streamed request as the stand-in saw it. */
 interface Seen {
-  /** lead, builder, or other (opencode's own agents, or a child whose run switched agent). */
-  agent: "lead" | "builder" | "other";
+  /** lead, builder, reviewer, or other (opencode's own agents, or a child whose run switched agent). */
+  agent: "lead" | "builder" | "reviewer" | "other";
   /** The text of every user message, in order. */
   users: string[];
   /** Tool results in the request: how many steps the agent had taken. */
@@ -118,7 +118,7 @@ function standIn(script: Script) {
       const users = messages.filter((message) => role(message) === "user").map(textOf);
       const last = users.at(-1) ?? "";
       const results = messages.filter((message) => role(message) === "tool").length;
-      const agent: Seen["agent"] = system.includes("You are lead") ? "lead" : system.includes("You are builder") ? "builder" : "other";
+      const agent: Seen["agent"] = system.includes("You are lead") ? "lead" : system.includes("You are builder") ? "builder" : system.includes("You are reviewer") ? "reviewer" : "other";
       let tool: { name: string; args: Record<string, unknown> } | undefined;
       let text = "ok";
       if (agent === "lead") {
@@ -148,6 +148,8 @@ function standIn(script: Script) {
         else if (forbidden) tool = { name: HELPER_TOOLS.status, args: {} };
         else if (results < STEPS) tool = { name: script.shell, args: { command: `sleep ${STEP_SECONDS}`, description: "slow step" } };
         else text = "builder finished";
+      } else if (agent === "reviewer") {
+        text = "VERDICT: APPROVE";
       }
       calls++;
       seen.push({ agent, users, results, at: Date.now(), reply: tool ? `tool:${tool.name}` : text });
@@ -575,6 +577,25 @@ for (const bin of v1Bins) {
         expect((await pluginApi<{ agent?: string }>("GET", `/session/${target.id}`)).agent).toBe("lead");
         await tell(session, `STATUS ${tag}`);
         expect((await toolPart(session, HELPER_TOOLS.status)).state?.output).toContain(`${target.id}, builder, idle`);
+      }, 120_000);
+
+      test("a session that starts with /review (the reviewer answering inline) goes back to lead on the next message", async () => {
+        const tag = nextTag();
+        const session = (await pluginApi<{ id: string }>("POST", "/session", {})).id;
+        await pluginApi("POST", `/session/${session}/command`, { command: "review", arguments: "" });
+        await within(30_000, "the reviewer's verdict", async () => model.seen.find((item) => item.agent === "reviewer" && item.reply === "VERDICT: APPROVE"));
+        // The user's next message names lead, as the TUI sends it; it must run as lead. (The
+        // session's first user message is the command, so the requests are found by the tag.)
+        await tell(session, `BG ${tag}`);
+        const tagged = () => model.seen.filter((item) => item.users.some((user) => user.endsWith(tag)));
+        const leadDone = await within(30_000, "lead's turn", async () => tagged().find((item) => item.agent === "lead" && item.reply === "lead done"));
+        expect(leadDone.users.at(-1)).toBe(`BG ${tag}`);
+        const last = (await pluginApi<V1Message[]>("GET", `/session/${session}/message`)).filter((message) => message.info.role === "user" && !message.parts[0]?.synthetic).at(-1)!;
+        expect(last.info.agent).toBe("lead");
+        expect(await childOf(session)).toBeDefined();
+        const woken = await within(RUN_MS + 20_000, "lead to be woken", async () => tagged().find((item) => item.agent === "lead" && item.users.some((user) => user.includes("<task "))));
+        expect(woken.users.at(-1)).toContain("builder finished");
+        expect(tagged().some((item) => item.agent === "reviewer")).toBe(false);
       }, 120_000);
     });
   });

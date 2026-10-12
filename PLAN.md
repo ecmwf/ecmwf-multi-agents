@@ -354,7 +354,13 @@ the four comparable cases the harness mean went from $0.195 to $0.199 (+1.8 perc
 size of the prompt growth, while the baseline moved -1 percent on the same day; the one
 outlier, `trivial-edit` +20 percent, had the same eight requests but read more files
 (`README.md`, `git ls-files`), which is variance in diligence, not the new rules. Both
-summaries: `evals/results/background-helpers.md`.
+summaries: `evals/results/background-helpers.md`. Caveat found in review: that run had the
+1.x background flag on for every run, the baseline included; the runner now sets it per
+case, and the shared cases are to be rerun before the release.
+
+- [ ] Samet: Measure a steer against cancel-and-restart: the `steer` and `restart` cases
+  with `--repeat 3`; until then the docs say a redirected helper keeps its work, not that it
+  is cheaper. Rerun the shared cases with the flag off for the baseline.
 
 Exit: gate and integration green on all three versions; the eval summary shows what a wake
 and a steer cost; `/guide` explains it in plain words.
@@ -391,6 +397,15 @@ and a steer cost; `/guide` explains it in plain words.
   mechanics against their source and a stand-in model on 1.18.35 and 2.0.23 (table in the
   phase). opencode's own background mode is enough; the plugin adds status, steer and cancel
   for `lead` and pins 1.x child sessions to their helper.
+- 2026-10-12: Tiago's review of the branch. Blocking: a session that starts with `/review`
+  or `/progress` on 1.x was pinned to that helper for good, because the plugin took a session
+  whose first message is a helper's for a child; children now come from the `session.created`
+  event, with a server lookup for sessions older than the plugin, and nothing is pinned when
+  the parent is unknown. Also: a completion during an inline `/review` no longer costs the
+  reviewer its request (the isolation hook skips messages opencode wrote itself); the evals
+  set the 1.x flag per case, not for the baseline; the steer-versus-restart cost claim is
+  softened until measured, and a `restart` case exists for the measurement; the guide names
+  Ctrl+B. Process note taken: a research-and-ADR pull request first, then the build.
 - 2026-10-12: Independent review of the branch (five criteria: simplification, naming, comments
   and docs, duplicate sources of truth, the gate). Fixed: the tools lost a pinned helper because
   opencode updates the session record before the `chat.message` hook, so the plugin's own record

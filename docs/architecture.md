@@ -141,7 +141,7 @@ helper finishes the platform writes its final text into `lead`'s session as a us
 opencode 1.x this needs `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` in the environment
 before opencode starts; the installer and `doctor` cover it, and without it `lead` hands off
 in the foreground as before. The user can also move a blocking hand-off to the background
-with the TUI's `session.background` keybind. Evidence and limits:
+with the TUI's `session.background` keybind (Ctrl+B by default). Evidence and limits:
 `docs/research/background-helpers.md`; decisions: `docs/adr/0002-background-helpers-and-steering.md`.
 
 `lead` uses the background when it does not need the result before its next step and has

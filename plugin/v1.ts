@@ -25,14 +25,13 @@
 // session record is updated before the hook runs (prompt.ts:672-689), so after a pin it names
 // the sender; the plugin's own record of a session's agent therefore wins over the server's.
 //
-// Whether a session is a helper's child is known from its first message: the delegation tool
-// writes the brief as the helper (task.ts:207-216), so a session whose first message is a
-// helper's is a child, and one whose first message is lead's is the user's own, where a helper
-// may answer inline later (`/review`) and must not be pinned. That decision needs no server
-// lookup, so a lookup failure cannot leave a child unpinned. One corner needs the server: a
-// plugin that started after the child did sees a later message first. It then asks for the
-// session's parent and, for a child, for the agent of its first message, which is the helper,
-// and pins from there; only if that fails is the message left as it is, and reported.
+// Whether a session is a helper's child comes from the `session.created` event, whose
+// `properties.info.parentID` names the parent (opencode/src/plugin/index.ts:259 passes every bus
+// event to the hook; opencode's own run command reads the field the same way, cli/cmd/run.ts:703).
+// A session created before the plugin started is asked of the server once. When the parent
+// cannot be known, nothing is pinned: that is the behaviour before the helper tools existed,
+// whereas pinning the user's own session would take it away from lead. The user's own session
+// can itself start with a helper's message, because `/review` and `/progress` answer inline.
 
 import { applyToV1Config, planAgents, type AgentPlan } from "./apply.ts";
 import { processEnvironment } from "./environment.ts";
@@ -78,7 +77,7 @@ class SessionAgents {
     return this.agents.get(session);
   }
 
-  /** Record what the first message seen in a session says, once; later calls do nothing. */
+  /** Record whether a session has a parent, once; the event and the server agree, so later calls do nothing. */
   setChild(session: string, child: boolean): void {
     if (!this.children.has(session)) this.children.set(session, child);
   }
@@ -143,13 +142,11 @@ export function createServer(harness: EmbeddedHarness, options: V1Options = {}) 
       return typeof data?.agent === "string" ? data.agent : undefined;
     };
     /**
-     * For a session first seen mid-run: the helper that owns it, from the agent of its first
-     * message, when the server says it is a child. Undefined for the user's own session or when
-     * the server cannot be asked.
+     * The helper that owns a child session the plugin has no record of (created before the plugin
+     * started): the agent of the session's first message. Undefined when the server cannot be
+     * asked or the first message is not a helper's.
      */
     const ownerOfChild = async (session: string): Promise<string | undefined> => {
-      const data = await fetchSession(session);
-      if (data === undefined || sessions.isChild(session) !== true) return undefined;
       const messages = input?.client?.session?.messages;
       if (typeof messages !== "function") return undefined;
       const list = (await messages.call(input.client?.session, { path: { id: session } }))?.data ?? [];
@@ -172,7 +169,13 @@ export function createServer(harness: EmbeddedHarness, options: V1Options = {}) 
 
       async event(input) {
         try {
-          if (input?.event?.type === "session.error") activity.end(input.event.properties?.sessionID, "failed");
+          const event = input?.event;
+          if (event?.type === "session.created") {
+            const info = event.properties?.info;
+            if (typeof info?.id === "string") sessions.setChild(info.id, typeof info.parentID === "string" && info.parentID !== "");
+          } else if (event?.type === "session.error") {
+            activity.end(event.properties?.sessionID, "failed");
+          }
         } catch (error) {
           reporter.internal("the event hook", error);
         }
@@ -184,18 +187,20 @@ export function createServer(harness: EmbeddedHarness, options: V1Options = {}) 
           const target = output?.message;
           if (typeof session === "string" && target !== undefined && target !== null) {
             let helper = sessions.get(session);
-            if (helper === undefined) {
-              // First sight of this session: a helper's message means a child session; lead's
-              // means the user's own, unless the plugin started mid-run and the server says the
-              // session is a child, whose helper is the agent of its first message.
-              const first = target.agent ?? message?.agent;
-              if (typeof first === "string" && helpers.has(first)) sessions.setChild(session, true);
-              else {
-                helper = await ownerOfChild(session).catch((error: unknown) => {
-                  reporter.internal("looking up a session", error);
-                  return undefined;
-                });
-                if (helper !== undefined) sessions.set(session, helper);
+            if (sessions.isChild(session) === undefined) {
+              // No session.created event seen: the session predates the plugin. Ask the server
+              // once; for a child, its helper is the agent of its first message.
+              try {
+                await fetchSession(session);
+                if (sessions.isChild(session) === true && (helper === undefined || !helpers.has(helper))) {
+                  const owner = await ownerOfChild(session);
+                  if (owner !== undefined) {
+                    sessions.set(session, owner);
+                    helper = owner;
+                  }
+                }
+              } catch (error) {
+                reporter.internal("looking up a session", error);
               }
             }
             if (helper !== undefined && helpers.has(helper) && sessions.isChild(session) === true) {

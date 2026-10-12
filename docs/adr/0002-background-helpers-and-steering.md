@@ -92,8 +92,9 @@ pinning is needed.
 `helpers_cancel` reports the cancel in its own result, because the platform does not wake
 the parent for a cancelled job; a helper the user cancelled shows in `helpers_status`. A
 completion that lands while a helper answers inline in the user's session (`/review` on 1.x)
-is read by that helper and reaches `lead` on its next turn, not as a wake; the `lead` prompt
-says so.
+is written as that helper's and becomes part of its run: the isolation hook treats a message
+opencode wrote itself as part of the current request, so the reviewer keeps its brief and its
+steps, and `lead` reads the completion on its next turn, not as a wake.
 
 ### The 1.x flag
 

@@ -64,8 +64,8 @@ kept out of git through `.git/info/exclude`, so nothing extra appears in your co
 `lead` usually waits for a helper. When it has other work meanwhile, or you may want to keep
 talking, it hands off in the background and the helper's report arrives later in your
 conversation. If a helper is doing something you do not want, tell `lead` to redirect it
-("stay in `src/`") or to stop it: a redirected helper keeps everything it has read and done,
-which is cheaper than starting over. You can also open the helper's session and type to it.
+("stay in `src/`") or to stop it: a redirected helper keeps everything it has read and done
+instead of starting over. You can also open the helper's session and type to it.
 
 On opencode 1.x this needs `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` in your
 environment before opencode starts; the installer tells you where to put it and

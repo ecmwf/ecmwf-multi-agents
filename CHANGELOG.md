@@ -20,7 +20,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
   `./install.sh doctor` checks it. Without it `lead` waits for every helper, as before.
 - `lead` can see, redirect and stop its helpers: three plugin tools, `helpers_status`,
   `helpers_steer` and `helpers_cancel`. A redirected helper keeps everything it has read and
-  done and follows the amendment at its next step, which is cheaper than starting over. Tell
+  done and follows the amendment at its next step instead of starting over. Tell
   `lead` "redirect the scout: stay in src/" or "stop the builder". Helpers cannot use these
   tools, whatever was approved.
 - On opencode 1.x, typing into a running helper's own session now steers that helper. Before,

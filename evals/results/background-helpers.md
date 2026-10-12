@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts 
 SPDX-License-Identifier: Apache-2.0
 -->
 
-<!-- Two eval runs on the background-helpers branch (after 0.2.0), default profile, opencode 1.18.35: the three new cases, then the shared cases against the baseline to measure the longer lead prompt. Kept for comparison with the next release. -->
+<!-- Two eval runs on the background-helpers branch (after 0.2.0), default profile, opencode 1.18.35: the three new cases, then the shared cases against the baseline to measure the longer lead prompt. Both runs had OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS set for every run, the baseline included, so the baseline here is not plain opencode as people run it; the runner now sets the flag only for the cases that need it, and the shared cases are to be rerun before the release. -->
 
 # Eval summary
 

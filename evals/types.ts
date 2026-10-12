@@ -294,6 +294,8 @@ export interface EvalCase {
   review?: ReviewPolicy;
   /** Changes to the default answering policy. */
   answering?: Partial<AnsweringPolicy>;
+  /** Extra environment for opencode in this case only, such as a platform flag the case needs. */
+  env?: Record<string, string>;
   checks: Check[];
   /** Whether the case also runs on plain opencode with its build agent. */
   baseline: boolean;

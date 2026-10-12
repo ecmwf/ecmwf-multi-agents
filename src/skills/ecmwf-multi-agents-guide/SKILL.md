@@ -62,7 +62,7 @@ Profiles give each agent a model and an effort:
 
 ## Helpers in the background
 
-`lead` usually waits for a helper. When it has other work meanwhile, or you may want to keep talking, it hands off in the background and the helper's report arrives later as a message in your conversation. If `lead` is waiting on a helper and you want it back, press the `session.background` key (opencode 1.x) to move the hand-off to the background.
+`lead` usually waits for a helper. When it has other work meanwhile, or you may want to keep talking, it hands off in the background and the helper's report arrives later as a message in your conversation. If `lead` is waiting on a helper and you want it back, press Ctrl+B (opencode 1.x; it acts only while `lead` waits on a helper) to move the hand-off to the background.
 
 If a helper is doing something you do not want, tell `lead`: "redirect the scout: stay in src/" or "stop the builder". `lead` can list its helpers, send one an amendment that it reads at its next step while keeping what it has read so far, or stop one. You can also open the helper's own session and type to it. A stopped helper reports nothing; its changes stay on disk.
 

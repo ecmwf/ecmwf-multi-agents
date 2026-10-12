@@ -163,7 +163,9 @@ describe("v1 server", () => {
     expect(await shell(hooks, "own", "git push")).toBeDefined();
     await hooks["chat.message"]({ sessionID: "own" }, { message: { agent: "lead" } });
     expect(await shell(hooks, "own", "git push")).toBeUndefined();
-    // A child session: the builder first, then a message that names lead, which is pinned back.
+    // A child session (announced by session.created): the builder first, then a message that
+    // names lead, which is pinned back.
+    await hooks.event({ event: { type: "session.created", properties: { info: { id: "child", parentID: "own" } } } });
     await hooks["chat.message"]({ sessionID: "child" }, { message: { agent: "builder" } });
     const pinned = { agent: "lead" };
     await hooks["chat.message"]({ sessionID: "child" }, { message: pinned });
@@ -326,6 +328,9 @@ describe("v1 helper tools, guard and pinning", () => {
     return plugin.server({ client: state.client, directory: "/repo", worktree: "/repo" });
   }
 
+  /** opencode announces a session: `session.created` with the parent, if any. */
+  const created = (hooks: V1Hooks, id: string, parentID?: string) => hooks.event({ event: { type: "session.created", properties: { info: { id, ...(parentID ? { parentID } : {}) } } } });
+
   test("the tool hook offers the three tools", async () => {
     const hooks = await hooksWith(fake());
     expect(Object.keys(hooks.tool)).toEqual(["helpers_status", "helpers_steer", "helpers_cancel"]);
@@ -396,27 +401,53 @@ describe("v1 helper tools, guard and pinning", () => {
     await hooks["tool.execute.before"]({ tool: "bash", sessionID: "unseen" }, { args: { command: "git push" } });
   });
 
-  test("pinning needs no server lookup: a session whose first message is a helper's is a child, even when the server is unreachable", async () => {
+  test("a child announced by session.created is pinned even when the server is unreachable", async () => {
     const state = fake();
     state.client.session!.get = async () => {
       throw new Error("server away");
     };
     const hooks = await hooksWith(state);
+    await created(hooks, "c9", "root");
     await hooks["chat.message"]({ sessionID: "c9", agent: "scout" }, { message: { agent: "scout" } });
     const fromTui = { agent: "lead", model: { providerID: "anthropic", modelID: "claude-opus-5-5", variant: "xhigh" } };
     await hooks["chat.message"]({ sessionID: "c9", agent: "lead" }, { message: fromTui });
     expect(fromTui).toEqual({ agent: "scout", model: { providerID: "anthropic", modelID: "claude-sonnet-5-5", variant: "medium" } });
-    // The user's own session starts with lead's message and is never pinned, whatever the server says.
-    await hooks["chat.message"]({ sessionID: "own", agent: "lead" }, { message: { agent: "lead" } });
-    await hooks["chat.params"]({ sessionID: "own", agent: "reviewer" }, {});
+  });
+
+  test("a session that starts with /review stays the user's: the next message goes back to lead", async () => {
+    const state = fake();
+    const hooks = await hooksWith(state);
+    // A root session: session.created without a parent, then the reviewer answering inline first.
+    await created(hooks, "fresh");
+    await hooks["chat.message"]({ sessionID: "fresh", agent: "reviewer" }, { message: { agent: "reviewer" } });
+    await hooks["chat.params"]({ sessionID: "fresh", agent: "reviewer" }, {});
     const next = { agent: "lead", model: { providerID: "anthropic", modelID: "claude-opus-5-5", variant: "xhigh" } };
-    await hooks["chat.message"]({ sessionID: "own", agent: "lead" }, { message: next });
+    await hooks["chat.message"]({ sessionID: "fresh", agent: "lead" }, { message: next });
+    expect(next).toEqual({ agent: "lead", model: { providerID: "anthropic", modelID: "claude-opus-5-5", variant: "xhigh" } });
+    expect(await shell(hooks, "fresh", "git push")).toBeUndefined();
+    // The same without any event: the server says the session has no parent.
+    await hooks["chat.message"]({ sessionID: "root", agent: "reviewer" }, { message: { agent: "reviewer" } });
+    const again = { agent: "lead" };
+    await hooks["chat.message"]({ sessionID: "root", agent: "lead" }, { message: again });
+    expect(again.agent).toBe("lead");
+  });
+
+  test("when the parent cannot be known, nothing is pinned", async () => {
+    const state = fake();
+    state.client.session!.get = async () => {
+      throw new Error("server away");
+    };
+    const hooks = await hooksWith(state);
+    await hooks["chat.message"]({ sessionID: "mystery", agent: "scout" }, { message: { agent: "scout" } });
+    const next = { agent: "lead" };
+    await hooks["chat.message"]({ sessionID: "mystery", agent: "lead" }, { message: next });
     expect(next.agent).toBe("lead");
   });
 
-  test("a child first seen mid-run (the plugin restarted) is pinned to the agent of its first message", async () => {
+  test("a child created before the plugin started is pinned to the agent of its first message, after the server confirms the parent", async () => {
     const state = fake();
-    // The server already names the sender, lead, on the record; the history still starts with the builder.
+    // No session.created was seen. The server record already names the sender, lead; the history
+    // still starts with the builder.
     state.sessions.c2!.agent = "lead";
     state.client.session!.messages = async ({ path }) => ({
       data: path.id === "c2" ? [{ info: { role: "user", agent: "builder" } }, { info: { role: "assistant", agent: "builder" } }] : [],
@@ -447,6 +478,7 @@ describe("v1 helper tools, guard and pinning", () => {
   test("a message that names another agent in a helper's child session is pinned to the helper; the user's own session is left alone", async () => {
     const state = fake();
     const hooks = await hooksWith(state);
+    await created(hooks, "c2", "root");
     await hooks["chat.message"]({ sessionID: "c2", agent: "builder" }, { message: { agent: "builder", model: { providerID: "anthropic", modelID: "claude-sonnet-5-5", variant: "high" } } });
     const fromTui = { agent: "lead", model: { providerID: "anthropic", modelID: "claude-opus-5-5", variant: "xhigh" } };
     await hooks["chat.message"]({ sessionID: "c2", agent: "lead" }, { message: fromTui });
@@ -467,6 +499,7 @@ describe("v1 helper tools, guard and pinning", () => {
   test("after a pin the server's record names the sender, but the tools still treat the session as the helper's", async () => {
     const state = fake();
     const hooks = await hooksWith(state);
+    await created(hooks, "c2", "root");
     await hooks["chat.message"]({ sessionID: "c2", agent: "builder" }, { message: { agent: "builder" } });
     // opencode updates the record before the hook runs, so it says lead from now on.
     state.sessions.c2!.agent = "lead";

@@ -680,10 +680,15 @@ function pinMessage(message, helper, plan) {
 }
 
 // plugin/isolate.ts
+function synthetic(message) {
+  const texts = message.parts.filter((part) => part?.type === "text");
+  return texts.length > 0 && texts.every((part) => part.synthetic === true);
+}
 function isolateHelperRequest(messages, helpers) {
   let request = -1;
   for (let index = messages.length - 1;index >= 0; index--) {
-    if (messages[index]?.info?.role === "user") {
+    const message = messages[index];
+    if (message?.info?.role === "user" && !synthetic(message)) {
       request = index;
       break;
     }
@@ -1381,9 +1386,6 @@ function createServer(harness, options = {}) {
       return typeof data?.agent === "string" ? data.agent : undefined;
     };
     const ownerOfChild = async (session) => {
-      const data = await fetchSession(session);
-      if (data === undefined || sessions.isChild(session) !== true)
-        return;
       const messages = input?.client?.session?.messages;
       if (typeof messages !== "function")
         return;
@@ -1405,8 +1407,14 @@ function createServer(harness, options = {}) {
       tool,
       async event(input) {
         try {
-          if (input?.event?.type === "session.error")
-            activity.end(input.event.properties?.sessionID, "failed");
+          const event = input?.event;
+          if (event?.type === "session.created") {
+            const info = event.properties?.info;
+            if (typeof info?.id === "string")
+              sessions.setChild(info.id, typeof info.parentID === "string" && info.parentID !== "");
+          } else if (event?.type === "session.error") {
+            activity.end(event.properties?.sessionID, "failed");
+          }
         } catch (error) {
           reporter.internal("the event hook", error);
         }
@@ -1417,17 +1425,18 @@ function createServer(harness, options = {}) {
           const target = output?.message;
           if (typeof session === "string" && target !== undefined && target !== null) {
             let helper = sessions.get(session);
-            if (helper === undefined) {
-              const first = target.agent ?? message?.agent;
-              if (typeof first === "string" && helpers.has(first))
-                sessions.setChild(session, true);
-              else {
-                helper = await ownerOfChild(session).catch((error) => {
-                  reporter.internal("looking up a session", error);
-                  return;
-                });
-                if (helper !== undefined)
-                  sessions.set(session, helper);
+            if (sessions.isChild(session) === undefined) {
+              try {
+                await fetchSession(session);
+                if (sessions.isChild(session) === true && (helper === undefined || !helpers.has(helper))) {
+                  const owner = await ownerOfChild(session);
+                  if (owner !== undefined) {
+                    sessions.set(session, owner);
+                    helper = owner;
+                  }
+                }
+              } catch (error) {
+                reporter.internal("looking up a session", error);
               }
             }
             if (helper !== undefined && helpers.has(helper) && sessions.isChild(session) === true) {

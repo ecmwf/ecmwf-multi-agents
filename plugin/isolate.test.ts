@@ -24,6 +24,17 @@ describe("isolateHelperRequest", () => {
     expect(texts(messages)).toEqual(["review the changes", "reading the diff"]);
   });
 
+  test("a completion opencode wrote during an inline review is part of the review, not a new request", () => {
+    const completion: V1MessageWithParts = { info: { role: "user", agent: "reviewer", sessionID: "ses_1" }, parts: [{ type: "text", text: "<task state=\"completed\">done</task>", synthetic: true }] };
+    const messages = [message("user", "lead"), message("assistant", "lead"), message("user", "reviewer", "/review"), message("assistant", "reviewer", "step"), completion];
+    expect(isolateHelperRequest(messages, HELPERS)).toBe(2);
+    expect(texts(messages)).toEqual(["/review", "step", '<task state="completed">done</task>']);
+    // Two reviews in a row stay apart: the second request is the second /review.
+    const twice = [message("user", "lead"), message("user", "reviewer", "/review one"), message("assistant", "reviewer"), message("user", "reviewer", "/review two"), completion];
+    expect(isolateHelperRequest(twice, HELPERS)).toBe(3);
+    expect(texts(twice)).toEqual(["/review two", '<task state="completed">done</task>']);
+  });
+
   test("lead's requests keep the whole conversation, reports included", () => {
     const messages = [
       message("user", "reviewer", "review the changes"),

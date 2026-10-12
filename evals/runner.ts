@@ -114,8 +114,9 @@ export async function runCase(item: EvalCase, options: RunOptions): Promise<RunR
     writeConfig(box, config);
     if (options.auth.kind === "link") linkAuth(box, options.auth.target);
 
-    // Background hand-offs on opencode 1.x need the flag before the server starts (docs/install.md).
-    const env = baseEnv({ OPENCODE_DISABLE_LSP_DOWNLOAD: "1", OPENCODE_DISABLE_SHARE: "1", OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS: "true", ...options.env });
+    // A case may need a platform flag (the background cases on 1.x); the others, and the
+    // baseline, run opencode as people run it, so the numbers compare with earlier results.
+    const env = baseEnv({ OPENCODE_DISABLE_LSP_DOWNLOAD: "1", OPENCODE_DISABLE_SHARE: "1", ...item.env, ...options.env });
     const sessionModel = typeof config.model === "string" ? config.model : undefined;
     let sessions: SessionData[] = [];
     let failure: unknown;

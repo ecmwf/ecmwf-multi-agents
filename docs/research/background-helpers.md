@@ -306,5 +306,7 @@ a `helpers_status` built from `event.sessionID` saw nothing until it read `event
 - The 1.x flag goes into the installer's output and `doctor`; the `lead` prompt must read
   correctly without it, because the parameter then does not exist and a call with it fails
   (section 1).
-- A completion that lands during an inline `/review` on 1.x reaches `lead` on its next turn,
-  not as a wake; the `lead` prompt says so instead of waiting for one (section 9).
+- A completion that lands during an inline `/review` on 1.x is part of the reviewer's run: the
+  isolation hook skips user messages opencode wrote itself (`synthetic: true`) when it looks
+  for the request, so the reviewer keeps its brief and steps; `lead` reads the completion on
+  its next turn, not as a wake (section 9).
