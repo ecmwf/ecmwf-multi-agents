@@ -358,9 +358,19 @@ summaries: `evals/results/background-helpers.md`. Caveat found in review: that r
 1.x background flag on for every run, the baseline included; the runner now sets it per
 case, and the shared cases are to be rerun before the release.
 
-- [ ] Samet: Measure a steer against cancel-and-restart: the `steer` and `restart` cases
+- [x] Samet: Measure a steer against cancel-and-restart: the `steer` and `restart` cases
   with `--repeat 3`; until then the docs say a redirected helper keeps its work, not that it
   is cheaper. Rerun the shared cases with the flag off for the baseline.
+
+Measured (2026-10-12, three repeats each, all pass): `steer` $0.31, $0.25, $0.26 (mean
+$0.27, 10 `lead` requests each); `restart` $0.28, $0.26, $0.24 (mean $0.26, 11 to 14 `lead`
+requests, two scouts). On this fixture a steer is not cheaper than a restart: the restart
+costs `lead` more turns (a cancel, a new hand-off, a second wake) but its fresh scout, with
+a narrow brief, costs less than the continued one that carries the wide reading. The claim
+would need a large job to show; the docs keep saying that a redirected helper keeps its work.
+The shared cases rerun with the baseline as plain opencode: harness mean $0.190 over the four
+comparable cases against $0.195 on 0.1.0, baseline $0.188 against $0.190; no difference.
+All three summaries: `evals/results/background-helpers.md`.
 
 Exit: gate and integration green on all three versions; the eval summary shows what a wake
 and a steer cost; `/guide` explains it in plain words.

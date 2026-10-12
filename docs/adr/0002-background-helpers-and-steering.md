@@ -123,4 +123,7 @@ budgets are raised with the prompt changes, by the measured size of the addition
   helper's session and type, the promote keybind, "ask `lead` to redirect or stop it").
 - `docs/architecture.md`: principle 3 amended, the tools in the permission table, the routing
   rules, the wake as a report form.
-- Evals measure what a wake and a steer cost against cancel-and-restart before the release.
+- Evals measured what a wake costs (one `lead` turn per completion) and a steer against a
+  cancel-and-restart on the sample repository: no difference at that size (three repeats
+  each, `evals/results/background-helpers.md`), so the docs say a redirected helper keeps
+  its work, not that it is cheaper.
