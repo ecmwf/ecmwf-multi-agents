@@ -338,6 +338,18 @@ Tasks, in order; **(par)** marks what can run side by side once 7a is done:
   cost against cancel-and-restart), `cancel`; the shared cases re-run to show no regression
 - [~] Samet: `CHANGELOG.md` entries and `docs/install.md`; release when Tiago agrees
 
+First real-model run of the three new cases (2026-10-12, default profile, opencode 1.18.35,
+one repeat each): all pass, $0.62 in total.
+
+| Case | Cost | `lead` requests | What `lead` did |
+|---|---|---|---|
+| `background-scouts` | $0.24 (lead $0.17, two scouts $0.07) | 14 | Two background hand-offs in one turn; answered the interim question; gave both answers after the second wake. Each wake cost a `lead` turn, as expected |
+| `steer` | $0.23 (lead $0.15, scout $0.08) | 10 | One hand-off, one `helpers_steer` naming the two files, no status call, no restart; the scout's narrowed report came through the wake |
+| `cancel` | $0.15 (lead $0.13, builder $0.03) | 8 | One hand-off, one `helpers_cancel`, then `git status` and `git diff` to report what the builder had touched |
+
+Still open: the shared cases rerun against the 0.1.0 baseline, to see what the longer `lead`
+prompt costs per request.
+
 Exit: gate and integration green on all three versions; the eval summary shows what a wake
 and a steer cost; `/guide` explains it in plain words.
 
