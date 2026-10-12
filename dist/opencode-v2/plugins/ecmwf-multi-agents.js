@@ -532,14 +532,21 @@ class Activity {
   }
 }
 var SUBCOMMAND_PROGRAMS = new Set(["git", "gh", "make", "npm", "bun", "pip", "pip3", "cargo", "docker", "kubectl", "conda", "uv", "poetry"]);
+var PLAIN_WORD = /^[A-Za-z0-9._+\/-]+$/;
 function commandHead(command) {
-  const words = command.replace(/\s+/g, " ").trim().split(" ").filter((word) => word !== "" && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word));
-  const program = words[0];
-  if (program === undefined)
+  const first = commandParts(command)[0];
+  if (first === undefined)
     return "";
-  if (program === "python3" || program === "python")
-    return words[1] === "-m" && words[2] !== undefined ? `${program} -m ${words[2]}` : program;
-  const subcommand = words[1];
+  const words = withoutAssignments(first).split(/\s+/).filter((word) => word !== "");
+  const program = words[0];
+  if (program === undefined || !PLAIN_WORD.test(program))
+    return "";
+  const plain = (word) => word !== undefined && PLAIN_WORD.test(word) ? word : undefined;
+  if (program === "python3" || program === "python") {
+    const module = plain(words[2]);
+    return words[1] === "-m" && module !== undefined ? `${program} -m ${module}` : program;
+  }
+  const subcommand = plain(words[1]);
   return SUBCOMMAND_PROGRAMS.has(program) && subcommand !== undefined && !subcommand.startsWith("-") ? `${program} ${subcommand}` : program;
 }
 function urlHead(url) {
@@ -634,12 +641,13 @@ function toolRuleEffect(rules, tool) {
 function toolCallBlock(harness, agentId, tool) {
   if (!HELPER_TOOL_IDS.includes(tool))
     return;
+  if (agentId === harness.defaultAgent)
+    return;
   const agent = harness.agents.find((item) => item.id === agentId);
-  if (agent === undefined || agent.mode !== "subagent")
+  if (agent !== undefined && agent.mode === "subagent" && toolRuleEffect(agent.tools, tool) !== "deny")
     return;
-  if (toolRuleEffect(agent.tools, tool) !== "deny")
-    return;
-  return `${harness.name}: helpers may not use ${tool}; only ${harness.defaultAgent} sees, redirects or stops helpers. Do not try another way: say in your report what is needed.`;
+  const who = agent?.mode === "subagent" ? "helpers" : agentId ?? "an unknown agent";
+  return `${harness.name}: ${who} may not use ${tool}; only ${harness.defaultAgent} sees, redirects or stops helpers. Do not try another way: say in your report what is needed.`;
 }
 function splitModel(model) {
   if (model === undefined)

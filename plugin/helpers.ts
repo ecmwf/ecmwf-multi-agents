@@ -6,6 +6,7 @@
 // these to their session APIs. Nothing here keeps a job registry: the platforms own the
 // helpers' lifecycle, and the plugin only observes it through the hooks it already receives.
 
+import { commandParts, withoutAssignments } from "./guard.ts";
 import type { ArgSchema, EmbeddedHarness, EmbeddedRule } from "./types.ts";
 
 export const HELPER_TOOLS = {
@@ -140,17 +141,28 @@ export class Activity {
 // Programs whose first argument says what the command does (`git log`, `make check`).
 const SUBCOMMAND_PROGRAMS = new Set(["git", "gh", "make", "npm", "bun", "pip", "pip3", "cargo", "docker", "kubectl", "conda", "uv", "poetry"]);
 
+// A word that is a plain program or subcommand name: no quotes, no expansions, no separators.
+const PLAIN_WORD = /^[A-Za-z0-9._+\/-]+$/;
+
 /**
  * The head of a shell command: the program and, for a few programs, its subcommand. Arguments
  * are left out on purpose: a command line can carry a password or a token (`curl -u`, `-H
- * Authorization`), and the status line goes into lead's context.
+ * Authorization`), and the status line goes into lead's context. The command is split with the
+ * guard's shell-aware splitter (quotes, subshells and leading assignments), and any word that is
+ * not a plain name ends the head, so nothing quoted or expanded is ever shown.
  */
 export function commandHead(command: string): string {
-  const words = command.replace(/\s+/g, " ").trim().split(" ").filter((word) => word !== "" && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word));
+  const first = commandParts(command)[0];
+  if (first === undefined) return "";
+  const words = withoutAssignments(first).split(/\s+/).filter((word) => word !== "");
   const program = words[0];
-  if (program === undefined) return "";
-  if (program === "python3" || program === "python") return words[1] === "-m" && words[2] !== undefined ? `${program} -m ${words[2]}` : program;
-  const subcommand = words[1];
+  if (program === undefined || !PLAIN_WORD.test(program)) return "";
+  const plain = (word: string | undefined) => (word !== undefined && PLAIN_WORD.test(word) ? word : undefined);
+  if (program === "python3" || program === "python") {
+    const module = plain(words[2]);
+    return words[1] === "-m" && module !== undefined ? `${program} -m ${module}` : program;
+  }
+  const subcommand = plain(words[1]);
   return SUBCOMMAND_PROGRAMS.has(program) && subcommand !== undefined && !subcommand.startsWith("-") ? `${program} ${subcommand}` : program;
 }
 
@@ -287,15 +299,18 @@ export function toolRuleEffect(rules: readonly EmbeddedRule[], tool: string): Em
 }
 
 /**
- * The error to raise when `agentId` may not call `tool`: a harness helper whose rules deny it.
- * Agents outside the harness and lead are left to the platform.
+ * The error to raise when `agentId` may not call `tool`. The tools belong to lead alone: a
+ * harness helper is refused by its own `tool` rules, and every other caller, including an
+ * unknown one, is refused because the tools are not for it (the platform's default rules would
+ * otherwise let any agent reach a plugin tool).
  */
 export function toolCallBlock(harness: EmbeddedHarness, agentId: string | undefined, tool: string): string | undefined {
   if (!HELPER_TOOL_IDS.includes(tool)) return undefined;
+  if (agentId === harness.defaultAgent) return undefined;
   const agent = harness.agents.find((item) => item.id === agentId);
-  if (agent === undefined || agent.mode !== "subagent") return undefined;
-  if (toolRuleEffect(agent.tools, tool) !== "deny") return undefined;
-  return `${harness.name}: helpers may not use ${tool}; only ${harness.defaultAgent} sees, redirects or stops helpers. Do not try another way: say in your report what is needed.`;
+  if (agent !== undefined && agent.mode === "subagent" && toolRuleEffect(agent.tools, tool) !== "deny") return undefined;
+  const who = agent?.mode === "subagent" ? "helpers" : (agentId ?? "an unknown agent");
+  return `${harness.name}: ${who} may not use ${tool}; only ${harness.defaultAgent} sees, redirects or stops helpers. Do not try another way: say in your report what is needed.`;
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -45,9 +45,10 @@ event stream announced), and one message rewrite.
 A target must be a helper child of the caller's session; anything else is refused. The tools
 are registered as direct tools (on 2.0.16 with `codemode: false`), allowed to `lead` only:
 every helper's agent file denies them (`<tool> * deny`, which removes the tool from the
-helper's requests on both platforms), and the plugin's `execute.before` guard refuses a call
-from a helper whatever was approved, as the shell guard does. Tool ids clash with nothing on
-the three versions.
+helper's requests on both platforms), and the plugin's `execute.before` guard refuses every
+call that is not `lead`'s: a helper's whatever was approved, as the shell guard does, and any
+other agent's, since the platform's default rules would let it reach a plugin tool. Tool ids
+clash with nothing on the three versions.
 
 `lead` reaches a running helper only through `helpers_steer`. It never passes `task_id` or
 `sessionID` to the delegation tool: on 1.x that would chain the text after the run instead of

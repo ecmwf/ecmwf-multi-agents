@@ -162,11 +162,15 @@ describe("guard", () => {
       expect(toolCallBlock(harness, helper, "bash")).toBeUndefined();
     }
     expect(toolCallBlock(harness, "lead", "helpers_steer")).toBeUndefined();
-    expect(toolCallBlock(harness, "build", "helpers_steer")).toBeUndefined();
-    expect(toolCallBlock(harness, undefined, "helpers_steer")).toBeUndefined();
+    expect(toolCallBlock(harness, "lead", "bash")).toBeUndefined();
+    // Every other caller is refused too: the tools are lead's, and the platform's default rules
+    // would otherwise let any agent reach a plugin tool.
+    expect(toolCallBlock(harness, "build", "helpers_steer")).toBe("ecmwf-multi-agents: build may not use helpers_steer; only lead sees, redirects or stops helpers. Do not try another way: say in your report what is needed.");
+    expect(toolCallBlock(harness, undefined, "helpers_steer")).toContain("an unknown agent may not use helpers_steer");
+    expect(toolCallBlock(harness, "build", "bash")).toBeUndefined();
   });
 
-  test("a helper without a deny rule for a tool is not refused by the guard", () => {
+  test("a helper's own tool rules decide for it: a tool its rules do not deny is not refused by the guard", () => {
     const extended = embeddedFixture();
     extended.agents.push({ id: "tester", mode: "subagent", shell: [], tools: [{ resource: "helpers_cancel", effect: "deny" }] });
     expect(toolCallBlock(extended, "tester", "helpers_cancel")).toBeDefined();
@@ -279,6 +283,13 @@ describe("shared pieces", () => {
     expect(commandHead("TOKEN=abc python3 -m unittest -v")).toBe("python3 -m unittest");
     expect(commandHead("make --dry-run check")).toBe("make");
     expect(commandHead("   ")).toBe("");
+    // Quoted or expanded text never reaches the head: the shell-aware splitter handles it.
+    expect(commandHead("TOKEN='alpha beta' python3 -m unittest")).toBe("python3 -m unittest");
+    expect(commandHead("PASS=\"a b\" git push")).toBe("git push");
+    expect(commandHead("\"s3cret\" && ls")).toBe("");
+    expect(commandHead("git $SUB x")).toBe("git");
+    expect(commandHead("python3 -m \"my mod\"")).toBe("python3");
+    expect(commandHead("cd /tmp && curl -u a:b host")).toBe("cd");
     expect(summarizeCall("bash", { command: "curl -H 'Authorization: Bearer abc' https://x" })).toBe("bash: curl");
     expect(summarizeCall("webfetch", { url: "https://user:pw@host/path?token=abc#frag" })).toBe("webfetch: https://host/path");
     expect(summarizeCall("grep", { pattern: "password = ", path: "/repo/src" })).toBe("grep: /repo/src");
