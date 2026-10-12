@@ -330,13 +330,13 @@ Tasks, in order; **(par)** marks what can run side by side once 7a is done:
 
 7e. Verification and release
 
-- [ ] Samet: Integration suite on 1.18.35, 1.19.0 and 2.0.16: background start and wake,
+- [x] Samet: Integration suite on 1.18.35, 1.19.0 and 2.0.16: background start and wake,
   steer mid-run, `task_id` chaining, cancel, promotion, 1.x pinning, helpers denied the
   tools
-- [ ] Samet: Evals: `background-scouts` (two independent questions while the user keeps
+- [~] Samet: Evals: `background-scouts` (two independent questions while the user keeps
   talking), `steer` (the user redirects a running scout; the report names the amendment;
   cost against cancel-and-restart), `cancel`; the shared cases re-run to show no regression
-- [ ] Samet: `CHANGELOG.md` entries and `docs/install.md`; release when Tiago agrees
+- [~] Samet: `CHANGELOG.md` entries and `docs/install.md`; release when Tiago agrees
 
 Exit: gate and integration green on all three versions; the eval summary shows what a wake
 and a steer cost; `/guide` explains it in plain words.
