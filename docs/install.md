@@ -110,10 +110,27 @@ Each line starts with OK, WARN or FAIL:
 - whether the checkout has files that are not installed yet, or the other way round;
 - your settings files: the review value and the profile name;
 - whether the models of your profile are available (a WARN with the provider to connect);
-- on opencode 1.x, whether opencode loads the `lead` agent, whether your review setting
-  reached it (if not, the plugin is not active), and which agent opencode starts on.
+- on opencode 1.x, whether background helpers are on (see below), whether opencode loads the
+  `lead` agent, whether your review setting reached it (if not, the plugin is not active), and
+  which agent opencode starts on.
 
 `doctor` exits with an error only on FAIL lines.
+
+## Background helpers on opencode 1.x
+
+`lead` can hand work to a helper and carry on while it runs; the helper's report arrives
+later in your conversation, and `lead` can redirect or stop a helper meanwhile. On opencode
+1.x this is behind a flag that opencode reads from its environment when it starts, so the
+plugin cannot turn it on for you. Add one line to your shell profile (`~/.bashrc`,
+`~/.zshrc` or `~/.profile`) and start opencode from a new shell:
+
+```sh
+export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true
+```
+
+Without it, `lead` waits for every helper, as before; nothing else changes. opencode 2 has
+no flag. The installer prints the line after an install for opencode 1.x, and `doctor`
+reports WARN while it is missing.
 
 ## Removing
 
@@ -150,6 +167,7 @@ Each user then sets one environment variable, typically from a module file:
 -- Lmod: ecmwf-multi-agents.lua
 whatis("Multi-agent harness for opencode")
 setenv("OPENCODE_CONFIG_DIR", "/opt/ecmwf-multi-agents")
+setenv("OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS", "true")
 ```
 
 ```tcl
@@ -157,7 +175,11 @@ setenv("OPENCODE_CONFIG_DIR", "/opt/ecmwf-multi-agents")
 ## Tcl: ecmwf-multi-agents
 module-whatis "Multi-agent harness for opencode"
 setenv OPENCODE_CONFIG_DIR /opt/ecmwf-multi-agents
+setenv OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS true
 ```
+
+The second variable turns on background helpers (see above); leave it out to keep `lead`
+waiting for every helper.
 
 The read-only folder works: tested with opencode 1.18.35 and 1.19.0, the agents load, the
 plugin runs, and opencode writes nothing there. The folder is a copy and not the checkout,

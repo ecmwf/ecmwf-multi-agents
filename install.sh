@@ -510,14 +510,49 @@ cmd_install() {
 		say "  Lmod:      setenv(\"OPENCODE_CONFIG_DIR\", \"$CONFIG_DIR\")"
 		say "  Tcl:       setenv OPENCODE_CONFIG_DIR $CONFIG_DIR"
 		say "See docs/install.md for making the folder read-only."
+		background_advice
 		;;
 	*)
 		say "Next: restart opencode. lead becomes the default agent, unless your opencode"
 		say "config names another default_agent; press Tab to switch agents. Type /guide to"
 		say "learn more, and run ./install.sh doctor to check the installation."
+		background_advice
 		;;
 	esac
 	[ -z "$CONFLICTS" ] || exit 1
+}
+
+# On opencode 1.x, background hand-offs exist only behind a flag that opencode reads from its
+# environment at start, before any plugin runs (docs/research/background-helpers.md, section 1).
+BACKGROUND_FLAG=OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS
+
+# True when the flag, or opencode's blanket experimental flag, is on in this environment.
+background_enabled() {
+	for background_value in "${OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS-}" "${OPENCODE_EXPERIMENTAL-}"; do
+		case $background_value in
+		[Tt][Rr][Uu][Ee] | 1 | [Yy][Ee][Ss]) return 0 ;;
+		esac
+	done
+	return 1
+}
+
+background_advice() {
+	[ "$PLATFORM" = v1 ] || return 0
+	say ""
+	if background_enabled; then
+		say "Background helpers are on ($BACKGROUND_FLAG is set)."
+		return 0
+	fi
+	say "For helpers that work in the background while you keep talking, opencode 1.x needs"
+	say "one environment variable before it starts, for example in your shell profile:"
+	if [ "$TARGET" = central ]; then
+		say "  sh, bash:  export $BACKGROUND_FLAG=true"
+		say "  Lmod:      setenv(\"$BACKGROUND_FLAG\", \"true\")"
+		say "  Tcl:       setenv $BACKGROUND_FLAG true"
+	else
+		say "  export $BACKGROUND_FLAG=true"
+	fi
+	say "Without it, lead waits for every helper, as before."
 }
 
 # ---------------------------------------------------------------- doctor
@@ -683,6 +718,14 @@ cmd_doctor() {
 			else
 				note "profile $EFFECTIVE_PROFILE: not available:$doctor_missing. Connect the provider with \"opencode auth login\", or choose another profile in your settings file."
 			fi
+		fi
+	fi
+
+	if [ "$PLATFORM" = v1 ]; then
+		if background_enabled; then
+			ok "background helpers are on ($BACKGROUND_FLAG)"
+		else
+			note "background helpers are off: lead waits for every helper. To turn them on, set $BACKGROUND_FLAG=true in the environment before opencode starts (see docs/install.md)"
 		fi
 	fi
 
