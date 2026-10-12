@@ -114,7 +114,8 @@ export async function runCase(item: EvalCase, options: RunOptions): Promise<RunR
     writeConfig(box, config);
     if (options.auth.kind === "link") linkAuth(box, options.auth.target);
 
-    const env = baseEnv({ OPENCODE_DISABLE_LSP_DOWNLOAD: "1", OPENCODE_DISABLE_SHARE: "1", ...options.env });
+    // Background hand-offs on opencode 1.x need the flag before the server starts (docs/install.md).
+    const env = baseEnv({ OPENCODE_DISABLE_LSP_DOWNLOAD: "1", OPENCODE_DISABLE_SHARE: "1", OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS: "true", ...options.env });
     const sessionModel = typeof config.model === "string" ? config.model : undefined;
     let sessions: SessionData[] = [];
     let failure: unknown;
@@ -170,6 +171,7 @@ export async function runCase(item: EvalCase, options: RunOptions): Promise<RunR
           errors,
           log,
           ...(options.pollMs ? { pollMs: options.pollMs } : {}),
+          ...(step.waitFor ? { waitFor: step.waitFor } : {}),
         });
         turnRecord.durationMs = Date.now() - turnStart;
         turnRecord.status = result.status;

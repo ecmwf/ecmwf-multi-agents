@@ -40,6 +40,11 @@ export interface TurnStep {
   newSession?: boolean;
   /** Run this turn only when the condition holds after the earlier turns. */
   when?: (state: TurnState) => boolean;
+  /**
+   * What must be idle before the turn counts as finished: the whole session tree (default), or
+   * only the root session, so the next turn reaches lead while a background helper still runs.
+   */
+  waitFor?: "tree" | "root";
   /** Why the turn exists, for the record. */
   note?: string;
 }

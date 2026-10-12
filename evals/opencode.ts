@@ -235,6 +235,8 @@ export interface TurnContext {
   deadline: number;
   permissions: PermissionRecord[];
   questions: QuestionRecord[];
+  /** Finish when the root session alone is idle, leaving background helpers running. */
+  waitFor?: "tree" | "root";
   /** session.error events seen, per session. */
   errors: Map<string, string[]>;
   log?: (line: string) => void;
@@ -248,9 +250,9 @@ export interface TurnResult {
 }
 
 /**
- * Sends one turn and waits until the root session and all its descendants are idle, answering
- * permission requests and questions from the tree by the policy on the way. On the deadline it
- * aborts the sessions and reports a timeout.
+ * Sends one turn and waits until the root session and all its descendants are idle (or the root
+ * alone, with `waitFor: "root"`), answering permission requests and questions from the tree by
+ * the policy on the way. On the deadline it aborts the sessions and reports a timeout.
  */
 export async function driveTurn(ctx: TurnContext): Promise<TurnResult> {
   const { api, sessionID: root } = ctx;
@@ -338,7 +340,8 @@ export async function driveTurn(ctx: TurnContext): Promise<TurnResult> {
     }
 
     const status = await api.call<Record<string, { type: string }>>("GET", "/session/status").catch(() => ({}) as Record<string, { type: string }>);
-    const busy = tree.some((id) => status[id] !== undefined && status[id]!.type !== "idle");
+    const watched = ctx.waitFor === "root" ? [root] : tree;
+    const busy = watched.some((id) => status[id] !== undefined && status[id]!.type !== "idle");
     if (busy) sawBusy = true;
 
     if (commandError !== undefined) return { status: "error", error: commandError };

@@ -460,6 +460,69 @@ export function noWorkaround(recordOnly: Variant[] = []): Check {
 // ---------------------------------------------------------------------------------------------
 // Running checks
 
+/** A tool call by an agent that completed, optionally with an input that matches. */
+function completedCalls(ctx: CheckContext, agent: string, tool: string, input?: (input: Record<string, unknown>) => boolean) {
+  return ctx.metrics.toolCalls.filter((call) => call.agent === agent && call.tool === tool && call.status === "completed" && (input === undefined || input(call.input)));
+}
+
+/** lead started at least `count` helpers in the background. */
+export function backgroundHandoffs(count = 1, recordOnly: Variant[] = []): Check {
+  return {
+    id: "background-handoffs",
+    title: `lead handed off ${count === 1 ? "a helper" : `${count} helpers`} in the background`,
+    variants: ["harness"],
+    recordOnly,
+    run(ctx) {
+      const calls = completedCalls(ctx, "lead", "task", (input) => input.background === true);
+      return calls.length >= count ? ok(`${calls.length} background hand-off(s)`) : fail(`${calls.length} background hand-off(s); task calls: ${completedCalls(ctx, "lead", "task").length}`);
+    },
+  };
+}
+
+/** lead used one of its helper tools, with an input that matches when given. */
+export function helperTool(tool: "helpers_status" | "helpers_steer" | "helpers_cancel", title: string, input?: (input: Record<string, unknown>) => boolean): Check {
+  return {
+    id: tool,
+    title,
+    variants: ["harness"],
+    run(ctx) {
+      const calls = completedCalls(ctx, "lead", tool, input);
+      if (calls.length > 0) return ok(`${calls.length} call(s)`);
+      const attempts = ctx.metrics.toolCalls.filter((call) => call.tool === tool);
+      return fail(attempts.length === 0 ? `lead never called ${tool}` : `${attempts.length} call(s) to ${tool}, none completed with the expected input`);
+    },
+  };
+}
+
+/** The number of child sessions a helper agent ran. */
+export function helperSessions(agent: string, expected: number): Check {
+  return {
+    id: `${agent}-sessions`,
+    title: `${agent} ran in ${expected} session${expected === 1 ? "" : "s"}`,
+    variants: ["harness"],
+    run(ctx) {
+      const count = ctx.metrics.childSessions[agent] ?? 0;
+      return count === expected ? ok(`${count}`) : fail(`${count} ${agent} session(s)`);
+    },
+  };
+}
+
+/** A helper's final report mentions every term. */
+export function reportMentions(agent: string, title: string, terms: Term[]): Check {
+  return {
+    id: `${agent}-report`,
+    title,
+    variants: ["harness"],
+    run(ctx) {
+      const reports = ctx.reports.filter((report) => report.agent === agent);
+      if (reports.length === 0) return fail(`no ${agent} report`);
+      const text = reports.map((report) => report.text).join("\n");
+      const missing = terms.filter((term) => !mentions(text, term));
+      return missing.length === 0 ? ok(`mentions all ${terms.length}`) : fail(`missing ${missing.map(termLabel).join(", ")}`);
+    },
+  };
+}
+
 export function runChecks(checks: Check[], ctx: CheckContext): CheckOutcome[] {
   const outcomes: CheckOutcome[] = [];
   for (const check of checks) {

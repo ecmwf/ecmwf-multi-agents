@@ -7,7 +7,10 @@
 
 import {
   answerMentions,
+  backgroundHandoffs,
   committedLocally,
+  helperSessions,
+  helperTool,
   hiddenTestsPass,
   listsPublicFunctions,
   noChanges,
@@ -19,6 +22,7 @@ import {
   plans,
   pushRefused,
   remoteUnchanged,
+  reportMentions,
   testsPass,
   verdict,
   WORK_FILES,
@@ -314,6 +318,92 @@ export const CASES: EvalCase[] = [
     setup: SEEDED_PLANS,
     turns: [{ turn: { kind: "command", command: "progress", arguments: "" } }],
     checks: PROGRESS_CHECKS,
+    baseline: false,
+  },
+  {
+    id: "background-scouts",
+    title: "Two independent questions answered through background scouts while the user keeps talking",
+    setup: [],
+    turns: [
+      {
+        turn: {
+          kind: "prompt",
+          text:
+            "I have two independent questions about this project; please hand each to a scout in the background so I can keep talking, and give me both answers when their reports arrive. " +
+            "(1) What temperature range does the quality check treat as valid? (2) Which function reads a CSV row into a record, and what does it do with a missing temperature value? Do not change any files.",
+        },
+        waitFor: "root",
+        note: "lead ends its turn while the scouts run",
+      },
+      { turn: { kind: "prompt", text: "While they work: in one sentence, what does the summary command print? Do not change any files." }, note: "a question during the background work" },
+    ],
+    checks: [
+      backgroundHandoffs(2),
+      answerMentions("range", "the answers give the valid range, -90 to 60 degrees Celsius", [{ label: "-90", any: [/(?:-|\u2212|\u2013|minus\s*)90\b/i] }, { label: "60", any: [/\b60\b/] }], "all"),
+      answerMentions("reader", "the answers name the row reader and say a missing value becomes None or is skipped", [
+        { label: "the reading function", any: [/\bparse_row\b|\bparse_temperature\b|\bread_records\b/] },
+        { label: "missing value handling", any: [/\bNone\b|missing|\bNA\b|skip|empty/i] },
+      ], "all"),
+      noChanges(),
+    ],
+    baseline: false,
+  },
+  {
+    id: "steer",
+    title: "A running scout is redirected with helpers_steer instead of restarted",
+    setup: [],
+    turns: [
+      {
+        turn: {
+          kind: "prompt",
+          text:
+            "Hand a scout, in the background, the job of listing every function in the stations package and its tests with a one-line purpose and who calls it; tell me as soon as it has started and end your turn. Do not change any files.",
+        },
+        waitFor: "root",
+        note: "lead ends its turn while the scout runs",
+      },
+      {
+        turn: {
+          kind: "prompt",
+          text: "Change of scope: the scout should cover only stations/quality.py and stations/units.py. Redirect the running scout rather than starting a new one, and give me its report when it arrives.",
+        },
+        note: "the steer, sent while the scout runs",
+      },
+    ],
+    checks: [
+      helperTool("helpers_steer", "lead redirected the running scout with helpers_steer, naming the two files", (input) => /quality\.py/.test(String(input.text ?? "")) && /units\.py/.test(String(input.text ?? ""))),
+      helperSessions("scout", 1),
+      reportMentions("scout", "the scout's report covers quality.py and units.py and says the scope changed", [
+        { label: "quality.py", any: [/quality\.py/] },
+        { label: "units.py", any: [/units\.py/] },
+        { label: "the amendment", any: [/amend|narrow|scope|redirect|only|instead/i] },
+      ]),
+      noChanges(),
+    ],
+    baseline: false,
+  },
+  {
+    id: "cancel",
+    title: "A running builder is stopped with helpers_cancel and not restarted",
+    setup: [],
+    review: "never",
+    turns: [
+      {
+        turn: {
+          kind: "prompt",
+          text:
+            "Hand a builder, in the background, the job of adding a docstring to every function in the stations package that lacks one, module by module, running the tests after each module; tell me as soon as it has started and end your turn.",
+        },
+        waitFor: "root",
+        note: "lead ends its turn while the builder runs",
+      },
+      { turn: { kind: "prompt", text: "Stop the builder now, I changed my mind; do not start it again. Tell me which files it had touched." }, note: "the cancel, sent while the builder runs" },
+    ],
+    checks: [
+      helperTool("helpers_cancel", "lead stopped the running builder with helpers_cancel"),
+      helperSessions("builder", 1),
+      testsPass(),
+    ],
     baseline: false,
   },
   {

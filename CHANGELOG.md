@@ -11,6 +11,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ## [Unreleased]
 
+### Added
+
+- Helpers can run in the background. When `lead` has other work meanwhile, or you may want
+  to keep talking, it hands off in the background and the helper's report arrives later in
+  your conversation. On opencode 1.x this needs `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`
+  in your environment before opencode starts; the installer prints the line and
+  `./install.sh doctor` checks it. Without it `lead` waits for every helper, as before.
+- `lead` can see, redirect and stop its helpers: three plugin tools, `helpers_status`,
+  `helpers_steer` and `helpers_cancel`. A redirected helper keeps everything it has read and
+  done and follows the amendment at its next step, which is cheaper than starting over. Tell
+  `lead` "redirect the scout: stay in src/" or "stop the builder". Helpers cannot use these
+  tools, whatever was approved.
+- On opencode 1.x, typing into a running helper's own session now steers that helper. Before,
+  the message switched the rest of its run to `lead`'s prompt, permissions and model.
+- Eval cases `background-scouts`, `steer` and `cancel`.
+
+### Changed
+
+- Prompt budgets are ceilings raised only to a measured change: `lead` 2,050 tokens, helpers
+  750, skills 1,450, for the background rules and the guide to them.
+
 ## [0.2.0] - 2026-10-11
 
 ### Changed
