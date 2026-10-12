@@ -78,6 +78,7 @@ Source content and generator code are written in parallel against the contracts 
 | 4 | Four agents with per-agent effort (generator and plugin; prompts and docs); Makefile and version tool; eval harness | Release 0.1.0 | done |
 | 5 | Eval runs, baseline, prompt fixes from the results | Release 0.2.0 (done); the open tasks feed the next release | in progress |
 | 6 | npm package, CI, v2 central install, docs polish | | |
+| 7 | Background helpers, steering and cancel: evidence and contract first; then plugin tools, 1.x enablement and prompts in parallel; then tests, evals and docs | Contract agreed (7a); gate and integration green on 1.18.35, 1.19.0 and 2.0.16; evals show the cost of a wake and of a steer | planned |
 
 Ownership rule for parallel work: every task owns a disjoint set of files; shared contracts
 (`docs/architecture.md`, `docs/adr/`, `src/manifest.jsonc`, `tools/types.ts`, this plan) change
@@ -226,6 +227,116 @@ Findings to act on for 0.2.0:
 - [ ] README quickstart for scientists; `/guide` content final
 - [x] Version 0.1.0
 
+## Phase 7: background helpers, steering and cancel
+
+Today every hand-off blocks `lead`: it calls the task tool and waits, sees nothing of the
+helper's work, and can stop nothing. The user sees a helper go wrong and can only wait. This
+phase lets helpers run in the background, lets `lead` and the user see, redirect and stop
+them, and keeps a redirected helper's context and prompt cache instead of restarting it.
+
+Verified on 2026-10-12 with a scripted stand-in model (no hosted model), opencode 1.18.35 and,
+as a signal only, 2.0.23 (2.0.16, the pinned version, is re-verified in 7a):
+
+| Mechanism | opencode 1.18.35 | opencode 2.x |
+|---|---|---|
+| Background start | `task(background: true)` returns at once with `state="running"`; needs `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`, otherwise the parameter is not in the tool schema | `subagent(background: true)`, no flag |
+| Completion | A synthetic user message `<task id state="completed">` with the helper's final text wakes `lead`; the message carries `agent: lead` | Same, as `<subagent sessionID state="completed">` |
+| Steer a running helper | `session.prompt_async` on the child: the loop re-reads messages each step, so the text reaches the model at the next step boundary (2.0 s after sending, after 3 of 6 tool steps); the run ends at the steer, nothing runs twice | `session.prompt` with `delivery: "steer"`: same timing; `delivery: "queue"` waits for the run to end |
+| `task(task_id)` on a running helper | Chained after the run ends (`BackgroundJob.extend`), so it is "when you are done, also X", not a redirect | `subagent(sessionID)` steers a running child |
+| Cancel | `session.abort`: the helper stops; **`lead` is not told** | `session.interrupt`: the helper stops and `lead` wakes with `state="cancelled"` |
+| User promotes a blocking task | TUI keybind `session.background` (`POST /experimental/session/:id/background`): `lead`'s blocked call returns `state="running"`, `lead` continues and is woken later | `POST /api/session/:id/background`, same effect |
+| Hazard: a steer without the child's agent | The rest of the run switches to the message's agent and model; the 1.x TUI sends the composer's primary agent (`lead`, Opus) when the user types into a helper's session (`packages/tui/src/component/prompt/index.tsx:322-326,1087`) | The session owns its agent; no switch |
+
+Other agent tools offer background subagents and steering, so users will expect it. What is
+specific to this harness: a steer amends a written brief and the report still answers every
+DONE WHEN item; helpers' limits survive a steer; the reviewer stays on another model family.
+
+Decisions to agree with Tiago before 7c starts (shared contracts change):
+
+| Topic | Proposal |
+|---|---|
+| Mechanism | Build on the platforms' own background mode and session API. No task manager, poller or queue in the plugin: the wake-the-parent problem belongs inside the session loop, where opencode already solves it |
+| Tools | Three plugin tools for `lead` only, same on both platforms: `helpers_status` (children of this session: agent, title, state, steps, elapsed, last tool call), `helpers_steer(id, text)`, `helpers_cancel(id or all)`. Helpers are denied all three in the manifest and by the plugin guard |
+| Steer semantics | The brief stays the contract; a steer amends it. Helpers follow the latest message, keep earlier LIMITS unless lifted, and report what changed under ASSUMPTIONS. A steer is never an approval and never changes permissions |
+| When `lead` steers | Reactively: the user asks, or `helpers_status` (run only when the user asks or before a steer, never polled) shows a helper off its brief. Steer when the helper's reading so far is still useful and the correction is small; cancel and brief again when the direction was wrong |
+| When `lead` uses background | When it has other work meanwhile (answer the user, next plan task) or the user may want to keep talking. Each completion wakes `lead` once, so three background scouts cost up to three `lead` turns where three parallel foreground scouts cost one; `/onboard` stays foreground |
+| 1.x child pinning | The plugin's `chat.message` hook rewrites `agent`, `model` and `variant` of a message that lands in a helper's child session to that helper's own, so typing into a running helper steers it instead of switching it to `lead`. Never applied to the user's own session (`/review` and `/progress` run there by design) |
+| 1.x cancel gap | `helpers_cancel` reports the cancel in its own result; a user-side cancel shows in `helpers_status`. No injected wake |
+| Budgets | `lead` is at 1,792 of 1,800 tokens and the skills within 14; the new rules need room. Raise in 7a with the prompt diff as the justification |
+
+Tasks, in order; **(par)** marks what can run side by side once 7a is done:
+
+7a. Evidence and contract
+
+- [ ] Samet: `docs/research/background-helpers.md`: the table above with command runs on
+  1.18.35, 1.19.0 and 2.0.16 (the stand-in experiment becomes a script under `tools/` or a
+  suite in `plugin/plugin.integration.test.ts`), source references for each claim, the TUI
+  hazard, and two checks that decide 7c: how a plugin tool surfaces on 2.0.16 (a tool of its
+  own, or only through Code Mode `execute`) and whether an agent's `permissions` can deny it;
+  and what happens on 1.x when a wake lands while a helper answers in the user's own session
+  (`/review`, `/progress`): the wake carries `agent: lead`, so it may cut the helper's run.
+  Also the tool id check: the `helpers_*` ids against the tool lists of 1.18.35, 1.19.0 and
+  2.0.16 (`GET /experimental/tool` and `GET /api/tool`), as `command-clashes.md` did for
+  commands
+- [ ] Samet: `docs/adr/0002-background-helpers-and-steering.md` with the decisions table above
+  as agreed, and the tool shape settled there: three tools, or one `helpers` tool with an
+  `action` argument, chosen by what the 2.0.16 check above allows and by which gives the
+  simplest permission rules
+- [ ] Samet: `docs/architecture.md`: principle 3 amended (brief is the contract, a steer
+  amends it); the three tools in the permission table; routing rules for background,
+  steer and cancel; the notification as a report form; budgets raised. `src/manifest.jsonc`:
+  budgets and permission rules for the tools, with the generator mapping the new actions to
+  tool ids on both platforms (`tools/load.ts`, `tools/emit-v1.ts`, `tools/emit-v2.ts`)
+
+7b. Platform enablement
+
+- [ ] Samet: **(par)** opencode 1.x: `install.sh` prints and `docs/install.md` explains
+  `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` (shell profile or module file; the plugin
+  cannot set it, the flag is read before plugins load); `doctor` checks it through
+  `opencode debug config` or the tool schema; without it everything degrades to foreground
+  and the `lead` prompt must still read correctly
+
+7c. Plugin
+
+- [ ] Samet: **(par)** `helpers_status`, `helpers_steer`, `helpers_cancel` registered through
+  the plugin `tool` hook on both platforms, with the client calls per platform (1.x:
+  `session.children`, `session.status`, `session.messages`, `session.prompt_async` with the
+  child's agent, model and variant, `session.abort`; 2.0.16: `GET /api/session` by parent,
+  `prompt` with `delivery: steer`, `interrupt`); refuse a target that is not a helper child
+  of the caller's session; output of `helpers_status` at most twelve lines
+- [ ] Samet: **(par)** Guard: helpers denied the three tools in `tool.execute.before` whatever
+  was approved, like the shell guard; unit tests
+- [ ] Samet: 1.x child pinning in `chat.message`; test that the isolation hook leaves a
+  steered child session alone and that `/review` in the user's session is unaffected; decide
+  from the 7a check what to do with a wake that lands during an inline `/review` (hold it,
+  or tell `lead` not to start background work before a `/review`)
+
+7d. Prompts
+
+- [ ] Samet: **(par)** `lead`: background rule, reading `<task>` and `<subagent>` wakes as
+  reports (check DONE WHEN as for any report, never re-run the helper's checks twice), steer
+  versus cancel rule, no polling, the two safety limits; a running helper is reached only
+  through `helpers_steer`, never through `task_id` or `sessionID` on the delegation tool, so
+  every redirect passes the guard and carries the helper's own agent and model
+- [ ] Samet: **(par)** `scout`, `builder`, `reviewer`: a later message amends the brief;
+  report what changed and what was already done before it; on 1.x the step limit counts the
+  whole run, so a steer near the limit gets "stop and report"
+- [ ] Samet: **(par)** `/guide` skill and README: the user's path (open the helper's session
+  and type; the `session.background` keybind; "ask `lead` to redirect or stop it")
+
+7e. Verification and release
+
+- [ ] Samet: Integration suite on 1.18.35, 1.19.0 and 2.0.16: background start and wake,
+  steer mid-run, `task_id` chaining, cancel, promotion, 1.x pinning, helpers denied the
+  tools
+- [ ] Samet: Evals: `background-scouts` (two independent questions while the user keeps
+  talking), `steer` (the user redirects a running scout; the report names the amendment;
+  cost against cancel-and-restart), `cancel`; the shared cases re-run to show no regression
+- [ ] Samet: `CHANGELOG.md` entries and `docs/install.md`; release when Tiago agrees
+
+Exit: gate and integration green on all three versions; the eval summary shows what a wake
+and a steer cost; `/guide` explains it in plain words.
+
 ## Open questions
 
 - npm scope for the plugin package (the repository is github.com/ecmwf/ecmwf-multi-agents).
@@ -254,3 +365,7 @@ Findings to act on for 0.2.0:
   command, `make release X.Y.Z`.
 - 2026-10-11: 0.2.0 released with `make release 0.2.0`, the first release made with it: gate
   twice, release commit, tag and GitHub release in one run.
+- 2026-10-12: Phase 7 planned by Samet after checking the platforms' background and steering
+  mechanics against their source and a stand-in model on 1.18.35 and 2.0.23 (table in the
+  phase). opencode's own background mode is enough; the plugin adds status, steer and cancel
+  for `lead` and pins 1.x child sessions to their helper.
