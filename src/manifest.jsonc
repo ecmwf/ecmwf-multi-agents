@@ -202,7 +202,7 @@
       "template": "commands/plan.md"
     },
     "go": {
-      "description": "Carry out an approved plan task by task",
+      "description": "Carry out an approved plan",
       "agent": "lead",
       "template": "commands/go.md"
     },

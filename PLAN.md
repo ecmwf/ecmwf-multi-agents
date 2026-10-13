@@ -433,13 +433,13 @@ slowest task of each wave, and `lead` stays reachable. The rule in the `lead` pr
 ("background only when you have other work meanwhile") holds for `/go`, where the other work
 is the next task.
 
-Decisions, to agree with Tiago before 8b:
+Decisions (built on this basis; Tiago reviews them with the pull request):
 
 | Topic | Proposal |
 |---|---|
-| When | Background when two or more tasks are ready at once, or when one task is ready and the user is talking; foreground when a single task is the only thing left, so the result comes back in the same turn. Without the 1.x flag the tool refuses `background`, and the skill falls back to the wave as today |
-| On a completion | Read every pending completion before starting new work; check its DONE WHEN items, re-run cheap checks, tick, log; then start the tasks that became ready, at most three helpers running at once. Keep the turn short: one line to the user per task, no summary until the plan is done or stopped |
-| On a failure | As today: brief the same agent again with the gap, in the background; stop after the second failure or three failed reports in a row, and cancel the other running helpers with `helpers_cancel` only if their work depends on the failed task |
+| When | Background when two or more tasks are ready at once, or when the user may want to keep talking; otherwise one task runs in the foreground, so the result comes back in the same turn. Without the 1.x flag the tool refuses `background`, and the skill falls back to the wave as today |
+| On a completion | Read every pending completion before starting new work; check its DONE WHEN items, re-run cheap checks, tick, log; then start the tasks that became ready, at most three helpers running at once. Keep the turn short: one line to the user per task |
+| On a failure | As today: brief the same agent again with the gap, the same way as the first attempt; stop after the second failure or three failed reports in a row. After a stop nothing new starts; running helpers finish and those that pass are ticked (a running helper's task cannot depend on a failed one: a task starts only when its dependencies are ticked) |
 | Resuming | On `/go` in a new session, `helpers_status` shows no helpers (they belonged to the old session); unfinished work is found from the log and `git status` as today. Mid-session, a task whose helper is running stays in flight: never re-brief a running task |
 | Final verification and review | Foreground, as today: they are the last things and nothing runs beside them |
 | What the user sees | Each wake makes `lead` speak; the skill asks for one line per ticked task so a plan with five tasks does not read as five reports |
@@ -461,25 +461,29 @@ Decisions, to agree with Tiago before 8b:
   flag) are already pinned there. The skill is prose a model follows, which only the evals
   can check
 - [x] Samet: Evals: `plan-go` rerun on the default profile three times, with wall clock, cost
-  and `lead` requests against the 0.1.0 run ($1.12, 43 requests, 5m 28s); a `plan-go-chat`
-  variant where the user asks a question while the tasks run and gets an answer before the
-  plan ends
+  and requests against the 0.1.0 run ($1.12, 43 requests, 5m 28s); a `go-chat` case where
+  the user asks a question while the tasks run and `lead` answers it before the next
+  completion (checked in the session's messages, not by word-matching reports)
 - [x] Samet: `CHANGELOG.md`, `/guide`, README line on `/go`
 
 Measured (2026-10-13, default profile, 1.18.35, three repeats each, all pass, $5.78):
 
-| Case | Cost | Wall clock | `lead` requests | Background hand-offs | What happened |
+| Case | Cost | Wall clock | Requests, all agents | Background hand-offs | What happened |
 |---|---|---|---|---|---|
-| `plan-go-chat` | $0.80, $0.82, $0.76 | 2m 45s, 3m 10s, 2m 30s | 26, 23, 26 | 5 of 5 each | T1 and T2 together in the background, the user's question answered while they ran, every completion ticked in one line, the plan done |
-| `plan-go` | $1.05, $1.28, $1.08 | 5m 06s, 6m 17s, 5m 19s | 23, 28, 28 | 2, 2, 0 of 5 to 6 | The plans `lead` wrote were chains (function, then command, then tests, then README) with at most two independent tasks, so the skill ran most tasks in the foreground, as its rule says; against 0.1.0 ($1.12, 5m 28s) no difference |
+| `go-chat` (then named `plan-go-chat`) | $0.80, $0.82, $0.76 | 2m 45s, 3m 10s, 2m 30s | 45, 39, 43 | 5 of 5 each | T1 and T2 together in the background, the user's question answered while they ran (read from the transcripts; the check that proves it was added after this run), every completion ticked in one line, the plan done |
+| `plan-go` | $1.05, $1.28, $1.08 | 5m 06s, 6m 17s, 5m 19s | 44, 56, 48 | 2 of 5, 2 of 6, 0 of 4 | The plans `lead` wrote were chains (function, then command, then tests, then README) with at most two independent tasks, so the skill ran most tasks in the foreground, as its rule says; against 0.1.0 ($1.12, 43 requests, 5m 28s) no difference |
 
 So the background `/go` pays when a plan has parallel tasks or the user wants to talk, and
-costs nothing on a chain. The one-line-per-task rule held: the `lead` turns of
-`plan-go-chat` read as a short progress log, not five reports. The `plan-go` check for a
-background hand-off stays record-only, since a plan may have none.
+costs nothing on a chain. The one-line-per-task rule held: the `lead` turns of `go-chat`
+read as a short progress log, not five reports. The `plan-go` check for a background
+hand-off is recorded only, since a plan may have none. Measured on 1.18.35; the run on
+2.0.16 is open below.
 
-Exit: the `plan-go` eval passes on both platforms with background hand-offs; the eval summary
-shows the wall clock and cost difference; `/guide` says what the user will see.
+- [ ] Samet: `go-chat` and `plan-go` once on 2.0.16 (the `subagent` tool's `background`,
+  no flag), and `go-chat` once more on 1.18.35 with the `answered-during-plan` check in place
+
+Exit: `go-chat` and `plan-go` pass on both platforms; the eval summary shows the wall clock
+and cost against 0.1.0; `/guide` says what the user will see.
 
 ## Open questions
 
@@ -513,11 +517,16 @@ shows the wall clock and cost difference; `/guide` says what the user will see.
   mechanics against their source and a stand-in model on 1.18.35 and 2.0.23 (table in the
   phase). opencode's own background mode is enough; the plugin adds status, steer and cancel
   for `lead` and pins 1.x child sessions to their helper.
-- 2026-10-13: Phase 8 built and measured by Samet on a branch: `/go` hands ready tasks off
-  in the background (skill and contract, no plugin change). On a seeded plan with two
-  independent tasks the user's question is answered while they run and the plan finishes in
-  under three minutes; on the plans `lead` writes for the sample repository, which are
+- 2026-10-13: Phase 8 built and measured by Samet on a branch, on 1.18.35: `/go` hands ready
+  tasks off in the background (skill and contract, no plugin change). On a seeded plan with
+  two independent tasks the user's question is answered while they run and the plan finishes
+  in about three minutes; on the plans `lead` writes for the sample repository, which are
   chains, nothing changes against 0.1.0. Summaries in `evals/results/go-background.md`.
+  Independent review before the pull request: the stop rule had a clause that could never
+  apply (no running task can depend on a failed one) and lacked the one that matters (start
+  nothing after a stop); the interim-answer check matched a helper's report, now it reads the
+  session's messages; the command's description still said "task by task"; two restated
+  numbers were wrong. All fixed on the branch.
 - 2026-10-12: Tiago's review of the branch. Blocking: a session that starts with `/review`
   or `/progress` on 1.x was pinned to that helper for good, because the plugin took a session
   whose first message is a helper's for a child; children now come from the `session.created`

@@ -136,13 +136,14 @@ export function testsPass(): Check {
   };
 }
 
-/** The case's hidden tests pass; they live outside the project and import its package. */
-export function hiddenTestsPass(caseId: string): Check {
+/** The hidden tests of `folder` (a case id under evals/hidden/) pass; they live outside the project and import its package. */
+export function hiddenTestsPass(folder: string): Check & { folder: string } {
   return {
     id: "hidden-tests",
-    title: `hidden tests pass (evals/hidden/${caseId})`,
+    folder,
+    title: `hidden tests pass (evals/hidden/${folder})`,
     run(ctx) {
-      const dir = ctx.hiddenTests(caseId);
+      const dir = ctx.hiddenTests(folder);
       const result = ctx.exec(["python3", "-m", "unittest", "discover", "-s", dir, "-t", dir, "-p", "test_*.py"]);
       return result.code === 0 ? ok(lastLine(result.output)) : fail(shorten(result.output));
     },
@@ -564,6 +565,39 @@ export function completionsWakeLead(): Check {
       }
       if (completions === 0) return fail("no background completion arrived in the user's session");
       return wrong.length === 0 ? ok(`${completions} completion(s), all answered by lead`) : fail(wrong.join("; "));
+    },
+  };
+}
+
+/**
+ * lead answered the user's question while the plan's helpers were still running: in a root
+ * session, the assistant text between the question and the next background completion is
+ * lead's and mentions every term. A helper's report that happens to use the same words does not
+ * count, and an answer that came only with the plan's closing report does not count either.
+ */
+export function answeredDuringPlan(question: string, terms: Term[]): Check {
+  return {
+    id: "answered-during-plan",
+    title: "lead answered the question before the next completion arrived",
+    variants: ["harness"],
+    run(ctx) {
+      const roots = new Set(ctx.rootSessions);
+      for (const session of ctx.sessions.filter((item) => roots.has(item.id))) {
+        const messages = session.messages;
+        const asked = messages.findIndex((message) => message.info.role === "user" && message.parts.some((part) => part.type === "text" && part.text === question));
+        if (asked === -1) continue;
+        const after = messages.slice(asked + 1);
+        const completion = after.findIndex((message) => message.info.role === "user" && message.parts.some((part) => part.type === "text" && part.synthetic === true));
+        const window = completion === -1 ? after : after.slice(0, completion);
+        const answers = window.filter((message) => message.info.role === "assistant");
+        if (answers.length === 0) return fail("no answer before the next completion");
+        const notLead = answers.find((message) => message.info.agent !== "lead");
+        if (notLead !== undefined) return fail(`answered by ${notLead.info.agent ?? "an unknown agent"}`);
+        const text = answers.flatMap((message) => message.parts.filter((part) => part.type === "text").map((part) => part.text ?? "")).join("\n");
+        const missing = terms.filter((term) => !mentions(text, term));
+        return missing.length === 0 ? ok(completion === -1 ? "answered (no later completion)" : "answered before the next completion") : fail(`the answer lacks ${missing.map(termLabel).join(", ")}`);
+      }
+      return fail("the question was not found in a root session");
     },
   };
 }

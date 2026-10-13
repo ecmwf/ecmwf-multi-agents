@@ -4,6 +4,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   answerMentions,
+  answeredDuringPlan,
   committedLocally,
   completionsWakeLead,
   isGitWrite,
@@ -321,5 +322,34 @@ describe("completionsWakeLead", () => {
     const child = session([completion(), message("assistant", "scout", "x")], "child");
     const typed = session([message("user", "lead", '<task id="x"> typed by the user'), message("assistant", "reviewer", "x"), completion(), message("assistant", "lead", "ok")]);
     expect(run(completionsWakeLead(), context({ sessions: [child, typed], rootSessions: ["root"] }))).toEqual({ pass: true, detail: "1 completion(s), all answered by lead" });
+  });
+});
+
+describe("answeredDuringPlan", () => {
+  let id = 0;
+  const message = (role: string, agent: string, text: string, synthetic = false): ApiMessage => ({
+    info: { id: `m${++id}`, sessionID: "root", role, agent },
+    parts: [{ type: "text", text, ...(synthetic ? { synthetic: true } : {}) }],
+  });
+  const completion = () => message("user", "lead", '<task id="ses_c" state="completed">\nTemperatures in degrees Celsius.\n</task>', true);
+  const question = "What unit?";
+  const terms = [{ label: "Celsius", any: [/celsius/i] }];
+  const session = (messages: ApiMessage[]): SessionData => ({ id: "root", messages });
+  const check = (messages: ApiMessage[]) => run(answeredDuringPlan(question, terms), context({ sessions: [session(messages)], rootSessions: ["root"] }));
+
+  test("passes when lead's answer sits between the question and the next completion", () => {
+    expect(check([message("user", "lead", "/go"), message("assistant", "lead", "started"), message("user", "lead", question), message("assistant", "lead", "Degrees Celsius by default."), completion(), message("assistant", "lead", "T1 done")])).toEqual({ pass: true, detail: "answered before the next completion" });
+  });
+
+  test("fails when the only answer came after the next completion, when a helper answered, or when the terms are missing", () => {
+    expect(check([message("user", "lead", question), completion(), message("assistant", "lead", "Celsius, and T1 is done")]).detail).toBe("no answer before the next completion");
+    expect(check([message("user", "lead", question), message("assistant", "scout", "Celsius"), completion()]).detail).toBe("answered by scout");
+    expect(check([message("user", "lead", question), message("assistant", "lead", "Kelvin"), completion()]).detail).toBe("the answer lacks Celsius");
+    expect(check([message("user", "lead", "something else")]).detail).toBe("the question was not found in a root session");
+  });
+
+  test("a helper's report that mentions the term does not count", () => {
+    const reportOnly = [message("user", "lead", question), completion(), message("assistant", "lead", "T3 done")];
+    expect(check(reportOnly).pass).toBe(false);
   });
 });

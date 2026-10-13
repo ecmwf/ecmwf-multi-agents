@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts 
 SPDX-License-Identifier: Apache-2.0
 -->
 
-<!-- Eval run on the go-background branch (after 0.3.0), default profile, opencode 1.18.35, three repeats each: plan-go (lead writes and carries out a plan) and plan-go-chat (a seeded five-task plan with two independent tasks, and a question from the user while they run). Kept for comparison with evals/results/0.1.0.md. -->
+<!-- Eval run on the go-background branch (after 0.3.0), default profile, opencode 1.18.35, three repeats each: plan-go (lead writes and carries out a plan) and plan-go-chat, since renamed go-chat (a seeded five-task plan with two independent tasks, and a question from the user while they run). Kept for comparison with evals/results/0.1.0.md. -->
 
 # Eval summary
 

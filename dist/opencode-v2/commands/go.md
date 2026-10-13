@@ -1,10 +1,10 @@
 ---
 # managed by ecmwf-multi-agents
-description: "Carry out an approved plan task by task"
+description: "Carry out an approved plan"
 agent: lead
 ---
 
-Carry out an approved plan, task by task.
+Carry out an approved plan.
 
 Plan (may be empty): $ARGUMENTS
 

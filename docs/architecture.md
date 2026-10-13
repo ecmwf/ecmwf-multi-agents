@@ -284,19 +284,20 @@ Either way, `lead` acts on a REJECT or on a plan's state only when the user asks
 
 1. Read the plan file; the open tasks whose dependencies are done are ready.
 2. Brief each ready task's agent (`builder` or `scout`) with the task's files, criteria and
-   checks. When two or more tasks are ready, or the user is talking, hand them off in the
-   background, at most three helpers at once; a single last task runs in the foreground, so
-   its result comes back in the same turn. Where the platform refuses a background hand-off
-   (opencode 1.x without its flag), the ready tasks run together in the foreground, as a wave.
+   checks. When two or more tasks are ready, or the user may want to keep talking, hand them
+   off in the background, at most three helpers at once; otherwise one task runs in the
+   foreground, so its result comes back in the same turn. Where the platform refuses a
+   background hand-off (opencode 1.x without its flag), the ready tasks run together in the
+   foreground, as a wave.
 3. On each completion, check the report against the criteria and re-run cheap checks. Read
    every completion that has arrived before starting new work.
 4. On success, tick the task, add a line to the plan's log, tell the user in one line, and
    start the tasks that became ready. On failure, log it and brief the same agent again with
-   the gap stated exactly, in the background like the first attempt. A task whose helper is
-   still running is never briefed again.
+   the gap stated exactly, the same way as the first attempt. A task whose helper is still
+   running is never briefed again.
 5. Stop when all tasks are done, a task is blocked or fails twice, or three reports in a row
-   fail. On a stop, running helpers whose tasks depend on the failed one are cancelled; the
-   others finish and are ticked.
+   fail. After a stop nothing new starts; running helpers finish and those that pass are
+   ticked.
 6. Run the plan's final verification in the foreground, then one review of the whole change
    if the policy calls for it. Tasks get no review of their own.
 

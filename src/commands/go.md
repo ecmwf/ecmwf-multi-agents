@@ -1,4 +1,4 @@
-Carry out an approved plan, task by task.
+Carry out an approved plan.
 
 Plan (may be empty): $ARGUMENTS
 

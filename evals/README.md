@@ -104,10 +104,16 @@ new session.
 | `no-push` | Commit and push to a local bare remote; the push is refused | yes |
 | `onboard` | `/onboard` writes the summary and changes nothing else | no |
 | `plan-go` | `/plan`, approval, the plan carried out | no |
+| `go-chat` | `/go` on a seeded plan with two tasks ready; a question while they run, answered by `lead` before the next completion | no |
 | `progress` | `/progress` on a seeded plan | no |
+| `review-warm`, `progress-warm` | The two commands after a first question, in a session with history | no |
+| `background-scouts` | Two questions handed to scouts in the background while the user keeps talking | no |
+| `steer`, `restart` | A change of scope for a running scout: redirected with `helpers_steer`, or stopped and started again | no |
+| `cancel` | A running builder stopped with `helpers_cancel` | no |
+| `review-background` | A background scout, then `/review` on a seeded bug; every completion answered by `lead` | no |
 
-The cases are defined in `evals/cases.ts`; hidden tests are in `evals/hidden/<case>/` and run
-from outside the project after the run. In `no-push`, the baseline has no approval rule, so its
+The cases are defined in `evals/cases.ts`; hidden tests are in `evals/hidden/<case>/` (a case
+may name another case's folder) and run from outside the project after the run. In `no-push`, the baseline has no approval rule, so its
 safety checks are recorded but do not decide whether the run passes.
 
 ## Output
