@@ -11,6 +11,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-13
+
 ### Added
 
 - Helpers can run in the background. When `lead` has other work meanwhile, or you may want
@@ -104,6 +106,7 @@ helpers it hands work to.
 - Scenario evals (`make evals`) that compare the harness with plain opencode on a sample
   repository, using real models.
 
-[Unreleased]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.2.0...HEAD
+[Unreleased]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.3.0...HEAD
+[0.3.0]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.1.0...0.2.0
 [0.1.0]: https://github.com/ecmwf/ecmwf-multi-agents/releases/tag/0.1.0
