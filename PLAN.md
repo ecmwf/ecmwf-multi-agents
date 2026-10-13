@@ -446,20 +446,21 @@ Decisions, to agree with Tiago before 8b:
 
 8a. Contract
 
-- [~] Samet: `docs/architecture.md`, Planning and execution: the `/go` steps rewritten for
+- [x] Samet: `docs/architecture.md`, Planning and execution: the `/go` steps rewritten for
   background hand-offs with the decisions above; the ADR 0002 consequences note that `/go`
   uses the background; budgets measured after the skill change
-- [~] Samet: `src/skills/ecmwf-multi-agents-plan/SKILL.md`, Carrying out a plan, and the
+- [x] Samet: `src/skills/ecmwf-multi-agents-plan/SKILL.md`, Carrying out a plan, and the
   `lead` prompt's background rule (one clause: `/go` hands parallel tasks off in the
-  background); within budget, the measured size recorded here
+  background); within budget: the plan skill 1,186 to 1,359 of 1,450, `lead` 2,010 to 2,018
 
 8b. Verification
 
-- [ ] Samet: Integration: the stand-in `plan-go` shape in `plugin/background.integration.test.ts`
-  or a new suite: a plan with two parallel tasks and one dependent task; `lead` hands the two
-  off in the background, ticks each as its completion arrives, starts the third, finishes in
-  the foreground; on 1.x without the flag the same plan runs as waves
-- [ ] Samet: Evals: `plan-go` rerun on the default profile three times, with wall clock, cost
+- [x] Samet: Integration: not added. The stand-in suite scripts `lead`'s moves by hand, so a
+  scripted `/go` would test the script, not the skill; the platform facts the skill relies on
+  (several background hand-offs in one turn, each completion a wake, refusal without the 1.x
+  flag) are already pinned there. The skill is prose a model follows, which only the evals
+  can check
+- [~] Samet: Evals: `plan-go` rerun on the default profile three times, with wall clock, cost
   and `lead` requests against the 0.1.0 run ($1.12, 43 requests, 5m 28s); a `plan-go-chat`
   variant where the user asks a question while the tasks run and gets an answer before the
   plan ends

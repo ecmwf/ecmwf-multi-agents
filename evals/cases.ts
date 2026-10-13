@@ -305,6 +305,7 @@ export const CASES: EvalCase[] = [
   },
   {
     id: "plan-go",
+    env: BACKGROUND,
     title: "/plan, approval, then the plan carried out (with /go in a new session if needed)",
     setup: [],
     review: "auto",
@@ -313,7 +314,30 @@ export const CASES: EvalCase[] = [
       { turn: { kind: "prompt", text: "Approved. Go ahead." }, when: noPlanDone, note: "approve the plan" },
       { turn: { kind: "command", command: "go", arguments: "" }, newSession: true, when: noPlanDone, note: "lead did not finish in the same session: /go in a new session" },
     ],
-    checks: [planDone(), hiddenTestsPass("plan-go"), testsPass()],
+    checks: [planDone(), hiddenTestsPass("plan-go"), testsPass(), backgroundHandoffs(1, ["harness"])],
+    baseline: false,
+  },
+  {
+    id: "plan-go-chat",
+    env: BACKGROUND,
+    title: "/go on a seeded plan while the user asks a question; the answer comes before the plan ends",
+    setup: [
+      { kind: "exclude-workdir" },
+      { kind: "write", path: ".ecmwf-multi-agents/plans/json-output.md", content: JSON_PLAN.replace("Status: in progress", "Status: approved").replace(/- \[x\] T1/, "- [ ] T1").replace(/- \[x\] T2/, "- [ ] T2").replace(/\n- 2026-10-02: T1 done.*\n- 2026-10-02: T2 done.*\n/, "\n"), mtime: "2026-10-02T10:00:00Z" },
+    ],
+    review: "never",
+    turns: [
+      { turn: { kind: "command", command: "go", arguments: "json-output" }, waitFor: "root", note: "lead ends its first turn with T1 and T2 in the background" },
+      { turn: { kind: "prompt", text: "While that runs: in one sentence, what unit does the summary command print by default? Do not change any files." }, note: "a question while the tasks run" },
+      { turn: { kind: "prompt", text: "Carry on with the plan until it is done." }, when: noPlanDone, note: "lead finishes the plan" },
+    ],
+    checks: [
+      backgroundHandoffs(2),
+      answerMentions("interim", "the question was answered while the tasks ran", [{ label: "Celsius", any: [/celsius|°C|\bC\b/i] }], "all"),
+      planDone(),
+      hiddenTestsPass("plan-go-chat"),
+      testsPass(),
+    ],
     baseline: false,
   },
   {
