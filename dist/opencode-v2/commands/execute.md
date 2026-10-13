@@ -1,6 +1,6 @@
 ---
 # managed by ecmwf-multi-agents
-description: "Carry out an approved plan task by task, checking each result; stops when it needs you"
+description: "Carry out an approved plan: ready tasks run together in the background, every result is checked; stops when it needs you"
 agent: lead
 ---
 

@@ -5,7 +5,7 @@
 // CheckContext, so the checks can be tested without opencode.
 
 import { WORK_DIR } from "./project.ts";
-import type { Check, CheckContext, CheckOutcome, CheckResult, ToolCall, Variant } from "./types.ts";
+import type { ApiMessage, Check, CheckContext, CheckOutcome, CheckResult, ToolCall, Variant } from "./types.ts";
 
 const ok = (detail: string): CheckResult => ({ pass: true, detail });
 const fail = (detail: string): CheckResult => ({ pass: false, detail });
@@ -554,9 +554,7 @@ export function completionsWakeLead(): Check {
       const wrong: string[] = [];
       for (const session of ctx.sessions.filter((item) => roots.has(item.id))) {
         session.messages.forEach((message, index) => {
-          const texts = message.parts.filter((part) => part.type === "text");
-          const completion = message.info.role === "user" && texts.length > 0 && texts.every((part) => part.synthetic === true) && (texts[0]?.text ?? "").startsWith("<task ");
-          if (!completion) return;
+          if (!isCompletion(message)) return;
           completions += 1;
           const answer = session.messages.slice(index + 1).find((next) => next.info.role === "assistant");
           if (answer === undefined) wrong.push("one was never answered");
@@ -569,11 +567,17 @@ export function completionsWakeLead(): Check {
   };
 }
 
+/** A user message opencode wrote itself as a background helper's completion (`<task ...>`). */
+function isCompletion(message: ApiMessage): boolean {
+  const texts = message.parts.filter((part) => part.type === "text");
+  return message.info.role === "user" && texts.length > 0 && texts.every((part) => part.synthetic === true) && (texts[0]?.text ?? "").startsWith("<task ");
+}
+
 /**
  * lead answered the user's question while the plan's helpers were still running: in a root
  * session, the assistant text between the question and the next background completion is
- * lead's and mentions every term. A helper's report that happens to use the same words does not
- * count, and an answer that came only with the plan's closing report does not count either.
+ * lead's and mentions every term. A later completion must exist, or nothing shows a helper was
+ * still running; a helper's report that uses the same words does not count.
  */
 export function answeredDuringPlan(question: string, terms: Term[]): Check {
   return {
@@ -587,17 +591,43 @@ export function answeredDuringPlan(question: string, terms: Term[]): Check {
         const asked = messages.findIndex((message) => message.info.role === "user" && message.parts.some((part) => part.type === "text" && part.text === question));
         if (asked === -1) continue;
         const after = messages.slice(asked + 1);
-        const completion = after.findIndex((message) => message.info.role === "user" && message.parts.some((part) => part.type === "text" && part.synthetic === true));
-        const window = completion === -1 ? after : after.slice(0, completion);
-        const answers = window.filter((message) => message.info.role === "assistant");
+        const completion = after.findIndex(isCompletion);
+        if (completion === -1) return fail("no completion arrived after the question, so nothing shows a helper was still running");
+        const answers = after.slice(0, completion).filter((message) => message.info.role === "assistant");
         if (answers.length === 0) return fail("no answer before the next completion");
         const notLead = answers.find((message) => message.info.agent !== "lead");
         if (notLead !== undefined) return fail(`answered by ${notLead.info.agent ?? "an unknown agent"}`);
         const text = answers.flatMap((message) => message.parts.filter((part) => part.type === "text").map((part) => part.text ?? "")).join("\n");
         const missing = terms.filter((term) => !mentions(text, term));
-        return missing.length === 0 ? ok(completion === -1 ? "answered (no later completion)" : "answered before the next completion") : fail(`the answer lacks ${missing.map(termLabel).join(", ")}`);
+        return missing.length === 0 ? ok("answered before the next completion") : fail(`the answer lacks ${missing.map(termLabel).join(", ")}`);
       }
       return fail("the question was not found in a root session");
+    },
+  };
+}
+
+/**
+ * At least `count` background hand-offs by lead were in flight together: that many began before
+ * the first background completion arrived in a root session. Two hand-offs made one after the
+ * other, each waited for, would not pass.
+ */
+export function overlappingHandoffs(count = 2): Check {
+  return {
+    id: "overlapping-handoffs",
+    title: `${count} background hand-offs ran at the same time`,
+    variants: ["harness"],
+    run(ctx) {
+      const roots = new Set(ctx.rootSessions);
+      const firstCompletion = Math.min(
+        ...ctx.sessions
+          .filter((item) => roots.has(item.id))
+          .flatMap((session) => session.messages.filter(isCompletion).map((message) => message.info.time?.created ?? Number.POSITIVE_INFINITY)),
+      );
+      const started = ctx.metrics.toolCalls.filter(
+        (call) => call.agent === "lead" && (call.tool === "task" || call.tool === "subagent") && call.status === "completed" && call.input.background === true && call.start !== undefined && call.start < firstCompletion,
+      );
+      if (!Number.isFinite(firstCompletion)) return started.length >= count ? ok(`${started.length} started, none completed yet`) : fail("no background completion arrived");
+      return started.length >= count ? ok(`${started.length} started before the first completion`) : fail(`${started.length} of ${count} started before the first completion`);
     },
   };
 }

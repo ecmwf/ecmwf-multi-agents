@@ -86,7 +86,7 @@ included; the file it points to stays.
 The runner plays the user. It approves permission requests once, except pushes, pull requests,
 merges and history rewrites, which it refuses. It answers questions with the first option,
 which the harness prompts mark as the recommended one. In `plan-execute` it approves the plan with
-"Approved. Go ahead." and, if lead does not finish the plan in the same session, runs `/go` in a
+"Approved. Go ahead." and, if lead does not finish the plan in the same session, runs `/execute` in a
 new session.
 
 ## Cases

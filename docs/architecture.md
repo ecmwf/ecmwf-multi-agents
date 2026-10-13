@@ -292,7 +292,7 @@ Either way, `lead` acts on a REJECT or on a plan's state only when the user asks
 3. On each completion, check the report against the criteria and re-run cheap checks. Read
    every completion that has arrived before starting new work.
 4. On success, tick the task, add a line to the plan's log, tell the user in one line, and
-   start the tasks that became ready. On failure, log it and brief the same agent again with
+   fill the free helper slots from the ready tasks that are not running yet. On failure, log it and brief the same agent again with
    the gap stated exactly, the same way as the first attempt. A task whose helper is still
    running is never briefed again.
 5. Stop when all tasks are done, a task is blocked or fails twice, or three reports in a row

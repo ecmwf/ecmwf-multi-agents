@@ -439,7 +439,7 @@ Decisions (built on this basis; Tiago reviews them with the pull request):
 | Topic | Proposal |
 |---|---|
 | When | Background when two or more tasks are ready at once, or when the user may want to keep talking; otherwise one task runs in the foreground, so the result comes back in the same turn. Without the 1.x flag the tool refuses `background`, and the skill falls back to the wave as today |
-| On a completion | Read every pending completion before starting new work; check its DONE WHEN items, re-run cheap checks, tick, log; then start the tasks that became ready, at most three helpers running at once. Keep the turn short: one line to the user per task |
+| On a completion | Read every pending completion before starting new work; check its DONE WHEN items, re-run cheap checks, tick, log; then fill the free helper slots from the ready tasks not yet running, at most three helpers at once. Keep the turn short: one line to the user per task |
 | On a failure | As today: brief the same agent again with the gap, the same way as the first attempt; stop after the second failure or three failed reports in a row. After a stop nothing new starts; running helpers finish and those that pass are ticked (a running helper's task cannot depend on a failed one: a task starts only when its dependencies are ticked) |
 | Resuming | On `/execute` in a new session, `helpers_status` shows no helpers (they belonged to the old session); unfinished work is found from the log and `git status` as today. Mid-session, a task whose helper is running stays in flight: never re-brief a running task |
 | Final verification and review | Foreground, as today: they are the last things and nothing runs beside them |
@@ -481,7 +481,9 @@ hand-off is recorded only, since a plan may have none. Measured on 1.18.35; the 
 2.0.16 is open below.
 
 - [x] Samet: `execute-chat` once more on 1.18.35 with the `answered-during-plan` check in place:
-  pass, 5 of 5, $0.78, 2m 48s (`evals/results/go-background.md`). On 2.0.16 the evals cannot
+  pass, 5 of 5, $0.78, 2m 48s; and again with that check requiring a real later completion
+  and the new `overlapping-handoffs` check (both hand-offs began before the first completion,
+  so a sequential run would fail): pass, 6 of 6, $0.88 (`evals/results/go-background.md`). On 2.0.16 the evals cannot
   run: the runner drives the 1.x API only and refuses a 2.x binary; a 2.x eval runner is its
   own task (below), and the skill's 2.0.16 side rests on the integration suite's pinned
   facts (the `subagent` tool's `background`, each completion a wake)

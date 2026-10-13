@@ -19,6 +19,7 @@ import {
   noHelperGitWrites,
   noWorkaround,
   onboardChecks,
+  overlappingHandoffs,
   onlyChanged,
   planDone,
   plans,
@@ -347,6 +348,7 @@ export const CASES: EvalCase[] = [
     ],
     checks: [
       backgroundHandoffs(2),
+      overlappingHandoffs(2),
       answeredDuringPlan(UNIT_QUESTION, [{ label: "Celsius", any: [/celsius|°C/i] }]),
       planDone(),
       hiddenTestsPass("feature"),
