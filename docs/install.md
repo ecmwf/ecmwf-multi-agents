@@ -69,6 +69,54 @@ A project settings file overrides your own settings, so the installer writes
 `.opencode/ecmwf-multi-agents.jsonc` only when you pass `--profile` or `--review`, and then
 with only those values.
 
+## Switch it on per project, from one checkout
+
+With opencode 1.x you can keep one checkout of the harness and switch it on only in the
+projects that should use it, with one line in each project's config. Nothing is installed,
+neither in your opencode config nor in the project.
+
+```sh
+git clone --branch 0.4.0 https://github.com/ecmwf/ecmwf-multi-agents.git ~/.local/share/ecmwf-multi-agents
+```
+
+Then add this line to the project's `opencode.json` (create the file if the project has none):
+
+```json
+{
+  "plugin": ["{env:HOME}/.local/share/ecmwf-multi-agents"]
+}
+```
+
+Restart opencode in that project. The plugin sees that the harness is not installed and
+brings its agents, commands and skills from the checkout itself; `lead` becomes the default
+agent there, and every other project stays as it was. `./install.sh --help` prints the line
+with the path of the checkout you run it from, and `./install.sh doctor --project ~/code/my-repo`
+checks a project.
+
+- `{env:HOME}` becomes your home folder when opencode reads the config, so the same line works
+  for everyone who keeps the checkout in the same place. An absolute path works too, as does
+  `{env:NAME}` for a variable of your own, for example one a module file sets.
+- To update every such project, check out the new version in the checkout:
+  `git -C ~/.local/share/ecmwf-multi-agents fetch --tags`, then
+  `git -C ~/.local/share/ecmwf-multi-agents checkout 0.5.0`. opencode reads the plugin when it
+  starts, so restart the sessions in those projects: a running session keeps the version it
+  started with.
+- To keep one project on a version, give it a checkout of that tag and name that folder in its
+  line, for example after
+  `git -C ~/.local/share/ecmwf-multi-agents worktree add ../ecmwf-multi-agents-0.4.0 0.4.0`.
+- Settings work as with an install: `~/.config/opencode/ecmwf-multi-agents.jsonc` for you and
+  `.opencode/ecmwf-multi-agents.jsonc` for the project, written by hand (the keys are in the
+  README; the schema is in the checkout at `dist/opencode-v1/ecmwf-multi-agents/schema.json`).
+- Commit the line to switch the harness on for everyone who works on the project, or keep it
+  to yourself: put it in `.opencode/opencode.jsonc` and list that file in `.git/info/exclude`.
+- A project's own agent or command with a harness name, such as its own `/onboard`, keeps
+  precedence, as it would over installed files. The plugin says so in the log when opencode
+  starts, and as a message on screen for an agent.
+- Use the line or an install for a project, not both: with both, opencode loads the plugin
+  twice and uses the installed files. `doctor` warns about it.
+- opencode 2 ignores the line and shows only its own agents; install there with
+  `./install.sh --project`.
+
 ## Options
 
 | Option | Effect |
@@ -93,7 +141,8 @@ git pull
 Linked files (the default for your own install) change as soon as you `git pull`; restart
 opencode to load them. Run `./install.sh` again when files were added or removed, which
 `doctor` reports, and always for copied installs (projects and central installs). Re-running
-is safe: unchanged files stay as they are.
+is safe: unchanged files stay as they are. Projects switched on by a plugin line need nothing:
+they follow the checkout, whatever files a version adds or removes.
 
 ## Checking an installation
 
@@ -105,6 +154,8 @@ is safe: unchanged files stay as they are.
 Each line starts with OK, WARN or FAIL:
 
 - the opencode versions found, and whether the installed files suit them;
+- for a project switched on by a plugin line instead of an install: which config file has the
+  line, and whether it names a checkout of the harness, with its version;
 - every installed file present and still from the harness (a broken link usually means the
   checkout was moved: run `./install.sh` again);
 - whether the checkout has files that are not installed yet, or the other way round;
@@ -203,7 +254,9 @@ replaces the user's own config folder instead of adding to it, and opencode writ
 
 - **opencode starts on `build`, not `lead`.** Your opencode config (or another plugin)
   names a different `default_agent`, or the plugin is not installed. Press Tab or type
-  `/agents` to switch, or set `"default_agent": "lead"` in your `opencode.json`.
+  `/agents` to switch, or set `"default_agent": "lead"` in your `opencode.json`. In a project
+  switched on by a plugin line, run `./install.sh doctor --project` on it: the line may name
+  a folder that is not the checkout.
 - **A model is not available.** Connect its provider with `opencode auth login`, or choose
   another profile in your settings file, then restart opencode.
 - **Settings seem ignored.** Restart opencode; settings are read at startup. An invalid

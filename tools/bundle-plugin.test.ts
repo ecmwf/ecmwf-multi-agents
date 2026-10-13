@@ -8,6 +8,7 @@ import path from "node:path";
 import { checkShellCommand } from "../plugin/guard.ts";
 import { resolvedFixture } from "../plugin/testing.ts";
 import { HARNESS_CONSTANT, bundlePlugin, embedHarness, pluginMarker, runtimeImports } from "./bundle-plugin.ts";
+import { emitV1 } from "./emit-v1.ts";
 import { load } from "./load.ts";
 import { resolveHarness } from "./resolve.ts";
 
@@ -52,14 +53,19 @@ describe("bundlePlugin", () => {
   });
 
   test("imports only runtime built-ins", () => {
-    expect(runtimeImports(first).every((specifier) => /^(node:)?(fs|os|path)$/.test(specifier))).toBe(true);
+    expect(runtimeImports(first).every((specifier) => /^(node:)?(fs|os|path|url)$/.test(specifier))).toBe(true);
     expect(first).not.toContain(HARNESS_CONSTANT);
   });
 
-  test("embeds the harness data", () => {
+  test("embeds the harness data, prompts and templates included, for registering it when not installed", () => {
     expect(first).toContain('"anthropic/claude-opus-5-5"');
     expect(first).toContain('"git push *"');
-    expect(first).not.toContain("You are scout.");
+    expect(first).toContain("You are scout.");
+    expect(first).toContain("Review $ARGUMENTS");
+  });
+
+  test("finds its skills folder at run time, next to the folder it is loaded from", () => {
+    expect(first).toContain("import.meta.url");
   });
 
   test("exports one default object with id, server and setup", async () => {
@@ -116,7 +122,7 @@ describe("bundlePlugin", () => {
 describe("embedHarness", () => {
   test("keeps what the plugin needs: profiles, agents with mode and shell rules, commands", () => {
     const data = embedHarness(resolvedFixture());
-    expect(Object.keys(data)).toEqual(["name", "version", "defaultAgent", "defaultProfile", "profiles", "agents", "commands"]);
+    expect(Object.keys(data)).toEqual(["name", "version", "defaultAgent", "defaultProfile", "profiles", "agents", "commands", "v1"]);
     expect(data.commands).toEqual([
       { id: "plan", agent: "lead", description: "Plan a piece of work with you" },
       { id: "review", agent: "reviewer", description: "Independent review of your changes" },
@@ -142,6 +148,32 @@ describe("embedHarness", () => {
       { resource: "*", effect: "deny" },
       { resource: "git log *", effect: "allow" },
     ]);
+  });
+
+  test("the opencode 1.x entries are what opencode makes of the generated files: frontmatter, name, and the body as prompt or template", async () => {
+    const harness = resolveHarness(await load(root));
+    const data = embedHarness(harness);
+    const files = new Map(emitV1(harness).map((file) => [file.path, file.content]));
+    /** Parse a generated file the way opencode 1.x does: YAML frontmatter, then the trimmed body. */
+    const parsed = (file: string) => {
+      const content = files.get(file)!;
+      const end = content.indexOf("\n---\n", 4);
+      return { data: Bun.YAML.parse(content.slice(4, end)) as Record<string, unknown>, body: content.slice(end + 5).trim() };
+    };
+    expect(Object.keys(data.v1.agents)).toEqual(harness.agents.map((agent) => agent.id));
+    for (const agent of harness.agents) {
+      const file = parsed(`agents/${agent.id}.md`);
+      expect(data.v1.agents[agent.id]).toEqual({ name: agent.id, ...file.data, prompt: file.body });
+    }
+    expect(Object.keys(data.v1.commands)).toEqual(harness.commands.map((command) => command.id));
+    for (const command of harness.commands) {
+      const file = parsed(`commands/${command.id}.md`);
+      expect(data.v1.commands[command.id]).toEqual({ name: command.id, ...file.data, template: file.body });
+    }
+    expect(data.v1.skills).toEqual(["ecmwf-multi-agents-plan", "ecmwf-multi-agents-guide"]);
+    // The review line the plugin rewrites from the settings is in lead's registered prompt.
+    expect(String(data.v1.agents.lead!.prompt)).toContain("\nReview policy: auto\n");
+    expect(data.v1.commands.review).toMatchObject({ agent: "reviewer", subtask: false });
   });
 
   test("from src/: lead and three helpers, and the shell guard checks each helper with its own rules", async () => {

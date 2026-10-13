@@ -221,11 +221,16 @@ Findings to act on for 0.2.0:
 
 ## Phase 6: release
 
-- [~] Tiago: One central checkout, switched on per project with one line in the project's
+- [x] Tiago: One central checkout, switched on per project with one line in the project's
   `opencode.json`, `"plugin": ["{env:HOME}/.local/share/ecmwf-multi-agents"]`, on opencode
   1.x: the plugin brings its own agents, commands and skills when they are not installed, and
   the checkout's `package.json` names the plugin. Upgrading the checkout upgrades every
-  project that has the line. Groundwork for the npm package below
+  project that has the line. Groundwork for the npm package below. Verified on 1.18.35 and
+  1.19.0: the four agents resolve exactly as installed ones (apart from the folder the skills
+  come from), the six commands replace the built-in `/review`, both skills load from the
+  checkout, settings apply, `/review` and the shell guard work end to end with the stand-in
+  model, opencode writes nothing into the checkout, and a project without the line sees none
+  of it. opencode 2.0.16 ignores the line. ADR 0003
 - [~] Tiago: Release 0.4.0
 - [ ] npm package (plugin that also carries agents, commands and skills)
 - [ ] Central install on opencode 2 (generated `opencode.json` through `OPENCODE_CONFIG`)
@@ -474,3 +479,6 @@ and a steer cost; `/guide` explains it in plain words.
 - 2026-10-13: 0.3.0 released with `make release 0.3.0`: background helpers with status, steer
   and cancel for `lead`, and the two inline `/review` and `/progress` fixes. Gate passed twice
   (554 tests each); release commit, tag and GitHub release in one run.
+- 2026-10-13: A project can switch the harness on with one plugin line naming a checkout, on
+  opencode 1.x: the plugin brings agents, commands and skills when they are not installed, and
+  every project with the line follows the checkout. `doctor --project` checks such projects.

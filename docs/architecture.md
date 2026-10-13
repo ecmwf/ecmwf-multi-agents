@@ -416,6 +416,19 @@ event), so it stays last after reloads.
 The plugin also makes `lead` the default agent unless `default_agent` is false in the settings.
 Without the plugin, opencode starts on its own `build` agent and the user switches with Tab.
 
+On opencode 1.x the plugin can also stand in for an install. A project's config may name a
+harness checkout as a plugin, `"plugin": ["{env:HOME}/.local/share/ecmwf-multi-agents"]`:
+opencode loads a plugin folder through the `exports["./server"]` entry of its `package.json`,
+which in the checkout names the bundle. When `lead` is not defined, the files are not installed,
+so the plugin's `config` hook registers every agent and command that is not defined yet, as the
+same entries opencode makes of the generated files, and adds the `skills` folder next to its
+own folder to `skills.paths`; the settings then apply as to installed files. A definition that
+already exists, such as a project's own `scout` or `/onboard`, is kept and reported. The bundle
+carries those entries, prompts and templates included, and a test checks they equal what
+opencode reads from the generated files. Projects with the line follow the checkout: checking
+out a new version there changes them all at their next start. opencode 2 ignores the line. The
+decision is recorded in `docs/adr/0003-per-project-plugin-line.md`.
+
 ## Source and output
 
 ```text

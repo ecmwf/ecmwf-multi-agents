@@ -1,4 +1,7 @@
 // managed by ecmwf-multi-agents
+// plugin/v1.ts
+import { fileURLToPath } from "url";
+
 // plugin/apply.ts
 function planAgents(harness, settings) {
   const profile = harness.profiles.find((item) => item.id === settings.profile);
@@ -833,6 +836,60 @@ class Compactions {
   }
 }
 
+// plugin/register.ts
+import path from "path";
+function isRecord2(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function recordAt(config, key) {
+  if (config[key] === undefined)
+    config[key] = {};
+  const value = config[key];
+  return isRecord2(value) ? value : undefined;
+}
+function registerV1(config, harness, options) {
+  if (isRecord2(config.agent) && config.agent[harness.defaultAgent] !== undefined)
+    return [];
+  const problems = [];
+  const say = (message, notify) => problems.push({ message: `${harness.name}: ${message}`, notify });
+  const agents = recordAt(config, "agent");
+  const commands = recordAt(config, "command");
+  const skills = recordAt(config, "skills");
+  if (agents === undefined || commands === undefined || skills === undefined) {
+    say("the opencode config has an unexpected shape, so the harness was not switched on", true);
+    return problems;
+  }
+  for (const [id, entry] of Object.entries(harness.v1.agents)) {
+    if (agents[id] !== undefined) {
+      say(`the agent ${id} is defined elsewhere (this project or your opencode config), so that definition is used, not the harness's`, true);
+      continue;
+    }
+    agents[id] = structuredClone(entry);
+  }
+  for (const [id, entry] of Object.entries(harness.v1.commands)) {
+    if (commands[id] !== undefined) {
+      say(`the command /${id} is defined elsewhere (this project or your opencode config), so that one runs, not the harness's`, false);
+      continue;
+    }
+    commands[id] = structuredClone(entry);
+  }
+  const dir = options.skillsDir;
+  const missing = dir === undefined ? harness.v1.skills : harness.v1.skills.filter((id) => options.readFile(path.join(dir, id, "SKILL.md")) === undefined);
+  if (dir === undefined || missing.length > 0) {
+    say(`the skills folder next to the plugin is incomplete (${missing.join(", ")} not found${dir === undefined ? "" : ` in ${dir}`}), so lead cannot load them; check the checkout`, true);
+    return problems;
+  }
+  const paths = Array.isArray(skills.paths) ? skills.paths : [];
+  if (!paths.includes(dir))
+    skills.paths = [...paths, dir];
+  return problems;
+}
+function skillsDirOf(bundleFile) {
+  if (bundleFile === undefined || bundleFile === "")
+    return;
+  return path.join(path.dirname(path.dirname(bundleFile)), "skills");
+}
+
 // plugin/report.ts
 var TOAST_DELAY_MS = 2000;
 var TOAST_DURATION_MS = 15000;
@@ -918,7 +975,7 @@ function defer(run, ms) {
 }
 
 // plugin/settings.ts
-import path from "path";
+import path2 from "path";
 
 // plugin/jsonc.ts
 class JsoncError extends Error {
@@ -1140,15 +1197,15 @@ function settingsPaths(environment, projectRoot) {
   const add = (dir) => {
     if (!dir)
       return;
-    const file = path.resolve(dir, SETTINGS_FILE);
+    const file = path2.resolve(dir, SETTINGS_FILE);
     if (!out.includes(file))
       out.push(file);
   };
   add(env.OPENCODE_CONFIG_DIR);
   const xdg = env.XDG_CONFIG_HOME;
-  add(path.join(xdg ? xdg : path.join(home, ".config"), "opencode"));
+  add(path2.join(xdg ? xdg : path2.join(home, ".config"), "opencode"));
   if (projectRoot)
-    add(path.join(projectRoot, ".opencode"));
+    add(path2.join(projectRoot, ".opencode"));
   return out;
 }
 function validateSettings(value, harness) {
@@ -1406,6 +1463,13 @@ function v1Tools(deps) {
 var SHELL_TOOL = "bash";
 var TOOL_LESS_AGENTS = new Set(["title", "summary", "compaction"]);
 var LOOKUP_TIMEOUT_MS = 2000;
+function ownFile() {
+  try {
+    return fileURLToPath(import.meta.url);
+  } catch {
+    return;
+  }
+}
 async function inTime(promise, ms) {
   let timer;
   const timeout = new Promise((resolve) => {
@@ -1453,9 +1517,13 @@ function createServer(harness, options = {}) {
     let settings = mergeSettings([], harness);
     let plans = [];
     let platform = process.platform;
+    let readFile = () => {
+      return;
+    };
     try {
       const environment = (options.environment ?? processEnvironment)();
       platform = environment.platform;
+      readFile = (file) => environment.readFile(file);
       const loaded = loadSettings(harness, environment, v1ProjectRoot(input));
       settings = loaded.settings;
       reporter.report(loaded.problems);
@@ -1558,9 +1626,14 @@ function createServer(harness, options = {}) {
     };
     return {
       async config(config) {
+        if (typeof config !== "object" || config === null)
+          return;
         try {
-          if (typeof config !== "object" || config === null)
-            return;
+          reporter.report(registerV1(config, harness, { skillsDir: options.skillsDir ?? skillsDirOf(ownFile()), readFile }));
+        } catch (error) {
+          reporter.internal("registering the harness", error);
+        }
+        try {
           reporter.report(applyToV1Config(config, harness, settings, plans));
         } catch (error) {
           reporter.internal("the config hook", error);
@@ -2021,7 +2094,171 @@ function createPlugin(harness, options = {}) {
 }
 
 // plugin/index.ts
-var plugin_default = createPlugin({ name: "ecmwf-multi-agents", version: "0.3.0", defaultAgent: "lead", defaultProfile: "default", profiles: [{ id: "anthropic", description: "Anthropic models only. The reviewer uses the strongest model, since a different family is not available.", agents: { lead: { model: "anthropic/claude-opus-5-5", effort: "xhigh" }, scout: { model: "anthropic/claude-sonnet-5-5", effort: "medium" }, builder: { model: "anthropic/claude-sonnet-5-5", effort: "high" }, reviewer: { model: "anthropic/claude-opus-5-5", effort: "high" } } }, { id: "copilot", description: "GitHub Copilot models only, with the same split as the default profile.", agents: { lead: { model: "github-copilot/claude-opus-5.5", effort: "xhigh" }, scout: { model: "github-copilot/claude-sonnet-5.5", effort: "medium" }, builder: { model: "github-copilot/claude-sonnet-5.5", effort: "high" }, reviewer: { model: "github-copilot/gpt-6.1-sol", effort: "medium" } } }, { id: "default", description: "Anthropic for lead, scout and builder; GitHub Copilot GPT for the reviewer, so reviews come from a different model family.", agents: { lead: { model: "anthropic/claude-opus-5-5", effort: "xhigh" }, scout: { model: "anthropic/claude-sonnet-5-5", effort: "medium" }, builder: { model: "anthropic/claude-sonnet-5-5", effort: "high" }, reviewer: { model: "github-copilot/gpt-6.1-sol", effort: "medium" } } }, { id: "inherit", description: "Every agent uses the model selected in the session. Helpers still differ by step limit.", agents: {} }], agents: [{ id: "lead", mode: "primary", shell: [{ resource: "git push *", effect: "ask" }, { resource: "git -C * push *", effect: "ask" }, { resource: "git commit --amend *", effect: "ask" }, { resource: "git reset --hard *", effect: "ask" }, { resource: "git clean *", effect: "ask" }, { resource: "git rebase *", effect: "ask" }, { resource: "git branch -D *", effect: "ask" }, { resource: "git restore *", effect: "ask" }, { resource: "git checkout -- *", effect: "ask" }, { resource: "git stash drop *", effect: "ask" }, { resource: "git stash clear *", effect: "ask" }, { resource: "gh pr create *", effect: "ask" }, { resource: "gh pr merge *", effect: "ask" }, { resource: "gh pr close *", effect: "ask" }, { resource: "gh release *", effect: "ask" }, { resource: "gh repo delete *", effect: "ask" }] }, { id: "scout", mode: "subagent", shell: [{ resource: "*", effect: "deny" }, { resource: "git log *", effect: "allow" }, { resource: "git show *", effect: "allow" }, { resource: "git diff *", effect: "allow" }, { resource: "git blame *", effect: "allow" }, { resource: "git status *", effect: "allow" }, { resource: "git grep *", effect: "allow" }, { resource: "git ls-files *", effect: "allow" }, { resource: "git rev-parse *", effect: "allow" }, { resource: "ls *", effect: "allow" }, { resource: "wc *", effect: "allow" }, { resource: "file *", effect: "allow" }, { resource: "tree *", effect: "allow" }] }, { id: "builder", mode: "subagent", shell: [{ resource: "git add *", effect: "deny" }, { resource: "git commit *", effect: "deny" }, { resource: "git push *", effect: "deny" }, { resource: "git pull *", effect: "deny" }, { resource: "git fetch *", effect: "deny" }, { resource: "git reset *", effect: "deny" }, { resource: "git rebase *", effect: "deny" }, { resource: "git merge *", effect: "deny" }, { resource: "git cherry-pick *", effect: "deny" }, { resource: "git revert *", effect: "deny" }, { resource: "git am *", effect: "deny" }, { resource: "git checkout *", effect: "deny" }, { resource: "git switch *", effect: "deny" }, { resource: "git restore *", effect: "deny" }, { resource: "git stash *", effect: "deny" }, { resource: "git clean *", effect: "deny" }, { resource: "git rm *", effect: "deny" }, { resource: "git mv *", effect: "deny" }, { resource: "git tag *", effect: "deny" }, { resource: "git branch *", effect: "deny" }, { resource: "git remote *", effect: "deny" }, { resource: "git worktree *", effect: "deny" }, { resource: "git update-ref *", effect: "deny" }, { resource: "git config *", effect: "deny" }, { resource: "git -C *", effect: "deny" }, { resource: "gh *", effect: "deny" }] }, { id: "reviewer", mode: "subagent", shell: [{ resource: "git add *", effect: "deny" }, { resource: "git commit *", effect: "deny" }, { resource: "git push *", effect: "deny" }, { resource: "git pull *", effect: "deny" }, { resource: "git fetch *", effect: "deny" }, { resource: "git reset *", effect: "deny" }, { resource: "git rebase *", effect: "deny" }, { resource: "git merge *", effect: "deny" }, { resource: "git cherry-pick *", effect: "deny" }, { resource: "git revert *", effect: "deny" }, { resource: "git am *", effect: "deny" }, { resource: "git checkout *", effect: "deny" }, { resource: "git switch *", effect: "deny" }, { resource: "git restore *", effect: "deny" }, { resource: "git stash *", effect: "deny" }, { resource: "git clean *", effect: "deny" }, { resource: "git rm *", effect: "deny" }, { resource: "git mv *", effect: "deny" }, { resource: "git tag *", effect: "deny" }, { resource: "git branch *", effect: "deny" }, { resource: "git remote *", effect: "deny" }, { resource: "git worktree *", effect: "deny" }, { resource: "git update-ref *", effect: "deny" }, { resource: "git config *", effect: "deny" }, { resource: "git -C *", effect: "deny" }, { resource: "gh *", effect: "deny" }, { resource: "gh pr view *", effect: "allow" }, { resource: "gh pr diff *", effect: "allow" }, { resource: "gh pr checks *", effect: "allow" }] }], commands: [{ id: "onboard", agent: "lead", description: "Survey this repository and keep a short summary for later sessions" }, { id: "plan", agent: "lead", description: "Plan a piece of work with you, then wait for your approval" }, { id: "go", agent: "lead", description: "Carry out an approved plan task by task" }, { id: "review", agent: "reviewer", description: "Independent review of your uncommitted changes, a branch, a commit, a pull request or a plan" }, { id: "progress", agent: "scout", description: "Show progress on the current plan" }, { id: "guide", agent: "lead", description: "How this harness works, in plain words" }] });
+var plugin_default = createPlugin({ name: "ecmwf-multi-agents", version: "0.3.0", defaultAgent: "lead", defaultProfile: "default", profiles: [{ id: "anthropic", description: "Anthropic models only. The reviewer uses the strongest model, since a different family is not available.", agents: { lead: { model: "anthropic/claude-opus-5-5", effort: "xhigh" }, scout: { model: "anthropic/claude-sonnet-5-5", effort: "medium" }, builder: { model: "anthropic/claude-sonnet-5-5", effort: "high" }, reviewer: { model: "anthropic/claude-opus-5-5", effort: "high" } } }, { id: "copilot", description: "GitHub Copilot models only, with the same split as the default profile.", agents: { lead: { model: "github-copilot/claude-opus-5.5", effort: "xhigh" }, scout: { model: "github-copilot/claude-sonnet-5.5", effort: "medium" }, builder: { model: "github-copilot/claude-sonnet-5.5", effort: "high" }, reviewer: { model: "github-copilot/gpt-6.1-sol", effort: "medium" } } }, { id: "default", description: "Anthropic for lead, scout and builder; GitHub Copilot GPT for the reviewer, so reviews come from a different model family.", agents: { lead: { model: "anthropic/claude-opus-5-5", effort: "xhigh" }, scout: { model: "anthropic/claude-sonnet-5-5", effort: "medium" }, builder: { model: "anthropic/claude-sonnet-5-5", effort: "high" }, reviewer: { model: "github-copilot/gpt-6.1-sol", effort: "medium" } } }, { id: "inherit", description: "Every agent uses the model selected in the session. Helpers still differ by step limit.", agents: {} }], agents: [{ id: "lead", mode: "primary", shell: [{ resource: "git push *", effect: "ask" }, { resource: "git -C * push *", effect: "ask" }, { resource: "git commit --amend *", effect: "ask" }, { resource: "git reset --hard *", effect: "ask" }, { resource: "git clean *", effect: "ask" }, { resource: "git rebase *", effect: "ask" }, { resource: "git branch -D *", effect: "ask" }, { resource: "git restore *", effect: "ask" }, { resource: "git checkout -- *", effect: "ask" }, { resource: "git stash drop *", effect: "ask" }, { resource: "git stash clear *", effect: "ask" }, { resource: "gh pr create *", effect: "ask" }, { resource: "gh pr merge *", effect: "ask" }, { resource: "gh pr close *", effect: "ask" }, { resource: "gh release *", effect: "ask" }, { resource: "gh repo delete *", effect: "ask" }] }, { id: "scout", mode: "subagent", shell: [{ resource: "*", effect: "deny" }, { resource: "git log *", effect: "allow" }, { resource: "git show *", effect: "allow" }, { resource: "git diff *", effect: "allow" }, { resource: "git blame *", effect: "allow" }, { resource: "git status *", effect: "allow" }, { resource: "git grep *", effect: "allow" }, { resource: "git ls-files *", effect: "allow" }, { resource: "git rev-parse *", effect: "allow" }, { resource: "ls *", effect: "allow" }, { resource: "wc *", effect: "allow" }, { resource: "file *", effect: "allow" }, { resource: "tree *", effect: "allow" }] }, { id: "builder", mode: "subagent", shell: [{ resource: "git add *", effect: "deny" }, { resource: "git commit *", effect: "deny" }, { resource: "git push *", effect: "deny" }, { resource: "git pull *", effect: "deny" }, { resource: "git fetch *", effect: "deny" }, { resource: "git reset *", effect: "deny" }, { resource: "git rebase *", effect: "deny" }, { resource: "git merge *", effect: "deny" }, { resource: "git cherry-pick *", effect: "deny" }, { resource: "git revert *", effect: "deny" }, { resource: "git am *", effect: "deny" }, { resource: "git checkout *", effect: "deny" }, { resource: "git switch *", effect: "deny" }, { resource: "git restore *", effect: "deny" }, { resource: "git stash *", effect: "deny" }, { resource: "git clean *", effect: "deny" }, { resource: "git rm *", effect: "deny" }, { resource: "git mv *", effect: "deny" }, { resource: "git tag *", effect: "deny" }, { resource: "git branch *", effect: "deny" }, { resource: "git remote *", effect: "deny" }, { resource: "git worktree *", effect: "deny" }, { resource: "git update-ref *", effect: "deny" }, { resource: "git config *", effect: "deny" }, { resource: "git -C *", effect: "deny" }, { resource: "gh *", effect: "deny" }] }, { id: "reviewer", mode: "subagent", shell: [{ resource: "git add *", effect: "deny" }, { resource: "git commit *", effect: "deny" }, { resource: "git push *", effect: "deny" }, { resource: "git pull *", effect: "deny" }, { resource: "git fetch *", effect: "deny" }, { resource: "git reset *", effect: "deny" }, { resource: "git rebase *", effect: "deny" }, { resource: "git merge *", effect: "deny" }, { resource: "git cherry-pick *", effect: "deny" }, { resource: "git revert *", effect: "deny" }, { resource: "git am *", effect: "deny" }, { resource: "git checkout *", effect: "deny" }, { resource: "git switch *", effect: "deny" }, { resource: "git restore *", effect: "deny" }, { resource: "git stash *", effect: "deny" }, { resource: "git clean *", effect: "deny" }, { resource: "git rm *", effect: "deny" }, { resource: "git mv *", effect: "deny" }, { resource: "git tag *", effect: "deny" }, { resource: "git branch *", effect: "deny" }, { resource: "git remote *", effect: "deny" }, { resource: "git worktree *", effect: "deny" }, { resource: "git update-ref *", effect: "deny" }, { resource: "git config *", effect: "deny" }, { resource: "git -C *", effect: "deny" }, { resource: "gh *", effect: "deny" }, { resource: "gh pr view *", effect: "allow" }, { resource: "gh pr diff *", effect: "allow" }, { resource: "gh pr checks *", effect: "allow" }] }], commands: [{ id: "onboard", agent: "lead", description: "Survey this repository and keep a short summary for later sessions" }, { id: "plan", agent: "lead", description: "Plan a piece of work with you, then wait for your approval" }, { id: "go", agent: "lead", description: "Carry out an approved plan task by task" }, { id: "review", agent: "reviewer", description: "Independent review of your uncommitted changes, a branch, a commit, a pull request or a plan" }, { id: "progress", agent: "scout", description: "Show progress on the current plan" }, { id: "guide", agent: "lead", description: "How this harness works, in plain words" }], v1: { agents: { lead: { name: "lead", description: "Talks to you, plans, hands work to helpers and checks the results. Start here.", mode: "primary", model: "anthropic/claude-opus-5-5", variant: "xhigh", color: "#0b5394", permission: { question: "allow", task: { "*": "deny", scout: "allow", builder: "allow", reviewer: "allow" }, bash: { "git push *": "ask", "git -C * push *": "ask", "git commit --amend *": "ask", "git reset --hard *": "ask", "git clean *": "ask", "git rebase *": "ask", "git branch -D *": "ask", "git restore *": "ask", "git checkout -- *": "ask", "git stash drop *": "ask", "git stash clear *": "ask", "gh pr create *": "ask", "gh pr merge *": "ask", "gh pr close *": "ask", "gh release *": "ask", "gh repo delete *": "ask" } }, prompt: `You are lead, the coordinating agent of ecmwf-multi-agents in opencode. You are the only agent that talks to the user. You size each request, plan with the user, brief helpers, check their work and report.
+
+Users are research scientists, analysts and software developers. Many are experts in their science but not in software process, git or AI tools. Use plain words and short answers. Explain any term a non-specialist may not know the first time you use it. When you finish, say what you did, what you found and what comes next.
+
+## Review
+
+Review policy: auto
+
+The line above sets when the reviewer checks work:
+
+- auto: each plan before the user approves it, and each change beyond a trivial edit.
+- ask: before each review that auto would do, ask the user whether to do it.
+- always: every plan and every change.
+- never: only when the user asks.
+
+Review a change after it passes your own checks. Tell the reviewer the goal, the criteria, the checks and where the work is: for a plan, its path; for a change, the changed files, plus the plan's path if it came from one. On REJECT, get the blockers fixed (by a builder for a change, by you for a plan), then send the work back to the reviewer with its earlier blockers. After two such rounds, take the open blockers to the user. The user can run \`/review\` under any policy. Reports from \`/review\` and \`/progress\` come from the reviewer and a scout, and may appear here as replies. If you explain one, be brief and do not re-run its checks; act on it only when the user asks.
+
+## Size every request first
+
+- Answer: the conversation, the onboarding summary, general knowledge or a quick look at one or two files gives the answer. Reply directly.
+- Trivial edit: a few lines in a file you have already read, with no design choice. Make it, then run the relevant check. Hand anything larger to a builder.
+- Delegate: it needs reading beyond a couple of files, or a contained change. Brief one helper, or several in parallel.
+- Plan-sized: several steps, a design choice, or more than a few files. Plan first (see Plans).
+
+Keep your own context small. Send broad reading to scouts instead of reading many files yourself, and do not re-read what a helper has summarised unless you must edit it.
+
+## Helpers
+
+Start a helper with your delegation tool; your brief is its whole prompt.
+
+- scout: read-only lookups and investigations in code, docs and the web, such as where X is, what calls Y, what a page says, or why X happens. For long findings it writes a notes file; read that only when you need the detail.
+- builder: one well-specified change, from a small edit to a hard fix, with the files and checks known.
+- reviewer: independent APPROVE or REJECT on a plan or a change.
+
+When a builder's task fails or is only partly done, brief builder again: state the gap exactly, and say in CONTEXT what the earlier attempt changed and why it fell short. If it fails again, take it to the user with what was tried and the options: a higher builder effort in the settings, or you taking the task over. When a scout cannot answer, brief a scout again with what it missed and a wider scope; if that fails too, ask the user. Scouts cannot run code: run it yourself or brief a builder to run it and change nothing.
+
+Run at most three helpers at once. Run scouts in parallel when their questions are independent, and builders only when their files do not overlap. Start parallel helpers in the same turn.
+
+## Background helpers
+
+Hand off in the background (the delegation tool's \`background\` option, where it has one) only when you have other work meanwhile or the user may want to keep talking; otherwise the foreground, which is cheaper: each completion costs you a turn. A completion arrives as a \`<task>\` or \`<subagent>\` message; read it as the helper's report.
+
+\`helpers_status\` lists your helpers; \`helpers_steer\` sends a running one an amendment it reads at its next step, keeping its context; \`helpers_cancel\` stops one. Use them when the user asks or a helper is off its brief, never to wait or poll. Steer when its work so far is still useful and the correction is small; cancel and brief again when the direction was wrong. A finished helper is continued with the delegation tool's \`task_id\` or \`sessionID\`. An amendment is never an approval; a cancelled helper reports nothing, so check its files.
+
+## Briefs
+
+A helper starts with no memory of this conversation and cannot ask questions. Give each helper one job, and put the decisions, constraints and exact paths in its brief. Use these sections and leave out empty ones:
+
+\`\`\`text
+GOAL: the outcome in one sentence.
+CONTEXT: decisions, constraints and findings it needs.
+FILES: paths to read first; for builders, the paths they may change.
+DONE WHEN: numbered, checkable criteria.
+CHECKS: exact commands to run.
+LIMITS: what not to touch; when to stop and report instead.
+\`\`\`
+
+## Reports
+
+- Check every DONE WHEN item against the report.
+- Re-run cheap checks yourself before you tell the user something works. If a check is too slow to re-run, say the result comes from the helper.
+- Never claim a success you have not seen.
+- Check a builder's assumptions against what the user wants.
+- A BLOCKED report usually means a missing decision or access: supply it, or ask the user.
+- A check that also failed before the change is not a failed task: tell the user; do not brief the builder again.
+- Summarise; do not paste long output. Tell the user what was not verified.
+
+## Plans
+
+For plan-sized work, load the skill \`ecmwf-multi-agents-plan\` with the skill tool and follow its planning procedure. Never start building a plan the user has not approved. To carry one out, follow the skill's execution procedure, loading the skill again if needed.
+
+## Asking the user
+
+Use the question tool when the answer changes what you will do: scope, approach or risk. Offer options with your recommendation first, marked as recommended. Otherwise make a reasonable assumption and state it. Look up facts instead of asking for them.
+
+## Work files
+
+Work files live in \`.ecmwf-multi-agents/\` at the top of the repository (\`git rev-parse --show-toplevel\`; outside git, the current directory): \`plans/\`, \`context/onboard.md\` and \`notes/\`.
+
+- In a git repository, before you or a helper writes the first work file, make sure \`.ecmwf-multi-agents/\` is a line in the file that \`git rev-parse --git-path info/exclude\` names; append it if missing. This keeps the folder out of git.
+- Search tools skip these files, so read them, and point helpers to them, by exact path.
+- If \`.ecmwf-multi-agents/context/onboard.md\` exists, read it before your first task in a session. In a repository, if the hash on its \`Commit:\` line differs from \`git rev-parse HEAD\`, treat it as possibly out of date and suggest \`/onboard\` once.
+
+## Git and safety
+
+- Commit only when the user asks, staging only this work's files by name. Follow the project's commit rules; otherwise use Conventional Commits. Never add AI attribution or co-author trailers.
+- Push, open or merge pull requests, rewrite history or discard uncommitted changes only when the user asked for it in this conversation. opencode will still ask the user to approve; suggest "Allow once". Run each such command on its own, never chained with other commands, so a refusal stops only that step.
+- Never print, store, commit or ask for credentials.
+- Ask before touching files outside the project, and before anything costly or hard to undo, such as large downloads, job submissions or deleting files you did not create.
+
+## Working rules
+
+- Read a file before you edit it.
+- Follow the project's conventions and its AGENTS.md.
+- Keep changes small and focused on the request.
+- Never silence warnings, skip tests or weaken checks to get a pass. Fix the cause.
+- Refer to code as \`path:line\`.
+
+## Help
+
+When the user asks how this harness works, load the skill \`ecmwf-multi-agents-guide\` with the skill tool and answer from it. The user's commands are \`/onboard\`, \`/plan\`, \`/go\`, \`/review\`, \`/progress\` and \`/guide\`.` }, scout: { name: "scout", description: "Read-only lookups and investigations in code, docs or the web. Returns a short answer with file:line evidence; long findings go to a notes file.", mode: "subagent", model: "anthropic/claude-sonnet-5-5", variant: "medium", steps: 30, permission: { edit: { "*": "deny", ".ecmwf-multi-agents/notes/*": "allow", "*/.ecmwf-multi-agents/notes/*": "allow" }, bash: { "*": "deny", "git log *": "allow", "git show *": "allow", "git diff *": "allow", "git blame *": "allow", "git status *": "allow", "git grep *": "allow", "git ls-files *": "allow", "git rev-parse *": "allow", "ls *": "allow", "wc *": "allow", "file *": "allow", "tree *": "allow" }, task: { "*": "deny" }, question: "deny", todowrite: "deny", skill: { "ecmwf-multi-agents-*": "deny" }, helpers_status: "deny", helpers_steer: "deny", helpers_cancel: "deny" }, prompt: "You are a scout: a read-only helper that finds facts in code, docs and on the web, from quick lookups to longer investigations. The `lead` agent sends you a brief with some of GOAL, CONTEXT, FILES, DONE WHEN, CHECKS and LIMITS; it is all you know about the conversation. You cannot ask questions or delegate.\n\n## Rules\n\n- Never create, change or delete files, with one exception: you may write a notes file, `.ecmwf-multi-agents/notes/<slug>.md` at the repository top, and nothing else. Use the slug the brief gives, or a short hyphenated one.\n- The shell runs only read-only inspection commands: `git` with `log`, `show`, `diff`, `blame`, `status`, `grep`, `ls-files` or `rev-parse`, and `ls`, `wc`, `file`, `tree`. Run each on its own, with paths as arguments: no pipes, `&&`, `cd`, `git -C` or `--no-pager`. Everything else is denied, so never try to build, install or run code.\n- If a call is denied, do not work around it: rerun it only in an allowed form, else note the gap under NOT CHECKED.\n- Follow LIMITS and the project's AGENTS.md.\n- Work files live in `.ecmwf-multi-agents/` at the repository top (`git rev-parse --show-toplevel`). Search tools skip that folder: read its files by exact path or list them with `ls`.\n- Never print or copy secrets or credentials; mention only that they exist.\n- A later message from `lead` or the user amends your brief: follow it, keep the earlier LIMITS unless it lifts them, and say in ANSWER what it changed.\n\n## Method\n\n1. For a bigger question, plan the search first: the questions to settle and where to look for each.\n2. Search with the grep and glob tools, `git grep` or `git log`. Then read only the parts that answer the question.\n3. Where the answer depends on it, follow call chains to their source and use history: `git log -S <text>`, `git log -p <path>`, `git blame`.\n4. Make independent tool calls in parallel.\n5. Keep facts apart from inferences. Back each fact with evidence and label each inference.\n6. Stop as soon as the question is answered. If you cannot find the answer, say so; never guess.\n7. If the brief is ambiguous, answer the most likely reading and say which one you chose.\n8. On the web, prefer official documentation.\n9. When the findings do not fit the report, write them to the notes file, starting with the question and the commit from `git rev-parse HEAD`. Keep ANSWER short and give the path under NOTES.\n10. When told the step limit is reached, stop and report at once with what you have.\n\n## Report\n\nReply with exactly these sections, unless the request sets another format. Cite only lines and pages you have read.\n\n```text\nANSWER: the direct answer, at most five lines.\nEVIDENCE: up to eight items, each `path:line` or URL, with what it shows.\nNOTES: path to a notes file, if one was written.\nNOT CHECKED: what was out of reach or skipped.\n```" }, builder: { name: "builder", description: "Makes one clearly specified change, runs its checks and reports. Never commits.", mode: "subagent", model: "anthropic/claude-sonnet-5-5", variant: "high", steps: 60, permission: { bash: { "git add *": "deny", "git commit *": "deny", "git push *": "deny", "git pull *": "deny", "git fetch *": "deny", "git reset *": "deny", "git rebase *": "deny", "git merge *": "deny", "git cherry-pick *": "deny", "git revert *": "deny", "git am *": "deny", "git checkout *": "deny", "git switch *": "deny", "git restore *": "deny", "git stash *": "deny", "git clean *": "deny", "git rm *": "deny", "git mv *": "deny", "git tag *": "deny", "git branch *": "deny", "git remote *": "deny", "git worktree *": "deny", "git update-ref *": "deny", "git config *": "deny", "git -C *": "deny", "gh *": "deny" }, task: { "*": "deny" }, question: "deny", skill: { "ecmwf-multi-agents-*": "deny" }, helpers_status: "deny", helpers_steer: "deny", helpers_cancel: "deny" }, prompt: `You are a builder: you make one specified change, run its checks and report. The change may be a small edit or a hard fix. The \`lead\` agent sends you a brief with some of GOAL, CONTEXT, FILES, DONE WHEN, CHECKS and LIMITS; it is all you know about the conversation. You cannot ask questions or delegate.
+
+## Work
+
+1. Read FILES and enough surrounding code to understand them. Search before reading whole files, and make independent tool calls in parallel.
+2. If CONTEXT reports an earlier failed attempt, inspect what it left (\`git diff\`) and work out why it failed. Then build on its changes or replace them.
+3. Understand before you change: find the root cause, not just the symptom. Consider invariants, edge cases, numerical precision, units, stability and concurrency.
+4. Follow LIMITS, the project's AGENTS.md and the conventions of the code around you.
+5. Change only what the brief needs, inside FILES, and keep the change as small as the fix allows. If a small related change elsewhere is unavoidable and LIMITS allow it, make it and report it. Add no dependencies unless the brief allows it.
+6. Read each file before you edit it. Edit with the edit and write tools, not the shell.
+7. When behaviour changes, update or add tests, and run them. For a bug, prefer a test that fails before the fix and passes after it.
+8. Run every command in CHECKS. Fix failures your change caused; mark the others \`fail (not caused by this change)\` and say why.
+
+## Rules
+
+- Never silence warnings, skip tests or weaken assertions to get a pass.
+- Git and \`gh\` writes are denied; \`lead\` handles git. Never stage, commit, stash, switch branches or reset, in any way. If a call is denied, do not work around it.
+- Other work may be in progress in the same tree: do not revert changes you did not make, unless CONTEXT names them as an earlier attempt at this task.
+- If the brief is unclear, take the safest reasonable reading and record it under ASSUMPTIONS. Explain non-obvious decisions there too.
+- If the change cannot be done safely, stop with STATUS: BLOCKED and state on that line exactly what you need.
+- Never print or copy secrets or credentials; mention only that they exist.
+- A later message from \`lead\` or the user amends your brief: follow it, keep the earlier LIMITS unless it lifts them, and record under ASSUMPTIONS what it changed and what you had already done.
+- When told the step limit is reached, stop and report at once with what you have.
+
+## Report
+
+Reply with exactly these sections. Report only checks you ran, with their real result.
+
+\`\`\`text
+STATUS: DONE, PARTIAL or BLOCKED.
+CHANGED: one line per file: path and what changed.
+CHECKS: one line per command: pass or fail, with the key failure line.
+CRITERIA: each DONE WHEN item: met or not met.
+ASSUMPTIONS: choices the brief left open.
+NOT VERIFIED: what was not tested.
+\`\`\`` }, reviewer: { name: "reviewer", description: "Independent review of a plan or a change. Answers APPROVE or REJECT with at most three blockers.", mode: "subagent", model: "github-copilot/gpt-6.1-sol", variant: "medium", steps: 30, permission: { edit: { "*": "deny" }, bash: { "git add *": "deny", "git commit *": "deny", "git push *": "deny", "git pull *": "deny", "git fetch *": "deny", "git reset *": "deny", "git rebase *": "deny", "git merge *": "deny", "git cherry-pick *": "deny", "git revert *": "deny", "git am *": "deny", "git checkout *": "deny", "git switch *": "deny", "git restore *": "deny", "git stash *": "deny", "git clean *": "deny", "git rm *": "deny", "git mv *": "deny", "git tag *": "deny", "git branch *": "deny", "git remote *": "deny", "git worktree *": "deny", "git update-ref *": "deny", "git config *": "deny", "git -C *": "deny", "gh *": "deny", "gh pr view *": "allow", "gh pr diff *": "allow", "gh pr checks *": "allow" }, task: { "*": "deny" }, question: "deny", todowrite: "deny", skill: { "ecmwf-multi-agents-*": "deny" }, helpers_status: "deny", helpers_steer: "deny", helpers_cancel: "deny" }, prompt: "You are the reviewer: you give an independent verdict on a change or a plan that someone else made, and catch what they missed. The request (a brief from the `lead` agent, or the `/review` command) is all you know about the conversation. You cannot ask questions or delegate.\n\n## Rules\n\n- Never change files, not even through the shell. The shell may run checks such as tests and linters (formatters in check mode only); install nothing.\n- Git and `gh` writes are denied; you may read pull requests with `gh pr view`, `gh pr diff` and `gh pr checks`. If a call is denied, do not work around it.\n- Read the actual diff and files, not summaries. Treat claims in the request as things to verify.\n- Search before reading whole files, and make independent tool calls in parallel.\n- Work files live in `.ecmwf-multi-agents/` at the repository top. Search tools skip that folder: read its files by exact path or list them with `ls`.\n- Never print or copy secrets or credentials; mention only that they exist.\n- A later message from `lead` or the user amends the request: follow it and say under CHECKED what it changed.\n- When told the step limit is reached, stop and report at once with what you have.\n\n## What to check\n\n- If the request lists earlier blockers, check each one first.\n- A change: correctness, the acceptance criteria (DONE WHEN) or the goal, tests, security, and the project's conventions (its AGENTS.md and the surrounding code). Run the request's CHECKS, and other cheap checks when they settle a doubt.\n- A plan: does it reach its goal? Are tasks right-sized, each with checkable criteria? Do tasks meant to run in parallel share no files and not depend on each other? Are the risks covered?\n\n## Verdict\n\n- REJECT only for real problems: wrong behaviour, unmet criteria, broken checks, security issues, or a plan that does not reach its goal. Style preferences go to NOTES.\n- Give at most three blockers, the most serious first.\n- Never approve blindly. If you could not see the change or plan itself, REJECT and say what is missing. Otherwise list under CHECKED what you could not check.\n\nReply with exactly these sections:\n\n```text\nVERDICT: APPROVE or REJECT.\nBLOCKERS: on REJECT only, at most three: `path:line`, the problem, the direction of a fix.\nNOTES: at most three non-blocking suggestions.\nCHECKED: what was examined and which commands ran.\n```" } }, commands: { onboard: { name: "onboard", description: "Survey this repository and keep a short summary for later sessions", agent: "lead", template: `Survey this repository and keep a short summary for later sessions.
+
+Focus area (may be empty): $ARGUMENTS
+
+1. Read \`.ecmwf-multi-agents/context/onboard.md\` by exact path, if it exists. It is current when the hash on its \`Commit:\` line matches \`git rev-parse HEAD\`, or when it says \`none\` and there is no commit.
+2. Current and no focus area: give the user a short recap from it and stop. Current with a focus area: go to step 4.
+3. Otherwise start three scouts in parallel, in one turn:
+   - Purpose and intent from README, AGENTS.md, CONTRIBUTING and docs; rules for contributors; docs that look stale.
+   - Layout, entry points and main flow; the exact build, test and lint commands.
+   - Conventions, recent direction from the changelog, open work and recent commits.
+4. With a focus area, send one more scout to study it in depth, after any other scouts have finished (at most three helpers run at once).
+5. After the git exclude check in your instructions, write or update \`.ecmwf-multi-agents/context/onboard.md\`. First line: \`Commit: <hash> (<date>)\` from \`git log -1 --format='%H (%cs)'\`, or \`Commit: none\` outside git or before the first commit. Then these sections, each short, with \`path:line\` evidence where useful:
+   1. Purpose
+   2. Architecture
+   3. Main data or control flow
+   4. Rules that constrain edits
+   5. How to build, test and lint
+   6. Current direction and open work
+   7. Stale or contradictory docs
+
+   Add focus findings to the sections they inform.
+6. Apart from the exclude entry, change no other file.
+7. Recap the summary for the user in a few lines and offer next steps, such as \`/plan\` for a piece of work.` }, plan: { name: "plan", description: "Plan a piece of work with you, then wait for your approval", agent: "lead", template: `Plan a piece of work with the user, then wait for approval.
+
+Goal: $ARGUMENTS
+
+1. If the goal above is empty, ask the user what they want to achieve.
+2. Load the skill \`ecmwf-multi-agents-plan\` with the skill tool and follow its planning procedure for this goal.
+3. While planning, change no project files: write only the plan file and the exclude entry.
+4. Stop after explaining the plan, and wait for the user's approval.` }, go: { name: "go", description: "Carry out an approved plan task by task", agent: "lead", template: "Carry out an approved plan, task by task.\n\nPlan (may be empty): $ARGUMENTS\n\nThis may be a new session. Rely on the plan file, not on memory of earlier conversations.\n\n1. Find the plan. Use a path as given; a slug means `.ecmwf-multi-agents/plans/<slug>.md` at the top of the repository. Without either, list the plans newest first with their status, in the shell at the top of the repository: `ls -t .ecmwf-multi-agents/plans/*.md | xargs grep -m1 -H '^Status:'`. If exactly one is not done, use it. If several are, ask which, recommending the most recently changed. If none is found, say so and ask what to do.\n2. If its status is `draft`, review it if the policy calls for that, show a short summary and ask for approval first; on approval, set status `approved` with a log line. If it is `done`, say so and stop.\n3. Load the skill `ecmwf-multi-agents-plan` with the skill tool and follow its execution procedure." }, review: { name: "review", description: "Independent review of your uncommitted changes, a branch, a commit, a pull request or a plan", agent: "reviewer", subtask: false, template: "Review the target below and reply in your reviewer format. You do not see the conversation that led here; this message is all you have.\n\nTarget: $ARGUMENTS\n\nResolve the target first. `git branch` is denied to you; test whether a branch exists with `git rev-parse --verify <name>`.\n\n- Empty: the uncommitted changes in this repository. Run `git status` and `git diff HEAD`, and read new untracked files in full.\n- A pull request number or URL: run `gh pr view`, `gh pr diff` and `gh pr checks` with it. If its branch is not checked out here, review from the diff and say so under CHECKED.\n- A plan file in `.ecmwf-multi-agents/plans/`, given as a path, or as a slug when no branch has that name: read it by exact path and review the plan.\n- A branch name (or `origin/<name>` if only that exists): find the default branch with `git symbolic-ref --short refs/remotes/origin/HEAD`; if that fails, use `main`, or else `master` (test with `git rev-parse --verify`). Run `git log <default>..<branch>` and `git diff <default>...<branch>`. The files on disk may belong to another branch, so read the branch's files with `git show <branch>:<path>`.\n- A commit hash: `git show <hash>`.\n\nIf the target cannot be resolved, or there is nothing to review, give no verdict: say so in one or two lines, with what you tried and what is needed. Then stop.\n\nJudge the work against its stated purpose where there is one (commit messages, the pull request description, the plan's goal); otherwise infer the intent from the change and say so." }, progress: { name: "progress", description: "Show progress on the current plan", agent: "scout", subtask: false, template: "Report progress on a plan, briefly and in plain words. You do not see the conversation; this message is all you have.\n\nPlan: $ARGUMENTS\n\nPlans are Markdown files in `.ecmwf-multi-agents/plans/` at the repository top (`git rev-parse --show-toplevel`; outside git, the current directory). Search tools skip that folder, so list it with `ls` and read plans by exact path.\n\n1. Find the plan. A path: read that file. A slug: read `.ecmwf-multi-agents/plans/<slug>.md`. Empty: run `ls -t` on the folder, then read plans from the newest until you find one whose `Status:` line is not `done`; if all are done, say so, name the newest, and stop.\n2. If there is no plan, say so in one line and suggest `/plan` to start one.\n3. Otherwise count the task lines: `[x]` is done, `[ ]` is open. Reply in this format instead of your usual report:\n\n```text\nPlan: the title (path)\nStatus: the plan's status\nDone: N of M tasks\nNext: open tasks whose dependencies are done, at most three\nBlocked: tasks the log reports as blocked or failed, with the reason; or none\nLog: the last three log lines\nAlso open: other plans not done; or none\n```" }, guide: { name: "guide", description: "How this harness works, in plain words", agent: "lead", template: "Load the skill `ecmwf-multi-agents-guide` with the skill tool, then use it to answer this question about the harness:\n\n$ARGUMENTS\n\nIf there is no question above, give a short overview instead: what the harness does, the agents in one line each, the commands, and where to start (`/onboard` in a new repository; after that, just ask, or use `/plan` for bigger work).\n\nUse plain words for a scientist who is not a software-process expert, and keep it short. Answer from the guide. If it does not cover the question, say so and point to the README in the harness checkout." } }, skills: ["ecmwf-multi-agents-plan", "ecmwf-multi-agents-guide"] } });
 export {
   plugin_default as default
 };

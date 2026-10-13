@@ -21,6 +21,18 @@ export interface EmbeddedHarness {
   profiles: EmbeddedProfile[];
   agents: EmbeddedAgent[];
   commands: EmbeddedCommand[];
+  /** What the plugin registers on opencode 1.x when the harness files are not installed. */
+  v1: EmbeddedV1;
+}
+
+/**
+ * The harness as opencode 1.x config entries, exactly as opencode makes them of the generated
+ * agent and command files, and the skills shipped in the `skills` folder next to the plugin's.
+ */
+export interface EmbeddedV1 {
+  agents: Record<string, Record<string, unknown>>;
+  commands: Record<string, Record<string, unknown>>;
+  skills: string[];
 }
 
 /** A slash command of the harness: what the plugin needs to run it in a child session instead. */
@@ -109,6 +121,8 @@ export interface V1AgentConfig {
 
 export interface V1Config {
   agent?: Record<string, V1AgentConfig | undefined>;
+  command?: Record<string, unknown>;
+  skills?: { paths?: string[]; [key: string]: unknown };
   default_agent?: string;
   [key: string]: unknown;
 }

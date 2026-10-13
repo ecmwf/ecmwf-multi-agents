@@ -143,7 +143,8 @@ export function v1Permission(rules: readonly Rule[], owner = "rules"): { [key: s
   return out;
 }
 
-export function v1AgentFile(agent: ResolvedAgent, marker: string): OutputFile {
+/** An agent file's frontmatter. */
+export function v1AgentData(agent: ResolvedAgent): { [key: string]: YamlValue } {
   checkId("agent", agent.id);
   const owner = `agent ${agent.id}`;
   // An empty body leaves the agent without a prompt, and opencode 1.x then sends its own.
@@ -170,14 +171,24 @@ export function v1AgentFile(agent: ResolvedAgent, marker: string): OutputFile {
   if (color !== undefined) data.color = color;
   const permission = v1Permission(agent.permissions, owner);
   if (Object.keys(permission).length > 0) data.permission = permission;
-  return { path: `agents/${agent.id}.md`, content: withFrontmatter(data, lf(agent.prompt), [marker]) };
+  return data;
 }
 
-export function v1CommandFile(
-  command: ResolvedCommand,
-  marker: string,
-  modes: ReadonlyMap<string, AgentMode>,
-): OutputFile {
+export function v1AgentFile(agent: ResolvedAgent, marker: string): OutputFile {
+  return { path: `agents/${agent.id}.md`, content: withFrontmatter(v1AgentData(agent), lf(agent.prompt), [marker]) };
+}
+
+/**
+ * The config entry opencode 1.x makes of an agent file: its name, the frontmatter and the body
+ * as `prompt` (opencode/src/config/agent.ts:22-27 at v1.18.35). The plugin registers this entry
+ * when the files are not installed, so both routes give the same agent.
+ */
+export function v1AgentEntry(agent: ResolvedAgent): Record<string, YamlValue> {
+  return { name: agent.id, ...v1AgentData(agent), prompt: lf(agent.prompt).trim() };
+}
+
+/** A command file's frontmatter. */
+export function v1CommandData(command: ResolvedCommand, modes: ReadonlyMap<string, AgentMode>): { [key: string]: YamlValue } {
   checkId("command", command.id);
   const data: { [key: string]: YamlValue } = {
     description: lf(command.description),
@@ -188,7 +199,20 @@ export function v1CommandFile(
   // current session, which is what a neutral `subtask: false` means.
   if (command.subtask) data.subtask = true;
   else if (modes.get(command.agent) === "subagent") data.subtask = false;
-  return { path: `commands/${command.id}.md`, content: withFrontmatter(data, lf(command.template), [marker]) };
+  return data;
+}
+
+export function v1CommandFile(
+  command: ResolvedCommand,
+  marker: string,
+  modes: ReadonlyMap<string, AgentMode>,
+): OutputFile {
+  return { path: `commands/${command.id}.md`, content: withFrontmatter(v1CommandData(command, modes), lf(command.template), [marker]) };
+}
+
+/** The config entry opencode 1.x makes of a command file: name, frontmatter, body as `template` (config/command.ts:24-29). */
+export function v1CommandEntry(command: ResolvedCommand, modes: ReadonlyMap<string, AgentMode>): Record<string, YamlValue> {
+  return { name: command.id, ...v1CommandData(command, modes), template: lf(command.template).trim() };
 }
 
 export function v1SkillFile(skill: ResolvedSkill, marker: string): OutputFile {

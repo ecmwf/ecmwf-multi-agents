@@ -97,15 +97,26 @@ The installer finds your opencode version, links the agents, commands, skills an
 
 Other ways to install:
 
-- One project only: `./install.sh --project /path/to/repo` copies the files into that
-  project's `.opencode/` folder.
+- Switched on per project, without installing (opencode 1.x): keep the checkout, and add one
+  line to the `opencode.json` of each project that should use the harness:
+
+  ```json
+  { "plugin": ["{env:HOME}/.local/share/ecmwf-multi-agents"] }
+  ```
+
+  The plugin then brings the agents, commands and skills from the checkout. Checking out a new
+  version there updates every such project at its next start; nothing else changes.
+- One project only, installed: `./install.sh --project /path/to/repo` copies the files into
+  that project's `.opencode/` folder.
 - Shared machines with opencode 1.x: `./install.sh --central /shared/path` prepares a copy
   that can be made read-only; users load it by setting `OPENCODE_CONFIG_DIR` (for example
   from a module file).
 
-Check an installation with `./install.sh doctor`. Remove it with `./install.sh uninstall`.
-`docs/install.md` covers every option, updating, both opencode versions on one machine, the
-central install with module file examples, and troubleshooting.
+Check an installation with `./install.sh doctor`, and a project with
+`./install.sh doctor --project /path/to/repo`. Remove an installation with
+`./install.sh uninstall`. `docs/install.md` covers every option, the plugin line, updating,
+both opencode versions on one machine, the central install with module file examples, and
+troubleshooting.
 
 ## Settings
 

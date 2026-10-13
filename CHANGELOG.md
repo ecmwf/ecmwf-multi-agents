@@ -11,6 +11,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ## [Unreleased]
 
+### Added
+
+- Switch the harness on per project without installing it (opencode 1.x). Keep one checkout,
+  for example in `~/.local/share/ecmwf-multi-agents`, and add one line to the `opencode.json`
+  of each project that should use it:
+  `"plugin": ["{env:HOME}/.local/share/ecmwf-multi-agents"]`. The plugin then brings the
+  agents, commands and skills from the checkout, and other projects stay as they were.
+  Checking out a new version in the checkout updates every such project at its next start.
+  `./install.sh --help` prints the line for your checkout, and
+  `./install.sh doctor --project DIR` checks such a project. See `docs/install.md`.
+
 ## [0.3.0] - 2026-10-13
 
 ### Added

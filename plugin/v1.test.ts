@@ -746,3 +746,45 @@ test("v1: a status call that never answers leaves a helper command as it is, aft
   expect(output.message.agent).toBe("reviewer");
   expect((output.parts[0] as { type: string }).type).toBe("text");
 }, 10_000);
+
+describe("v1 switched on with a plugin line only (no harness files installed)", () => {
+  const SKILLS = "/checkout/dist/opencode-v1/skills";
+  const skillFiles = {
+    [`${SKILLS}/ecmwf-multi-agents-plan/SKILL.md`]: "---\nname: ecmwf-multi-agents-plan\n---\n\nPlan.",
+    [`${SKILLS}/ecmwf-multi-agents-guide/SKILL.md`]: "---\nname: ecmwf-multi-agents-guide\n---\n\nGuide.",
+  };
+  const begin = async (files: Record<string, string>, record = recorder()) => {
+    const plugin = createPlugin(harness, { environment: () => fakeEnvironment({ ...skillFiles, ...files }), schedule: (run) => run(), skillsDir: SKILLS });
+    return { hooks: await plugin.server({ client: record.client, directory: "/repo", worktree: "/repo" }), record };
+  };
+
+  test("the config hook registers the harness, then the project's settings apply to it", async () => {
+    const { hooks, record } = await begin({ [PROJECT]: '{ "review": "always", "profile": "anthropic", "agents": { "scout": { "steps": 9 } } }' });
+    const cfg: V1Config = { agent: { build: { mode: "primary" } } };
+    await hooks.config(cfg);
+    expect(Object.keys(cfg.agent!)).toEqual(["build", "lead", "scout", "builder", "reviewer"]);
+    expect(cfg.agent!.lead!.prompt).toContain("Review policy: always");
+    expect(cfg.agent!.reviewer).toMatchObject({ model: "anthropic/claude-opus-5-5", variant: "high" });
+    expect(cfg.agent!.scout!.steps).toBe(9);
+    expect(Object.keys(cfg.command as object)).toEqual(["plan", "review"]);
+    expect(cfg.skills).toEqual({ paths: [SKILLS] });
+    expect(cfg.default_agent).toBe("lead");
+    expect(record.logs).toEqual([]);
+  });
+
+  test("the hooks work on the registered agents: the shell guard knows the helpers", async () => {
+    const { hooks } = await begin({});
+    await hooks.config({});
+    await hooks["chat.message"]({ sessionID: "s1", agent: "builder" }, { message: { agent: "builder" } });
+    expect(await shell(hooks, "s1", "git push origin main")).toContain('helpers may not run "git push origin main"');
+  });
+
+  test("with the harness installed as files, the config hook registers nothing", async () => {
+    const { hooks } = await begin({});
+    const cfg = config();
+    await hooks.config(cfg);
+    expect(Object.keys(cfg.agent!)).toEqual(["lead", "scout", "reviewer"]);
+    expect(cfg.command).toBeUndefined();
+    expect(cfg.skills).toBeUndefined();
+  });
+});

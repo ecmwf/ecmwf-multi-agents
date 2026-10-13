@@ -52,6 +52,18 @@ Examples:
   ./install.sh --project ~/code/my-repo
   ./install.sh doctor
 EOF
+	# The path of this checkout, as a project's opencode.json can name it on any account.
+	usage_checkout=$SCRIPT_DIR
+	case $usage_checkout in
+	"${HOME:-/nonexistent}"/*) usage_checkout="{env:HOME}${usage_checkout#"$HOME"}" ;;
+	esac
+	cat <<EOF
+
+Without installing anything (opencode 1.x): switch the harness on for one project by adding
+this line to the project's opencode.json; it follows this checkout when you update it:
+  "plugin": ["$usage_checkout"]
+Check such a project with ./install.sh doctor --project DIR. See docs/install.md.
+EOF
 }
 
 # ---------------------------------------------------------------- options
@@ -583,6 +595,42 @@ settings_value() {
 	sed -n "/^[[:space:]]*\/\//d; s/^[[:space:]]*\"$2\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$1" | sed -n '$p'
 }
 
+# The project config file that switches the harness on with a plugin line, such as
+# "plugin": ["{env:HOME}/.local/share/ecmwf-multi-agents"], if any: the first one with a line
+# that is not a comment and names a path ending in ecmwf-multi-agents.
+plugin_line_file() {
+	for line_config in "$1/opencode.json" "$1/opencode.jsonc" "$1/.opencode/opencode.json" "$1/.opencode/opencode.jsonc"; do
+		[ -f "$line_config" ] || continue
+		if sed '/^[[:space:]]*\/\//d' "$line_config" | grep -q "\"[^\"]*$NAME/*\""; then
+			say "$line_config"
+			return 0
+		fi
+	done
+	return 1
+}
+
+# The folder a plugin line in config file $1 names, resolved as opencode 1.x does: {env:VAR}
+# substituted, file:// removed, a relative path taken from the config file's folder.
+plugin_line_path() {
+	line_path=$(sed '/^[[:space:]]*\/\//d' "$1" | sed -n "s/.*\"\\([^\"]*$NAME\\)\\/*\".*/\\1/p" | sed -n '1p')
+	while :; do
+		case $line_path in
+		*'{env:'*'}'*) ;;
+		*) break ;;
+		esac
+		line_var=$(printf '%s\n' "$line_path" | sed -n 's/^[^{]*{env:\([A-Za-z_][A-Za-z0-9_]*\)}.*$/\1/p')
+		[ -n "$line_var" ] || break
+		line_value=$(printenv "$line_var" || true)
+		line_path=${line_path%%"{env:$line_var}"*}$line_value${line_path#*"{env:$line_var}"}
+	done
+	line_path=${line_path#file://}
+	case $line_path in
+	/*) ;;
+	.*) line_path=$(dirname -- "$1")/$line_path ;;
+	esac
+	say "$line_path"
+}
+
 # Run opencode for the checks, from a folder that shows the installation being checked: the
 # project for a project install, otherwise an empty folder, so no project config interferes.
 run_opencode() {
@@ -625,7 +673,11 @@ check_settings_file() {
 }
 
 cmd_doctor() {
-	say "Checking $NAME in $CONFIG_DIR"
+	if [ "$TARGET" = project ]; then
+		say "Checking $NAME for the project $PROJECT"
+	else
+		say "Checking $NAME in $CONFIG_DIR"
+	fi
 	detect_versions
 	if [ -n "$V1_VERSION" ]; then ok "opencode $V1_VERSION"; fi
 	if [ -n "$V2_VERSION" ]; then
@@ -639,23 +691,60 @@ cmd_doctor() {
 		fail "opencode not found; install it from https://opencode.ai"
 	fi
 
-	if [ ! -f "$RECORD" ]; then
-		fail "$NAME is not installed here ($RECORD is missing); run ./install.sh"
-		doctor_summary
-	fi
-	PLATFORM=$(recorded_value platform)
-	MODE=$(recorded_value mode)
-	SRC_DIR=$DIST_ROOT/opencode-$PLATFORM
-	PROFILES_DIR=$CONFIG_DIR/$NAME/profiles
-	[ -d "$PROFILES_DIR" ] || PROFILES_DIR=$SRC_DIR/$NAME/profiles
-	if [ "$PLATFORM" = v2 ] && [ -n "$V1_VERSION" ]; then
-		fail "the opencode 2 files are installed, but opencode $V1_VERSION reads them without their safety rules; run ./install.sh to switch to the v1 files"
-	elif [ "$PLATFORM" = v1 ] && [ -z "$V1_VERSION" ] && [ -n "$V2_VERSION" ]; then
-		ok "opencode 1.x files installed; opencode 2 reads them"
-	fi
-
 	DOCTOR_TMP=$(mktemp -d)
 	trap 'rm -rf -- "$DOCTOR_TMP"' EXIT
+	LINE_FILE=
+	if [ ! -f "$RECORD" ] && [ "$TARGET" = project ]; then
+		LINE_FILE=$(plugin_line_file "$PROJECT" || true)
+	fi
+	if [ ! -f "$RECORD" ] && [ -z "$LINE_FILE" ]; then
+		if [ "$TARGET" = project ]; then
+			fail "$NAME is not switched on here: neither installed ($RECORD is missing) nor named by a plugin line in the project's opencode.json; see docs/install.md"
+		else
+			fail "$NAME is not installed here ($RECORD is missing); run ./install.sh"
+		fi
+		doctor_summary
+	fi
+
+	if [ -n "$LINE_FILE" ]; then
+		PLATFORM=v1
+		MODE=line
+		LINE_CHECKOUT=$(plugin_line_path "$LINE_FILE")
+		SRC_DIR=$LINE_CHECKOUT/dist/opencode-v1
+		PROFILES_DIR=$SRC_DIR/$NAME/profiles
+		if [ -f "$LINE_CHECKOUT/package.json" ] && [ -f "$SRC_DIR/plugins/$NAME.js" ]; then
+			line_version=$(sed -n '1p' "$LINE_CHECKOUT/VERSION" 2>/dev/null || true)
+			ok "switched on by the plugin line in $LINE_FILE: $LINE_CHECKOUT${line_version:+ (version $line_version)}"
+		else
+			fail "the plugin line in $LINE_FILE names $LINE_CHECKOUT, which is not a checkout of $NAME (no package.json and dist/opencode-v1/plugins/$NAME.js there)"
+		fi
+		if [ -z "$V1_VERSION" ]; then
+			fail "the plugin line works with opencode 1.x only; with opencode 2, install with ./install.sh --project $PROJECT"
+		fi
+		if [ -f "$GLOBAL_DIR/$NAME/installed.txt" ]; then
+			note "$NAME is also installed in $GLOBAL_DIR, so opencode loads the plugin twice and uses the installed files; keep one: remove the plugin line, or run ./install.sh uninstall"
+		fi
+	else
+		PLATFORM=$(recorded_value platform)
+		MODE=$(recorded_value mode)
+		SRC_DIR=$DIST_ROOT/opencode-$PLATFORM
+		PROFILES_DIR=$CONFIG_DIR/$NAME/profiles
+		[ -d "$PROFILES_DIR" ] || PROFILES_DIR=$SRC_DIR/$NAME/profiles
+		if [ "$PLATFORM" = v2 ] && [ -n "$V1_VERSION" ]; then
+			fail "the opencode 2 files are installed, but opencode $V1_VERSION reads them without their safety rules; run ./install.sh to switch to the v1 files"
+		elif [ "$PLATFORM" = v1 ] && [ -z "$V1_VERSION" ] && [ -n "$V2_VERSION" ]; then
+			ok "opencode 1.x files installed; opencode 2 reads them"
+		fi
+	fi
+
+	if [ -z "$LINE_FILE" ]; then
+		check_installed_files
+	fi
+	doctor_settings_and_run
+}
+
+# The files an install recorded: present, still ours, and matching this checkout.
+check_installed_files() {
 	recorded_files >"$DOCTOR_TMP/recorded"
 	doctor_files=0
 	doctor_bad=0
@@ -687,7 +776,10 @@ cmd_doctor() {
 			note "this checkout has a different set of files; run ./install.sh to bring the installation up to date"
 		fi
 	fi
+}
 
+# Settings files, the profile's models, background helpers, and whether opencode loads lead.
+doctor_settings_and_run() {
 	EFFECTIVE_PROFILE=default
 	EFFECTIVE_REVIEW=auto
 	if [ -n "${OPENCODE_CONFIG_DIR-}" ] && [ "$TARGET" != central ]; then
@@ -745,7 +837,8 @@ cmd_doctor() {
 			if command -v jq >/dev/null 2>&1; then
 				doctor_lead_review=$(printf '%s\n' "$doctor_agent" | jq -r '.prompt // ""' 2>/dev/null | sed -n 's/^Review policy: //p' | sed -n '1p')
 				if [ -n "$doctor_lead_review" ] && [ "$doctor_lead_review" != "$EFFECTIVE_REVIEW" ]; then
-					note "lead uses review policy $doctor_lead_review, but your settings say $EFFECTIVE_REVIEW: the plugin is not active (is plugins/$NAME.js installed?)"
+					if [ -n "$LINE_FILE" ]; then doctor_plugin_hint="check the plugin line in $LINE_FILE"; else doctor_plugin_hint="is plugins/$NAME.js installed?"; fi
+					note "lead uses review policy $doctor_lead_review, but your settings say $EFFECTIVE_REVIEW: the plugin is not active ($doctor_plugin_hint)"
 				fi
 				doctor_default=$(run_opencode opencode debug config 2>/dev/null | jq -r '.default_agent // ""' 2>/dev/null || true)
 				if [ "$doctor_default" = lead ]; then

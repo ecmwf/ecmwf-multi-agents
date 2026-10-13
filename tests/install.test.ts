@@ -529,6 +529,77 @@ describe("doctor", () => {
   });
 });
 
+describe("doctor for a project switched on by a plugin line", () => {
+  /** A checkout of the harness in the box's home: package.json, VERSION and the fixture's dist. */
+  function checkout(box: Box, rel = "checkouts/ecmwf-multi-agents"): string {
+    const dir = path.join(box.home, rel);
+    write(path.join(dir, "package.json"), '{ "name": "ecmwf-multi-agents", "exports": { "./server": "./dist/opencode-v1/plugins/ecmwf-multi-agents.js" } }\n');
+    write(path.join(dir, "VERSION"), "0.4.0\n");
+    Bun.spawnSync(["cp", "-R", box.dist, path.join(dir, "dist")]);
+    return dir;
+  }
+  function project(box: Box, file = "opencode.json", content = '{\n  "plugin": ["{env:HOME}/checkouts/ecmwf-multi-agents"]\n}\n'): string {
+    const dir = path.join(box.dir, "my project");
+    mkdirSync(dir, { recursive: true });
+    write(path.join(dir, file), content);
+    return dir;
+  }
+
+  test("finds the line, resolves {env:HOME} and checks the checkout, the models and opencode", () => {
+    const box = makeBox();
+    const dir = checkout(box);
+    const proj = project(box);
+    const { code, out } = run(box, ["doctor", "--project", proj]);
+    expect(out).toContain(`OK    switched on by the plugin line in ${path.join(proj, "opencode.json")}: ${dir} (version 0.4.0)`);
+    expect(out).toContain("WARN  profile default: not available: github-copilot/gpt-6.1-sol");
+    expect(out).toContain("OK    opencode loads the lead agent");
+    expect(out).not.toContain("files installed");
+    expect(code).toBe(0);
+  });
+
+  test("reads .opencode/opencode.jsonc, skips commented lines, and takes absolute and file:// paths", () => {
+    const box = makeBox();
+    const dir = checkout(box);
+    const commented = project(box, ".opencode/opencode.jsonc", `{\n  // "plugin": ["/nowhere/ecmwf-multi-agents"],\n  "plugin": ["file://${dir}"]\n}\n`);
+    const { code, out } = run(box, ["doctor", "--project", commented]);
+    expect(out).toContain(`switched on by the plugin line in ${path.join(commented, ".opencode/opencode.jsonc")}: ${dir} (version 0.4.0)`);
+    expect(code).toBe(0);
+  });
+
+  test("a line that names something other than a checkout fails", () => {
+    const box = makeBox();
+    const proj = project(box, "opencode.json", '{ "plugin": ["{env:HOME}/no/such/ecmwf-multi-agents"] }\n');
+    const { code, out } = run(box, ["doctor", "--project", proj]);
+    expect(code).toBe(1);
+    expect(out).toContain(`names ${path.join(box.home, "no/such/ecmwf-multi-agents")}, which is not a checkout of ecmwf-multi-agents`);
+  });
+
+  test("warns when the harness is also installed globally", () => {
+    const box = makeBox();
+    run(box, []);
+    checkout(box);
+    const { out } = run(box, ["doctor", "--project", project(box)]);
+    expect(out).toContain("is also installed in");
+    expect(out).toContain("opencode loads the plugin twice");
+  });
+
+  test("with only opencode 2 the line does nothing, and doctor says so", () => {
+    const box = makeBox({ opencode2: "opencode v2.0.16" });
+    checkout(box);
+    const { code, out } = run(box, ["doctor", "--project", project(box)]);
+    expect(code).toBe(1);
+    expect(out).toContain("the plugin line works with opencode 1.x only");
+  });
+
+  test("a project with neither an install nor a line is reported as not switched on", () => {
+    const box = makeBox();
+    const proj = project(box, "opencode.json", '{ "plugin": ["opencode-dir@1.0.10"] }\n');
+    const { code, out } = run(box, ["doctor", "--project", proj]);
+    expect(code).toBe(1);
+    expect(out).toContain("is not switched on here");
+  });
+});
+
 test("install.sh passes shellcheck", () => {
   const shellcheck = Bun.which("shellcheck");
   if (!shellcheck) {

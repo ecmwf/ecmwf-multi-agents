@@ -121,10 +121,17 @@ interface Server {
   stop: () => Promise<void>;
 }
 
-async function startServer(box: Sandbox, bin: string, args: string[], env: Record<string, string>, pattern: RegExp): Promise<Server> {
+/** The environment for a sandboxed opencode; `projectConfig` lets it read the project's own config. */
+function isolated(env: Record<string, string>, projectConfig = false): Record<string, string | undefined> {
+  const out: Record<string, string | undefined> = { ...process.env, ...ISOLATION, ...env };
+  if (projectConfig) delete out.OPENCODE_DISABLE_PROJECT_CONFIG;
+  return out;
+}
+
+async function startServer(box: Sandbox, bin: string, args: string[], env: Record<string, string>, pattern: RegExp, projectConfig = false): Promise<Server> {
   const proc = Bun.spawn([sandboxScript, box.dir, bin, "serve", "--hostname", "127.0.0.1", ...args], {
     cwd: box.project,
-    env: { ...process.env, ...ISOLATION, ...env },
+    env: isolated(env, projectConfig),
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -528,6 +535,136 @@ for (const bin of v1Bins) {
         }
       }, 300_000);
     });
+  });
+}
+
+// The harness switched on for one project with one line in its opencode.json, and nothing
+// installed: a "checkout" in the sandbox home holds the repository's real package.json, the
+// bundled plugin and the skills, as `git clone` gives them. The global config holds only the
+// stand-in provider.
+for (const bin of v1Bins) {
+  describe.skipIf(!enabled)(`plugin switched on by a project's plugin line, opencode 1.x (${bin})`, () => {
+    let box: Sandbox;
+    let checkout = "";
+    let model: ReturnType<typeof standInModel> | undefined;
+    const LINE = '{ "plugin": ["{env:HOME}/.local/share/ecmwf-multi-agents"] }\n';
+
+    const run = (args: string[], cwd = box.project) => {
+      const result = Bun.spawnSync([sandboxScript, box.dir, bin, ...args], { cwd, env: isolated({}, true), stdout: "pipe", stderr: "pipe" });
+      if (result.exitCode !== 0) throw new Error(`${bin} ${args.join(" ")} exited ${result.exitCode}\n${result.stderr.toString()}`);
+      return JSON.parse(result.stdout.toString()) as unknown;
+    };
+    const files = (dir: string) => [...new Bun.Glob("**/*").scanSync({ cwd: dir, dot: true })].sort();
+
+    beforeAll(async () => {
+      model = standInModel();
+      // Agents without models, so every agent runs on the stand-in's session model.
+      const harness: ResolvedHarness = resolvedFixture();
+      for (const item of harness.agents) {
+        delete item.model;
+        delete item.variant;
+      }
+      const dir = realpathSync(mkdtempSync(path.join(tmpdir(), "plugin-line-")));
+      const project = path.join(dir, "project");
+      mkdirSync(project, { recursive: true });
+      Bun.spawnSync(["git", "init", "-q"], { cwd: project });
+      const config = path.join(dir, "home", ".config", "opencode");
+      const provider = {
+        npm: "@ai-sdk/openai-compatible",
+        name: "Stand-in",
+        options: { baseURL: `http://127.0.0.1:${model.port}/v1`, apiKey: "placeholder" },
+        models: { m1: { name: "Stand-in", tool_call: true, temperature: true, limit: { context: 100000, output: 4096 } } },
+      };
+      writeAll(config, [
+        { path: "opencode.json", content: JSON.stringify({ provider: { mock: provider }, enabled_providers: ["mock"], model: "mock/m1", small_model: "mock/m1" }, null, 2) },
+        { path: SETTINGS, content: '{ "profile": "inherit" }\n' },
+      ]);
+      checkout = path.join(dir, "home", ".local", "share", "ecmwf-multi-agents");
+      writeAll(checkout, [
+        { path: "package.json", content: await Bun.file(path.join(root, "package.json")).text() },
+        { path: "dist/opencode-v1/plugins/ecmwf-multi-agents.js", content: await bundlePlugin(root, harness) },
+        ...emitV1(harness)
+          .filter((file) => file.path.startsWith("skills/"))
+          .map((file) => ({ path: `dist/opencode-v1/${file.path}`, content: file.content })),
+      ]);
+      writeFileSync(path.join(project, "opencode.json"), LINE);
+      box = { dir, project, config };
+    }, 120_000);
+
+    afterAll(async () => {
+      await model?.stop(true);
+      if (box) rmSync(box.dir, { recursive: true, force: true });
+    });
+
+    test("the line brings the agents, commands and skills from the checkout, and lead is the default agent", () => {
+      const before = files(checkout);
+      const lead = run(["debug", "agent", "lead"]) as V1Agent;
+      expect(lead.prompt).toContain("Review policy: auto");
+      expect((run(["debug", "agent", "builder"]) as V1Agent).steps).toBe(60);
+      const config = run(["debug", "config"]) as { default_agent?: string; command?: Record<string, { description?: string }>; skills?: { paths?: string[] } };
+      expect(config.default_agent).toBe("lead");
+      expect(Object.keys(config.command ?? {}).sort()).toEqual(["plan", "review"]);
+      expect(config.command!.review!.description).toBe("Independent review of your changes");
+      expect(config.skills?.paths).toEqual([path.join(checkout, "dist", "opencode-v1", "skills")]);
+      const skills = run(["debug", "skill"]) as Array<{ name: string; location: string }>;
+      expect(skills.find((skill) => skill.name === "ecmwf-multi-agents-plan")?.location).toBe(path.join(checkout, "dist", "opencode-v1", "skills", "ecmwf-multi-agents-plan", "SKILL.md"));
+      // opencode wrote nothing into the checkout, and nothing into the project but sessions' data elsewhere.
+      expect(files(checkout)).toEqual(before);
+      expect(files(box.project).filter((file) => !file.startsWith(".git/") && file !== ".git")).toEqual(["opencode.json"]);
+    }, 300_000);
+
+    test("a project without the line gets none of it", () => {
+      const other = path.join(box.dir, "other");
+      mkdirSync(other, { recursive: true });
+      Bun.spawnSync(["git", "init", "-q"], { cwd: other });
+      const config = run(["debug", "config"], other) as { default_agent?: string; command?: Record<string, unknown> };
+      expect(config.default_agent).toBeUndefined();
+      expect(config.command?.review).toBeUndefined();
+    }, 300_000);
+
+    test("/review runs as the registered reviewer, and the shell guard stops a builder's push after 'Allow always'", async () => {
+      const server = await startServer(box, bin, ["--port", String(freePort())], {}, /listening on (http:\/\/\S+)/, true);
+      try {
+        const api = async <T>(method: string, route: string, body?: unknown): Promise<T> => {
+          const url = new URL(route, server.url);
+          url.searchParams.set("directory", box.project);
+          const response = await fetch(url, {
+            method,
+            headers: { "content-type": "application/json" },
+            body: body === undefined ? undefined : JSON.stringify(body),
+            signal: AbortSignal.timeout(120_000),
+          });
+          if (!response.ok) throw new Error(`${method} ${route}: HTTP ${response.status}`);
+          const text = await response.text();
+          return (text ? JSON.parse(text) : undefined) as T;
+        };
+        const commands = await api<Array<{ name: string; description?: string }>>("GET", "/command");
+        expect(commands.filter((command) => command.name === "review")).toEqual([expect.objectContaining({ description: "Independent review of your changes" })]);
+
+        const reviewed = await api<{ id: string }>("POST", "/session", {});
+        await api("POST", `/session/${reviewed.id}/command`, { command: "review", arguments: "LINE_TARGET", agent: "lead" });
+        const stored = await api<Array<{ info: { role: string; agent?: string }; parts: V1Part[] }>>("GET", `/session/${reviewed.id}/message`);
+        const verdict = stored.find((message) => message.info.role === "assistant" && message.info.agent === "reviewer");
+        expect(verdict?.parts.find((part) => part.type === "text")?.text).toBe("VERDICT: APPROVE");
+
+        const bashParts = async (session: string) =>
+          (await api<Array<{ parts: V1Part[] }>>("GET", `/session/${session}/message`)).flatMap((message) => message.parts).filter((part) => part.type === "tool" && part.tool === "bash");
+        const first = await api<{ id: string }>("POST", "/session", {});
+        await api("POST", `/session/${first.id}/prompt_async`, { agent: "lead", parts: [{ type: "text", text: "PUSH_AS_LEAD" }] });
+        const request = await within(60_000, "lead's permission request", async () => (await api<Array<{ id: string; permission: string }>>("GET", "/permission"))[0]);
+        await api("POST", `/permission/${request.id}/reply`, { reply: "always" });
+        await within(60_000, "lead's push to finish", async () => (await bashParts(first.id)).find((part) => part.state?.status === "completed" || part.state?.status === "error"));
+        const second = await api<{ id: string }>("POST", "/session", {});
+        await api("POST", `/session/${second.id}/message`, { agent: "lead", parts: [{ type: "text", text: "DELEGATE_PUSH" }] });
+        const children = await api<Array<{ id: string }>>("GET", `/session/${second.id}/children`);
+        const builder = await bashParts(children[0]!.id);
+        expect(builder.map((part) => part.state?.input?.command)).toEqual(["echo builder-ok", "git push origin main"]);
+        expect(builder[1]!.state?.status).toBe("error");
+        expect(builder[1]!.state?.error).toContain('ecmwf-multi-agents: helpers may not run "git push origin main"');
+      } finally {
+        await server.stop();
+      }
+    }, 300_000);
   });
 }
 

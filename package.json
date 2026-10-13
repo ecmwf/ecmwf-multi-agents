@@ -5,6 +5,9 @@
   "license": "Apache-2.0",
   "private": true,
   "type": "module",
+  "exports": {
+    "./server": "./dist/opencode-v1/plugins/ecmwf-multi-agents.js"
+  },
   "packageManager": "bun@1.4.3",
   "engines": {
     "bun": "1.4.3"

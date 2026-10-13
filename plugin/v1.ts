@@ -3,7 +3,9 @@
 
 // opencode 1.x entry: `server(input)` returns hooks. Plugins start before any other service reads
 // the config, and the `config` hook receives the merged config with the Markdown agents in it, so
-// changes made there are what every agent uses (docs/research/opencode-v1.md, section 8).
+// changes made there are what every agent uses (docs/research/opencode-v1.md, section 8). When
+// the harness files are not installed, because a project switched the harness on with a plugin
+// line only, the hook first registers the agents, commands and skills itself; see register.ts.
 //
 // The shell guard needs the agent of the session that calls a tool, but `tool.execute.before`
 // receives only the tool, session and call ids (opencode/src/session/tools.ts:106-110 at
@@ -37,6 +39,7 @@
 // whereas pinning the user's own session would take it away from lead. The user's own session
 // can itself start with a helper's message, because `/review` and `/progress` answer inline.
 
+import { fileURLToPath } from "node:url";
 import { applyToV1Config, planAgents, type AgentPlan } from "./apply.ts";
 import { processEnvironment } from "./environment.ts";
 import { checkShellCommand } from "./guard.ts";
@@ -55,6 +58,7 @@ import {
   type InlineFacts,
 } from "./inline.ts";
 import { Compactions, isolateHelperRequest } from "./isolate.ts";
+import { registerV1, skillsDirOf } from "./register.ts";
 import { v1Reporter } from "./report.ts";
 import { loadSettings, mergeSettings } from "./settings.ts";
 import { v1Tools } from "./tools-v1.ts";
@@ -73,6 +77,17 @@ export interface V1Options {
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
   inlineWaitLimitMs?: number;
+  /** The skills folder registered when the harness is not installed; by default the one next to the bundle's folder. */
+  skillsDir?: string;
+}
+
+/** The file this code runs from: the bundle, once built. */
+function ownFile(): string | undefined {
+  try {
+    return fileURLToPath(import.meta.url);
+  } catch {
+    return undefined;
+  }
 }
 
 /** The value of `promise`, or undefined when it takes longer than `ms`. */
@@ -128,9 +143,11 @@ export function createServer(harness: EmbeddedHarness, options: V1Options = {}) 
     let settings: Settings = mergeSettings([], harness);
     let plans: AgentPlan[] = [];
     let platform: string = process.platform;
+    let readFile: (file: string) => string | undefined = () => undefined;
     try {
       const environment = (options.environment ?? processEnvironment)();
       platform = environment.platform;
+      readFile = (file) => environment.readFile(file);
       const loaded = loadSettings(harness, environment, v1ProjectRoot(input));
       settings = loaded.settings;
       reporter.report(loaded.problems);
@@ -237,8 +254,14 @@ export function createServer(harness: EmbeddedHarness, options: V1Options = {}) 
 
     return {
       async config(config) {
+        if (typeof config !== "object" || config === null) return;
         try {
-          if (typeof config !== "object" || config === null) return;
+          // Before the settings, which then apply to registered agents as to installed ones.
+          reporter.report(registerV1(config, harness, { skillsDir: options.skillsDir ?? skillsDirOf(ownFile()), readFile }));
+        } catch (error) {
+          reporter.internal("registering the harness", error);
+        }
+        try {
           reporter.report(applyToV1Config(config, harness, settings, plans));
         } catch (error) {
           reporter.internal("the config hook", error);
