@@ -48,7 +48,7 @@ Only `lead` talks to you. Helpers never ask you questions and never hand work on
 |---|---|
 | `/onboard [focus]` | Surveys the repository and keeps a short summary for later sessions |
 | `/plan <goal>` | Asks you questions, investigates, writes a plan and waits for your approval |
-| `/go [plan]` | Carries out an approved plan task by task, checking each one |
+| `/go [plan]` | Carries out an approved plan, running ready tasks in the background and checking each one |
 | `/review [target]` | Independent review of your uncommitted changes, a branch, a commit, a pull request or a plan |
 | `/progress [plan]` | Shows progress on the current plan |
 | `/guide [question]` | Explains how the harness works, in plain words |

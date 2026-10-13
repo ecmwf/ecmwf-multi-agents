@@ -11,6 +11,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ## [Unreleased]
 
+### Changed
+
+- `/go` hands the ready tasks of a plan off in the background and ticks each as its report
+  arrives, so parallel tasks overlap and you can keep talking to `lead` while they run; a
+  plan whose tasks form a chain runs as before. On opencode 1.x this needs the background
+  flag (see `docs/install.md`); without it `/go` waits for each wave as before.
+
 ## [0.4.0] - 2026-10-13
 
 ### Added

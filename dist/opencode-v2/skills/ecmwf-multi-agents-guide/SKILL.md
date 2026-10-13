@@ -27,7 +27,7 @@ You talk to one agent, `lead`. It works out what you need, asks when something i
 
 - New repository: start with `/onboard` (`/onboard <focus>` looks closer at one area). `lead` surveys the code and keeps a short summary for later sessions.
 - A question or a small change: just ask.
-- Bigger work: `/plan <goal>`. `lead` asks questions, investigates, writes a plan and waits. Approve it or ask for changes, then run `/go`, ideally in a fresh session: the plan file holds everything needed. `/go` works task by task, checks each one, and stops when it needs you.
+- Bigger work: `/plan <goal>`. `lead` asks questions, investigates, writes a plan and waits. Approve it or ask for changes, then run `/go`, ideally in a fresh session: the plan file holds everything needed. `/go` runs ready tasks, several at once in the background, ticks each as its report arrives, and stops when it needs you; you can talk to `lead` meanwhile.
 - `/progress [plan]`: how far the current plan has got.
 - `/review [target]`: independent review, under any policy, of your uncommitted changes (no target), a branch, a pull request (number or URL) or a plan file. It replaces opencode's own `/review`.
 - `/guide [question]`: this guide.
@@ -70,11 +70,11 @@ Profiles give each agent a model and an effort:
 
 ## Helpers in the background
 
-`lead` usually waits for a helper. When it has other work meanwhile, or you may want to keep talking, it hands off in the background and the helper's report arrives later as a message in your conversation. If `lead` is waiting on a helper and you want it back, press Ctrl+B (opencode 1.x; it acts only while `lead` waits on a helper) to move the hand-off to the background.
+`lead` usually waits for a helper. When it has other work meanwhile, or you may want to keep talking, it hands off in the background and the report arrives later in your conversation. If `lead` is waiting on a helper and you want it back, press Ctrl+B (opencode 1.x) to move the hand-off to the background.
 
-If a helper is doing something you do not want, tell `lead`: "redirect the scout: stay in src/" or "stop the builder". `lead` can list its helpers, send one an amendment that it reads at its next step while keeping what it has read so far, or stop one. You can also open the helper's own session and type to it. A stopped helper reports nothing; its changes stay on disk.
+If a helper is doing something you do not want, tell `lead`: "redirect the scout: stay in src/" or "stop the builder". `lead` can list its helpers, send one an amendment it reads at its next step, keeping what it has read, or stop one. You can also open the helper's session and type to it. A stopped helper reports nothing; its changes stay on disk.
 
-On opencode 1.x, background hand-offs need `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` in the environment before opencode starts; `./install.sh doctor` checks it. Without it `lead` waits for every helper.
+On opencode 1.x this needs `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` in the environment before opencode starts; `./install.sh doctor` checks it. Without it `lead` waits for every helper.
 
 ## Work files
 

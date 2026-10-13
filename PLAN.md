@@ -79,7 +79,7 @@ Source content and generator code are written in parallel against the contracts 
 | 5 | Eval runs, baseline, prompt fixes from the results | Release 0.2.0 (done); the open tasks feed the next release | in progress |
 | 6 | npm package, CI, v2 central install, docs polish | | |
 | 7 | Background helpers, steering and cancel: evidence and contract first; then plugin tools, 1.x enablement and prompts in parallel; then tests, evals and docs | Contract agreed (7a); gate and integration green on 1.18.35, 1.19.0 and 2.0.16; evals show the cost of a wake and of a steer | released in 0.3.0 |
-| 8 | `/go` carries out parallel tasks in the background: skill change, then evals | The `plan-go` eval passes with background hand-offs on 1.x and 2.0.16; wall clock and cost against the foreground run recorded | planned |
+| 8 | `/go` carries out parallel tasks in the background: skill change, then evals | The `plan-go` eval passes with background hand-offs on 1.x and 2.0.16; wall clock and cost against the foreground run recorded | built and measured on a branch |
 
 Ownership rule for parallel work: every task owns a disjoint set of files; shared contracts
 (`docs/architecture.md`, `docs/adr/`, `src/manifest.jsonc`, `tools/types.ts`, this plan) change
@@ -460,11 +460,23 @@ Decisions, to agree with Tiago before 8b:
   (several background hand-offs in one turn, each completion a wake, refusal without the 1.x
   flag) are already pinned there. The skill is prose a model follows, which only the evals
   can check
-- [~] Samet: Evals: `plan-go` rerun on the default profile three times, with wall clock, cost
+- [x] Samet: Evals: `plan-go` rerun on the default profile three times, with wall clock, cost
   and `lead` requests against the 0.1.0 run ($1.12, 43 requests, 5m 28s); a `plan-go-chat`
   variant where the user asks a question while the tasks run and gets an answer before the
   plan ends
-- [ ] Samet: `CHANGELOG.md`, `/guide`, README line on `/go`
+- [x] Samet: `CHANGELOG.md`, `/guide`, README line on `/go`
+
+Measured (2026-10-13, default profile, 1.18.35, three repeats each, all pass, $5.78):
+
+| Case | Cost | Wall clock | `lead` requests | Background hand-offs | What happened |
+|---|---|---|---|---|---|
+| `plan-go-chat` | $0.80, $0.82, $0.76 | 2m 45s, 3m 10s, 2m 30s | 26, 23, 26 | 5 of 5 each | T1 and T2 together in the background, the user's question answered while they ran, every completion ticked in one line, the plan done |
+| `plan-go` | $1.05, $1.28, $1.08 | 5m 06s, 6m 17s, 5m 19s | 23, 28, 28 | 2, 2, 0 of 5 to 6 | The plans `lead` wrote were chains (function, then command, then tests, then README) with at most two independent tasks, so the skill ran most tasks in the foreground, as its rule says; against 0.1.0 ($1.12, 5m 28s) no difference |
+
+So the background `/go` pays when a plan has parallel tasks or the user wants to talk, and
+costs nothing on a chain. The one-line-per-task rule held: the `lead` turns of
+`plan-go-chat` read as a short progress log, not five reports. The `plan-go` check for a
+background hand-off stays record-only, since a plan may have none.
 
 Exit: the `plan-go` eval passes on both platforms with background hand-offs; the eval summary
 shows the wall clock and cost difference; `/guide` says what the user will see.
@@ -501,6 +513,11 @@ shows the wall clock and cost difference; `/guide` says what the user will see.
   mechanics against their source and a stand-in model on 1.18.35 and 2.0.23 (table in the
   phase). opencode's own background mode is enough; the plugin adds status, steer and cancel
   for `lead` and pins 1.x child sessions to their helper.
+- 2026-10-13: Phase 8 built and measured by Samet on a branch: `/go` hands ready tasks off
+  in the background (skill and contract, no plugin change). On a seeded plan with two
+  independent tasks the user's question is answered while they run and the plan finishes in
+  under three minutes; on the plans `lead` writes for the sample repository, which are
+  chains, nothing changes against 0.1.0. Summaries in `evals/results/go-background.md`.
 - 2026-10-12: Tiago's review of the branch. Blocking: a session that starts with `/review`
   or `/progress` on 1.x was pinned to that helper for good, because the plugin took a session
   whose first message is a helper's for a child; children now come from the `session.created`
