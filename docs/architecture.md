@@ -282,13 +282,13 @@ Either way, `lead` acts on a REJECT or on a plan's state only when the user asks
 
 `/execute` carries out an approved plan:
 
-1. Read the plan file; the open tasks whose dependencies are done are ready.
-2. Brief each ready task's agent (`builder` or `scout`) with the task's files, criteria and
-   checks. When two or more tasks are ready, or the user may want to keep talking, hand them
-   off in the background, at most three helpers at once; otherwise one task runs in the
-   foreground, so its result comes back in the same turn. Where the platform refuses a
-   background hand-off (opencode 1.x without its flag), the ready tasks run together in the
-   foreground, as a wave.
+1. Read the plan file; the open tasks whose dependencies are done are ready. Take as many
+   of them as there are free helper slots, at most three helpers at once; the rest wait.
+2. Brief each taken task's agent (`builder` or `scout`) with the task's files, criteria and
+   checks. When two or more are taken, or the user may want to keep talking, hand them off
+   in the background; otherwise one task runs in the foreground, so its result comes back in
+   the same turn. Where the platform refuses a background hand-off (opencode 1.x without its
+   flag), the taken tasks run together in the foreground, as a wave.
 3. On each completion, check the report against the criteria and re-run cheap checks. Read
    every completion that has arrived before starting new work.
 4. On success, tick the task, add a line to the plan's log, tell the user in one line, and

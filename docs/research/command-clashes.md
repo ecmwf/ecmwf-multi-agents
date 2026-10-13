@@ -618,7 +618,7 @@ grep -n -E '"(command|agent|default_agent)"' ~/code/*/opencode.json* ~/code/*/.o
 find ~/.config/opencode ~/.opencode ~/.claude/skills ~/code/.claude -newer <first download>   # no output
 ```
 
-## Addendum: `go` renamed `execute` (0.4.0)
+## Addendum: `go` renamed `execute` (after 0.4.0)
 
 `execute` is the name of opencode 2's Code Mode tool (`core/src/codemode/tool.ts` at v2.0.16)
 and of the 1.x TUI's rendering of that tool. Commands and tools are separate namespaces on both

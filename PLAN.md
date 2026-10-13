@@ -79,7 +79,7 @@ Source content and generator code are written in parallel against the contracts 
 | 5 | Eval runs, baseline, prompt fixes from the results | Release 0.2.0 (done); the open tasks feed the next release | in progress |
 | 6 | npm package, CI, v2 central install, docs polish | | |
 | 7 | Background helpers, steering and cancel: evidence and contract first; then plugin tools, 1.x enablement and prompts in parallel; then tests, evals and docs | Contract agreed (7a); gate and integration green on 1.18.35, 1.19.0 and 2.0.16; evals show the cost of a wake and of a steer | released in 0.3.0 |
-| 8 | `/execute` (named `/go` until 0.4.0) carries out parallel tasks in the background: skill change, then evals | `execute-chat` and `plan-execute` pass on 1.18.35 (the evals drive 1.x only); wall clock and cost against 0.1.0 recorded | built and measured on a branch |
+| 8 | `/execute` (named `/go` up to and including 0.4.0) carries out parallel tasks in the background: skill change, then evals | `execute-chat` and `plan-execute` pass on 1.18.35 (the evals drive 1.x only); wall clock and cost against 0.1.0 recorded | built and measured on a branch |
 
 Ownership rule for parallel work: every task owns a disjoint set of files; shared contracts
 (`docs/architecture.md`, `docs/adr/`, `src/manifest.jsonc`, `tools/types.ts`, this plan) change
