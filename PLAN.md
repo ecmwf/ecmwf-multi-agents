@@ -337,7 +337,7 @@ Tasks, in order; **(par)** marks what can run side by side once 7a is done:
   talking), `steer` (the user redirects a running scout; the report names the amendment;
   cost against cancel-and-restart), `cancel`; the shared cases re-run to show no regression
 - [x] Samet: `CHANGELOG.md` entries and `docs/install.md`
-- [ ] Release, when Tiago agrees: merge the branch, then `make release`
+- [~] Tiago: Release 0.3.0 (Tiago agreed; the branch is merged as #2): `make release 0.3.0`
 
 First real-model run of the three new cases (2026-10-12, default profile, opencode 1.18.35,
 one repeat each): all pass, $0.62 in total.
