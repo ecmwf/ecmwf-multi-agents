@@ -27,7 +27,7 @@ You talk to one agent, `lead`. It works out what you need, asks when something i
 
 - New repository: start with `/onboard` (`/onboard <focus>` looks closer at one area). `lead` surveys the code and keeps a short summary for later sessions.
 - A question or a small change: just ask.
-- Bigger work: `/plan <goal>`. `lead` asks questions, investigates, writes a plan and waits. Approve it or ask for changes, then run `/go`, ideally in a fresh session: the plan file holds everything needed. `/go` runs ready tasks, several at once in the background, ticks each as its report arrives, and stops when it needs you; you can talk to `lead` meanwhile.
+- Bigger work: `/plan <goal>`. `lead` asks questions, investigates, writes a plan and waits. Approve it or ask for changes, then run `/execute`, ideally in a fresh session: the plan file holds everything needed. `/execute` runs ready tasks, several at once in the background, ticks each as its report arrives, and stops when it needs you; you can talk to `lead` meanwhile.
 - `/progress [plan]`: how far the current plan has got.
 - `/review [target]`: independent review, under any policy, of your uncommitted changes (no target), a branch, a pull request (number or URL) or a plan file. It replaces opencode's own `/review`.
 - `/guide [question]`: this guide.

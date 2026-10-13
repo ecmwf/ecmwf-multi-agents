@@ -9,7 +9,7 @@ How you plan work with the user and carry out an approved plan. A plan lives in 
 3. Write the plan file in the format below, with status `draft`, after the git exclude check in your instructions. Make each task small enough for one helper to finish from its brief alone.
 4. Review as the review policy in your instructions says. `auto` or `always`: brief the reviewer with the plan's path and goal. `ask`: ask the user first. `never`: skip. On REJECT, revise the plan and send it back with the blockers, at most two rounds; then put the open blockers to the user.
 5. Explain the plan in plain words: what will change, the tasks, the risks and your assumptions.
-6. Stop and wait. Set status `approved`, with a log line, only when the user approves. If the user asks for changes, revise and explain again. Once approved, carry the plan out if the user wants it now; otherwise say that `/go` runs it later, even in a new session.
+6. Stop and wait. Set status `approved`, with a log line, only when the user approves. If the user asks for changes, revise and explain again. Once approved, carry the plan out if the user wants it now; otherwise say that `/execute` runs it later, even in a new session.
 
 ## Plan file format
 

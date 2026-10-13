@@ -46,7 +46,7 @@ const PLAN_GOAL =
 /**
  * The seeded five-task plan for the JSON option; `done` names the tasks already ticked and
  * logged. With T1 and T2 done it is the plan /progress reports on (2 of 5, T3 next); with none
- * done it is the plan /go carries out, T1 and T2 ready together.
+ * done it is the plan /execute carries out, T1 and T2 ready together.
  */
 function jsonPlan(done: readonly string[]): string {
   const box = (task: string) => (done.includes(task) ? "[x]" : "[ ]");
@@ -318,30 +318,30 @@ export const CASES: EvalCase[] = [
     baseline: false,
   },
   {
-    id: "plan-go",
+    id: "plan-execute",
     env: BACKGROUND,
-    title: "/plan, approval, then the plan carried out (with /go in a new session if needed)",
+    title: "/plan, approval, then the plan carried out (with /execute in a new session if needed)",
     setup: [],
     review: "auto",
     turns: [
       { turn: { kind: "command", command: "plan", arguments: PLAN_GOAL } },
       { turn: { kind: "prompt", text: "Approved. Go ahead." }, when: noPlanDone, note: "approve the plan" },
-      { turn: { kind: "command", command: "go", arguments: "" }, newSession: true, when: noPlanDone, note: "lead did not finish in the same session: /go in a new session" },
+      { turn: { kind: "command", command: "execute", arguments: "" }, newSession: true, when: noPlanDone, note: "lead did not finish in the same session: /execute in a new session" },
     ],
-    checks: [planDone(), hiddenTestsPass("plan-go"), testsPass(), backgroundHandoffs(1, ["harness"])],
+    checks: [planDone(), hiddenTestsPass("plan-execute"), testsPass(), backgroundHandoffs(1, ["harness"])],
     baseline: false,
   },
   {
-    id: "go-chat",
+    id: "execute-chat",
     env: BACKGROUND,
-    title: "/go on a seeded plan with two tasks ready; the user asks a question while they run and lead answers it",
+    title: "/execute on a seeded plan with two tasks ready; the user asks a question while they run and lead answers it",
     setup: [
       { kind: "exclude-workdir" },
       { kind: "write", path: ".ecmwf-multi-agents/plans/json-output.md", content: jsonPlan([]), mtime: "2026-10-02T10:00:00Z" },
     ],
     review: "never",
     turns: [
-      { turn: { kind: "command", command: "go", arguments: "json-output" }, waitFor: "root", note: "lead ends its first turn with T1 and T2 in the background" },
+      { turn: { kind: "command", command: "execute", arguments: "json-output" }, waitFor: "root", note: "lead ends its first turn with T1 and T2 in the background" },
       { turn: { kind: "prompt", text: UNIT_QUESTION }, note: "a question while the tasks run" },
       { turn: { kind: "prompt", text: "Carry on with the plan until it is done." }, when: noPlanDone, note: "lead finishes the plan" },
     ],

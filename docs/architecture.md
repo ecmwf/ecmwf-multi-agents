@@ -255,7 +255,7 @@ differs by platform:
   The session loop always runs the agent of its newest message, so sharing the session needs
   three rules, which the plugin applies in `chat.message` before opencode saves a message
   (`plugin/inline.ts`). A helper command sent while another agent works (for example `/progress`
-  during a long `/go`) runs in a child session instead, as every helper command did before 0.2.0:
+  during a long `/execute`) runs in a child session instead, as every helper command did before 0.2.0:
   the working agent finishes its step, the helper runs, and opencode tells that agent to go on
   with the report in view. A background helper's completion is written as the session's current
   agent, which after an inline command is the helper; the plugin gives it back to the session's
@@ -280,7 +280,7 @@ Either way, `lead` acts on a REJECT or on a plan's state only when the user asks
 4. The reviewer checks the plan, depending on the review policy.
 5. `lead` explains the plan in plain words and stops for approval.
 
-`/go` carries out an approved plan:
+`/execute` carries out an approved plan:
 
 1. Read the plan file; the open tasks whose dependencies are done are ready.
 2. Brief each ready task's agent (`builder` or `scout`) with the task's files, criteria and
@@ -301,7 +301,7 @@ Either way, `lead` acts on a REJECT or on a plan's state only when the user asks
 6. Run the plan's final verification in the foreground, then one review of the whole change
    if the policy calls for it. Tasks get no review of their own.
 
-`/go` works in a fresh session because the plan file carries everything needed; helpers of an
+`/execute` works in a fresh session because the plan file carries everything needed; helpers of an
 earlier session are gone, so unfinished work is found from the log and `git status`.
 
 ## Review policy

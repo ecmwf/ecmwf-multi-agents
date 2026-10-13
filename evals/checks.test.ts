@@ -338,7 +338,7 @@ describe("answeredDuringPlan", () => {
   const check = (messages: ApiMessage[]) => run(answeredDuringPlan(question, terms), context({ sessions: [session(messages)], rootSessions: ["root"] }));
 
   test("passes when lead's answer sits between the question and the next completion", () => {
-    expect(check([message("user", "lead", "/go"), message("assistant", "lead", "started"), message("user", "lead", question), message("assistant", "lead", "Degrees Celsius by default."), completion(), message("assistant", "lead", "T1 done")])).toEqual({ pass: true, detail: "answered before the next completion" });
+    expect(check([message("user", "lead", "/execute"), message("assistant", "lead", "started"), message("user", "lead", question), message("assistant", "lead", "Degrees Celsius by default."), completion(), message("assistant", "lead", "T1 done")])).toEqual({ pass: true, detail: "answered before the next completion" });
   });
 
   test("fails when the only answer came after the next completion, when a helper answered, or when the terms are missing", () => {

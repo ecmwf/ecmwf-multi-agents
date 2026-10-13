@@ -1,4 +1,10 @@
-Carry out an approved plan.
+---
+# managed by ecmwf-multi-agents
+description: "Carry out an approved plan task by task, checking each result; stops when it needs you"
+agent: lead
+---
+
+Carry out an approved plan: every task briefed to a helper, every result checked, the plan file kept up to date.
 
 Plan (may be empty): $ARGUMENTS
 

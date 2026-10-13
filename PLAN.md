@@ -79,7 +79,7 @@ Source content and generator code are written in parallel against the contracts 
 | 5 | Eval runs, baseline, prompt fixes from the results | Release 0.2.0 (done); the open tasks feed the next release | in progress |
 | 6 | npm package, CI, v2 central install, docs polish | | |
 | 7 | Background helpers, steering and cancel: evidence and contract first; then plugin tools, 1.x enablement and prompts in parallel; then tests, evals and docs | Contract agreed (7a); gate and integration green on 1.18.35, 1.19.0 and 2.0.16; evals show the cost of a wake and of a steer | released in 0.3.0 |
-| 8 | `/go` carries out parallel tasks in the background: skill change, then evals | `go-chat` and `plan-go` pass on 1.18.35 (the evals drive 1.x only); wall clock and cost against 0.1.0 recorded | built and measured on a branch |
+| 8 | `/execute` (named `/go` until 0.4.0) carries out parallel tasks in the background: skill change, then evals | `execute-chat` and `plan-execute` pass on 1.18.35 (the evals drive 1.x only); wall clock and cost against 0.1.0 recorded | built and measured on a branch |
 
 Ownership rule for parallel work: every task owns a disjoint set of files; shared contracts
 (`docs/architecture.md`, `docs/adr/`, `src/manifest.jsonc`, `tools/types.ts`, this plan) change
@@ -417,7 +417,7 @@ that read only each session's final text, which after an inline review is `lead`
 Exit: gate and integration green on all three versions; the eval summary shows what a wake
 and a steer cost; `/guide` explains it in plain words.
 
-## Phase 8: `/go` in the background
+## Phase 8: `/execute` in the background
 
 Today the plan skill briefs the tasks of a parallel wave together and waits for all of them:
 `lead` is blocked until the slowest builder finishes, a question from the user waits, and the
@@ -430,7 +430,7 @@ What it costs and what it gains, from the Phase 7 measurements: each completion 
 turn ($0.02 to $0.04 on the sample repository), so N tasks cost up to N short turns where a
 wave costs one long one; against that the pipeline stays full, wall clock drops with the
 slowest task of each wave, and `lead` stays reachable. The rule in the `lead` prompt
-("background only when you have other work meanwhile") holds for `/go`, where the other work
+("background only when you have other work meanwhile") holds for `/execute`, where the other work
 is the next task.
 
 Decisions (built on this basis; Tiago reviews them with the pull request):
@@ -440,46 +440,46 @@ Decisions (built on this basis; Tiago reviews them with the pull request):
 | When | Background when two or more tasks are ready at once, or when the user may want to keep talking; otherwise one task runs in the foreground, so the result comes back in the same turn. Without the 1.x flag the tool refuses `background`, and the skill falls back to the wave as today |
 | On a completion | Read every pending completion before starting new work; check its DONE WHEN items, re-run cheap checks, tick, log; then start the tasks that became ready, at most three helpers running at once. Keep the turn short: one line to the user per task |
 | On a failure | As today: brief the same agent again with the gap, the same way as the first attempt; stop after the second failure or three failed reports in a row. After a stop nothing new starts; running helpers finish and those that pass are ticked (a running helper's task cannot depend on a failed one: a task starts only when its dependencies are ticked) |
-| Resuming | On `/go` in a new session, `helpers_status` shows no helpers (they belonged to the old session); unfinished work is found from the log and `git status` as today. Mid-session, a task whose helper is running stays in flight: never re-brief a running task |
+| Resuming | On `/execute` in a new session, `helpers_status` shows no helpers (they belonged to the old session); unfinished work is found from the log and `git status` as today. Mid-session, a task whose helper is running stays in flight: never re-brief a running task |
 | Final verification and review | Foreground, as today: they are the last things and nothing runs beside them |
 | What the user sees | Each wake makes `lead` speak; the skill asks for one line per ticked task so a plan with five tasks does not read as five reports |
 
 8a. Contract
 
-- [x] Samet: `docs/architecture.md`, Planning and execution: the `/go` steps rewritten for
-  background hand-offs with the decisions above; the ADR 0002 consequences note that `/go`
+- [x] Samet: `docs/architecture.md`, Planning and execution: the `/execute` steps rewritten for
+  background hand-offs with the decisions above; the ADR 0002 consequences note that `/execute`
   uses the background; budgets measured after the skill change
 - [x] Samet: `src/skills/ecmwf-multi-agents-plan/SKILL.md`, Carrying out a plan, and the
-  `lead` prompt's background rule (one clause: `/go` hands parallel tasks off in the
+  `lead` prompt's background rule (one clause: `/execute` hands parallel tasks off in the
   background); within budget: the plan skill 1,186 to 1,359 of 1,450, `lead` 2,010 to 2,018
 
 8b. Verification
 
 - [x] Samet: Integration: not added. The stand-in suite scripts `lead`'s moves by hand, so a
-  scripted `/go` would test the script, not the skill; the platform facts the skill relies on
+  scripted `/execute` would test the script, not the skill; the platform facts the skill relies on
   (several background hand-offs in one turn, each completion a wake, refusal without the 1.x
   flag) are already pinned there. The skill is prose a model follows, which only the evals
   can check
-- [x] Samet: Evals: `plan-go` rerun on the default profile three times, with wall clock, cost
-  and requests against the 0.1.0 run ($1.12, 43 requests, 5m 28s); a `go-chat` case where
+- [x] Samet: Evals: `plan-execute` (then `plan-go`) rerun on the default profile three times, with wall clock, cost
+  and requests against the 0.1.0 run ($1.12, 43 requests, 5m 28s); an `execute-chat` case (then `go-chat`) where
   the user asks a question while the tasks run and `lead` answers it before the next
   completion (checked in the session's messages, not by word-matching reports)
-- [x] Samet: `CHANGELOG.md`, `/guide`, README line on `/go`
+- [x] Samet: `CHANGELOG.md`, `/guide`, README line on `/execute`
 
 Measured (2026-10-13, default profile, 1.18.35, three repeats each, all pass, $5.78):
 
 | Case | Cost | Wall clock | Requests, all agents | Background hand-offs | What happened |
 |---|---|---|---|---|---|
-| `go-chat` (then named `plan-go-chat`) | $0.80, $0.82, $0.76 | 2m 45s, 3m 10s, 2m 30s | 45, 39, 43 | 5 of 5 each | T1 and T2 together in the background, the user's question answered while they ran (read from the transcripts; the check that proves it was added after this run), every completion ticked in one line, the plan done |
-| `plan-go` | $1.05, $1.28, $1.08 | 5m 06s, 6m 17s, 5m 19s | 44, 56, 48 | 2 of 5, 2 of 6, 0 of 4 | The plans `lead` wrote were chains (function, then command, then tests, then README) with at most two independent tasks, so the skill ran most tasks in the foreground, as its rule says; against 0.1.0 ($1.12, 43 requests, 5m 28s) no difference |
+| `execute-chat` (then named `plan-go-chat`) | $0.80, $0.82, $0.76 | 2m 45s, 3m 10s, 2m 30s | 45, 39, 43 | 5 of 5 each | T1 and T2 together in the background, the user's question answered while they ran (read from the transcripts; the check that proves it was added after this run), every completion ticked in one line, the plan done |
+| `plan-execute` (then `plan-go`) | $1.05, $1.28, $1.08 | 5m 06s, 6m 17s, 5m 19s | 44, 56, 48 | 2 of 5, 2 of 6, 0 of 4 | The plans `lead` wrote were chains (function, then command, then tests, then README) with at most two independent tasks, so the skill ran most tasks in the foreground, as its rule says; against 0.1.0 ($1.12, 43 requests, 5m 28s) no difference |
 
-So the background `/go` pays when a plan has parallel tasks or the user wants to talk, and
-costs nothing on a chain. The one-line-per-task rule held: the `lead` turns of `go-chat`
-read as a short progress log, not five reports. The `plan-go` check for a background
+So the background `/execute` pays when a plan has parallel tasks or the user wants to talk, and
+costs nothing on a chain. The one-line-per-task rule held: the `lead` turns of `execute-chat`
+read as a short progress log, not five reports. The `plan-execute` check for a background
 hand-off is recorded only, since a plan may have none. Measured on 1.18.35; the run on
 2.0.16 is open below.
 
-- [x] Samet: `go-chat` once more on 1.18.35 with the `answered-during-plan` check in place:
+- [x] Samet: `execute-chat` once more on 1.18.35 with the `answered-during-plan` check in place:
   pass, 5 of 5, $0.78, 2m 48s (`evals/results/go-background.md`). On 2.0.16 the evals cannot
   run: the runner drives the 1.x API only and refuses a 2.x binary; a 2.x eval runner is its
   own task (below), and the skill's 2.0.16 side rests on the integration suite's pinned
@@ -490,7 +490,14 @@ hand-off is recorded only, since a plan may have none. Measured on 1.18.35; the 
   `remoteUnchanged` and `pushRefused`, so `backgroundHandoffs(1, ["harness"])` reads as a
   variant filter; a `recordOnly: boolean` option would say what it means
 
-Exit: `go-chat` and `plan-go` pass on 1.18.35 (the evals run on 1.x only); the eval summary
+- [x] Samet: `/go` renamed `/execute`, everywhere the command is named (manifest, template,
+  prompts, skills, docs, evals, tests); the clash check redone for the new name; history in
+  this file and in `evals/results/` keeps the old name
+- [ ] `/execute` is also the name of opencode 2's Code Mode tool; a command and a tool are
+  different namespaces and nothing clashed on 2.0.16, but watch for a built-in `/execute`
+  command in later versions (the clash note lists where to look)
+
+Exit: `execute-chat` and `plan-execute` pass on 1.18.35 (the evals run on 1.x only); the eval summary
 shows the wall clock and cost against 0.1.0; `/guide` says what the user will see.
 
 ## Open questions
@@ -525,7 +532,7 @@ shows the wall clock and cost against 0.1.0; `/guide` says what the user will se
   mechanics against their source and a stand-in model on 1.18.35 and 2.0.23 (table in the
   phase). opencode's own background mode is enough; the plugin adds status, steer and cancel
   for `lead` and pins 1.x child sessions to their helper.
-- 2026-10-13: Phase 8 built and measured by Samet on a branch, on 1.18.35: `/go` hands ready
+- 2026-10-13: Phase 8 built and measured by Samet on a branch, on 1.18.35: `/execute` hands ready
   tasks off in the background (skill and contract, no plugin change). On a seeded plan with
   two independent tasks the user's question is answered while they run and the plan finishes
   in about three minutes; on the plans `lead` writes for the sample repository, which are

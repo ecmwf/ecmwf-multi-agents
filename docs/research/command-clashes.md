@@ -617,3 +617,13 @@ ls ~/code/*/.opencode/{command,commands,agent,agents}/*.md ~/code/*/.opencode/{s
 grep -n -E '"(command|agent|default_agent)"' ~/code/*/opencode.json* ~/code/*/.opencode/opencode.json*
 find ~/.config/opencode ~/.opencode ~/.claude/skills ~/code/.claude -newer <first download>   # no output
 ```
+
+## Addendum: `go` renamed `execute` (0.4.0)
+
+`execute` is the name of opencode 2's Code Mode tool (`core/src/codemode/tool.ts` at v2.0.16)
+and of the 1.x TUI's rendering of that tool. Commands and tools are separate namespaces on both
+platforms: the command list (`packages/opencode/src/command/index.ts:70-88` at v1.18.35, the
+built-in command plugin on 2.0.16) has no `execute`, and the 1.x TUI's slash commands do not
+either. Checked with the same greps as above at both tags. A later version that adds a
+built-in `/execute` command would be replaced by the harness's file on 1.x (as `review` is)
+and would need the same decision as `review`.

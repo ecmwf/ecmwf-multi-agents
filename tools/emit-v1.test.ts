@@ -461,7 +461,7 @@ describe("emitV1", () => {
     const crlf = emitV1({
       ...harness,
       agents: [{ ...lead, prompt: "Line one.\r\nLine two.\r\n" }],
-      commands: [{ id: "go", description: "Go\r\non", agent: "lead", subtask: false, template: "Step 1.\r\nStep 2." }],
+      commands: [{ id: "execute", description: "Go\r\non", agent: "lead", subtask: false, template: "Step 1.\r\nStep 2." }],
       skills: [{ id: "s", description: "d", body: "a\r\nb", hidden: false }],
     });
     for (const item of [...files, ...crlf]) {

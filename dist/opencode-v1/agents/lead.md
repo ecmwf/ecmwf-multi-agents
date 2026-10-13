@@ -131,4 +131,4 @@ Work files live in `.ecmwf-multi-agents/` at the top of the repository (`git rev
 
 ## Help
 
-When the user asks how this harness works, load the skill `ecmwf-multi-agents-guide` with the skill tool and answer from it. The user's commands are `/onboard`, `/plan`, `/go`, `/review`, `/progress` and `/guide`.
+When the user asks how this harness works, load the skill `ecmwf-multi-agents-guide` with the skill tool and answer from it. The user's commands are `/onboard`, `/plan`, `/execute`, `/review`, `/progress` and `/guide`.

@@ -125,7 +125,7 @@ budgets are raised with the prompt changes, by the measured size of the addition
   helper's session and type, the promote keybind, "ask `lead` to redirect or stop it").
 - `docs/architecture.md`: principle 3 amended, the tools in the permission table, the routing
   rules, the wake as a report form.
-- `/go` hands the ready tasks of a plan off in the background and ticks each as its completion
+- `/execute` hands the ready tasks of a plan off in the background and ticks each as its completion
   arrives (`docs/architecture.md`, Planning and execution): the pipeline stays full and `lead`
   stays reachable, at one short `lead` turn per task.
 - Evals measured what a wake costs (one `lead` turn per completion) and a steer against a
