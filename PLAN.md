@@ -486,6 +486,9 @@ hand-off is recorded only, since a plan may have none. Measured on 1.18.35; the 
   facts (the `subagent` tool's `background`, each completion a wake)
 - [ ] Eval runner for opencode 2.0.16: the 2.x API routes (`/api/session`, `prompt` with
   `text`, `location[directory]`, the password header), so the cases can run on both platforms
+- [ ] `evals/checks.ts`: `recordOnly` is a list of variants on `backgroundHandoffs`,
+  `remoteUnchanged` and `pushRefused`, so `backgroundHandoffs(1, ["harness"])` reads as a
+  variant filter; a `recordOnly: boolean` option would say what it means
 
 Exit: `go-chat` and `plan-go` pass on 1.18.35 (the evals run on 1.x only); the eval summary
 shows the wall clock and cost against 0.1.0; `/guide` says what the user will see.
