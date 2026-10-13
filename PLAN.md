@@ -231,7 +231,7 @@ Findings to act on for 0.2.0:
   checkout, settings apply, `/review` and the shell guard work end to end with the stand-in
   model, opencode writes nothing into the checkout, and a project without the line sees none
   of it. opencode 2.0.16 ignores the line. ADR 0003
-- [~] Tiago: Release 0.4.0
+- [x] Tiago: Release 0.4.0
 - [ ] npm package (plugin that also carries agents, commands and skills)
 - [ ] Central install on opencode 2 (generated `opencode.json` through `OPENCODE_CONFIG`)
 - [ ] CI: `make check` plus the integration suites in containers per opencode version
@@ -482,3 +482,6 @@ and a steer cost; `/guide` explains it in plain words.
 - 2026-10-13: A project can switch the harness on with one plugin line naming a checkout, on
   opencode 1.x: the plugin brings agents, commands and skills when they are not installed, and
   every project with the line follows the checkout. `doctor --project` checks such projects.
+- 2026-10-13: 0.4.0 released with `make release 0.4.0` (gate passed twice, 573 tests each).
+  Checked from a fresh clone of the tag: a project with the line gets `lead` as default agent
+  and the six commands, `doctor --project` reports version 0.4.0, the checkout stays clean.
