@@ -237,10 +237,11 @@ Findings to act on for 0.2.0:
 - [ ] Central install on opencode 2 (generated `opencode.json` through `OPENCODE_CONFIG`)
 - [ ] CI: `make check` plus the integration suites in containers per opencode version
 - [ ] README quickstart for scientists; `/guide` content final
-- [ ] `tests/install.test.ts`: the "no opencode at all" test finds a distro-packaged
-  `/usr/bin/opencode` through its system PATH and fails on such machines; give the installer
-  a PATH of only the tools it needs, and have `make setup` or `lint` name `reuse` and
-  `shellcheck` when they are missing instead of failing with "command not found"
+- [ ] `tests/install.test.ts`: the "no opencode at all" test, and since 0.4.0 "with only
+  opencode 2 the line does nothing" too, find a distro-packaged `/usr/bin/opencode` through
+  the system PATH and fail on such machines; give the installer a PATH of only the tools it
+  needs, and have `make setup` or `lint` name `reuse` and `shellcheck` when they are missing
+  instead of failing with "command not found"
 - [x] Version 0.1.0
 
 ## Phase 7: background helpers, steering and cancel
