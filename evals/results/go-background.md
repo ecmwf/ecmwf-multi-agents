@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts 
 SPDX-License-Identifier: Apache-2.0
 -->
 
-<!-- Eval runs on the go-background branch (after 0.3.0), default profile, opencode 1.18.35: plan-go (lead writes and carries out a plan) and plan-go-chat, since renamed execute-chat (a seeded five-task plan with two independent tasks, and a question from the user while they run), three repeats each; then execute-chat once more with the answered-during-plan check reading the session messages; then once more with that check requiring a real later completion and the overlapping-handoffs check proving both hand-offs began before the first completion. Kept for comparison with evals/results/0.1.0.md. The eval runner drives opencode 1.x only. -->
+<!-- Eval runs on the go-background branch (after 0.3.0), default profile, opencode 1.18.35: plan-go (lead writes and carries out a plan) and plan-go-chat, since renamed execute-chat (a seeded five-task plan with two independent tasks, and a question from the user while they run), three repeats each; then execute-chat under stricter checks (the answer read from the session messages; both hand-offs begun before the first completion); then, after the rule that lead answers the user before processing completions, execute-chat three times more. Kept for comparison with evals/results/0.1.0.md. The eval runner drives opencode 1.x only. -->
 
 # Eval summary
 
@@ -56,36 +56,6 @@ A run passes when it finished and every counted check passed. Checks in brackets
 
 # Eval summary
 
-- Started 2026-10-13T08:39:53.766Z, finished 2026-10-13T08:42:41.594Z (2m 48s).
-- opencode 1.18.35, profile `default`.
-- 1 run(s), 1 passed. Total cost $0.778 (limit $40.00).
-
-A run passes when it finished and every counted check passed. Checks in brackets are recorded only and do not decide the result. Cost is what opencode reports for each model request. Peak context is the largest input of one request by the agent that holds the conversation (lead, or build for the baseline), cached tokens included.
-
-## go-chat: /go on a seeded plan with two tasks ready; the user asks a question while they run and lead answers it
-
-| Run | Result | Checks | Cost | Cost per agent | Child sessions | Peak context (main agent) | Requests | Duration |
-|---|---|---|---|---|---|---|---|---|
-| harness #1 | pass | 5/5 | $0.778 | lead $0.559, builder $0.166, scout $0.053 | builder 4, scout 1 | lead 36,673 | 43 | 2m 48s |
-
-| Check | harness #1 |
-|---|---|
-| lead handed off 2 helpers in the background | pass |
-| lead answered the question before the next completion arrived | pass |
-| a plan in .ecmwf-multi-agents/plans/ has status done with every task ticked | pass |
-| hidden tests pass (evals/hidden/feature) | pass |
-| the project's tests pass (python3 -m unittest) | pass |
-
-## Totals
-
-| Variant | Runs | Passed | Total cost | Mean cost | Mean duration | Mean peak context |
-|---|---|---|---|---|---|---|
-| harness | 1 | 1 | $0.778 | $0.778 | 2m 48s | 36,673 |
-
----
-
-# Eval summary
-
 - Started 2026-10-13T09:40:35.864Z, finished 2026-10-13T09:43:53.412Z (3m 18s).
 - opencode 1.18.35, profile `default`.
 - 1 run(s), 1 passed. Total cost $0.882 (limit $40.00).
@@ -112,3 +82,36 @@ A run passes when it finished and every counted check passed. Checks in brackets
 | Variant | Runs | Passed | Total cost | Mean cost | Mean duration | Mean peak context |
 |---|---|---|---|---|---|---|
 | harness | 1 | 1 | $0.882 | $0.882 | 3m 18s | 43,536 |
+
+---
+
+# Eval summary
+
+- Started 2026-10-13T12:57:46.531Z, finished 2026-10-13T13:04:02.574Z (6m 16s).
+- opencode 1.18.35, profile `default`.
+- 3 run(s), 3 passed. Total cost $2.60 (limit $40.00).
+
+A run passes when it finished and every counted check passed. Checks in brackets are recorded only and do not decide the result. Cost is what opencode reports for each model request. Peak context is the largest input of one request by the agent that holds the conversation (lead, or build for the baseline), cached tokens included.
+
+## execute-chat: /execute on a seeded plan with two tasks ready; the user asks a question while they run and lead answers it
+
+| Run | Result | Checks | Cost | Cost per agent | Child sessions | Peak context (main agent) | Requests | Duration |
+|---|---|---|---|---|---|---|---|---|
+| harness #1 | pass | 6/6 | $0.895 | lead $0.654, builder $0.183, scout $0.058 | builder 4, scout 1 | lead 42,159 | 47 | 3m 27s |
+| harness #2 | pass | 6/6 | $0.792 | lead $0.578, builder $0.161, scout $0.053 | builder 4, scout 1 | lead 38,382 | 45 | 2m 56s |
+| harness #3 | pass | 6/6 | $0.909 | lead $0.670, builder $0.186, scout $0.054 | builder 4, scout 1 | lead 43,248 | 44 | 3m 20s |
+
+| Check | harness #1 | harness #2 | harness #3 |
+|---|---|---|---|
+| lead handed off 2 helpers in the background | pass | pass | pass |
+| 2 background hand-offs ran at the same time | pass | pass | pass |
+| lead answered the question while helpers were still running | pass | pass | pass |
+| a plan in .ecmwf-multi-agents/plans/ has status done with every task ticked | pass | pass | pass |
+| hidden tests pass (evals/hidden/feature) | pass | pass | pass |
+| the project's tests pass (python3 -m unittest) | pass | pass | pass |
+
+## Totals
+
+| Variant | Runs | Passed | Total cost | Mean cost | Mean duration | Mean peak context |
+|---|---|---|---|---|---|---|
+| harness | 3 | 3 | $2.60 | $0.865 | 3m 14s | 41,263 |

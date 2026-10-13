@@ -283,7 +283,10 @@ Either way, `lead` acts on a REJECT or on a plan's state only when the user asks
 `/execute` carries out an approved plan:
 
 1. Read the plan file; the open tasks whose dependencies are done are ready. Take as many
-   of them as there are free helper slots, at most three helpers at once; the rest wait.
+   of them as there are free helper slots, at most three helpers at once, and never two
+   whose file sets overlap (the rule under Routing): a ready task that shares a file with a
+   running or taken task waits for it. The plan's `Parallel` line names the sets that may
+   run together.
 2. Brief each taken task's agent (`builder` or `scout`) with the task's files, criteria and
    checks. When two or more are taken, or the user may want to keep talking, hand them off
    in the background; otherwise one task runs in the foreground, so its result comes back in
@@ -292,7 +295,8 @@ Either way, `lead` acts on a REJECT or on a plan's state only when the user asks
 3. On each completion, check the report against the criteria and re-run cheap checks. Read
    every completion that has arrived before starting new work.
 4. On success, tick the task, add a line to the plan's log, tell the user in one line, and
-   fill the free helper slots from the ready tasks that are not running yet. On failure, log it and brief the same agent again with
+   fill the free helper slots from the ready tasks that are not running yet, with the same
+   file rule. On failure, log it and brief the same agent again with
    the gap stated exactly, the same way as the first attempt. A task whose helper is still
    running is never briefed again.
 5. Stop when all tasks are done, a task is blocked or fails twice, or three reports in a row

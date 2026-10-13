@@ -574,15 +574,17 @@ function isCompletion(message: ApiMessage): boolean {
 }
 
 /**
- * lead answered the user's question while the plan's helpers were still running: in a root
- * session, the assistant text between the question and the next background completion is
- * lead's and mentions every term. A later completion must exist, or nothing shows a helper was
- * still running; a helper's report that uses the same words does not count.
+ * lead answered the user's question as its next piece of work, while the plan's helpers were
+ * still running: in a root session, lead's assistant text after the question, up to the second
+ * background completion, mentions every term. One completion may land inside lead's answering
+ * turn (a helper finishes while lead looks something up; the completion then queues behind the
+ * turn), so the window ends at the second. At least one completion must follow the question,
+ * or nothing shows a helper was still running; a helper's own words do not count.
  */
 export function answeredDuringPlan(question: string, terms: Term[]): Check {
   return {
     id: "answered-during-plan",
-    title: "lead answered the question before the next completion arrived",
+    title: "lead answered the question while helpers were still running",
     variants: ["harness"],
     run(ctx) {
       const roots = new Set(ctx.rootSessions);
@@ -591,15 +593,17 @@ export function answeredDuringPlan(question: string, terms: Term[]): Check {
         const asked = messages.findIndex((message) => message.info.role === "user" && message.parts.some((part) => part.type === "text" && part.text === question));
         if (asked === -1) continue;
         const after = messages.slice(asked + 1);
-        const completion = after.findIndex(isCompletion);
-        if (completion === -1) return fail("no completion arrived after the question, so nothing shows a helper was still running");
-        const answers = after.slice(0, completion).filter((message) => message.info.role === "assistant");
-        if (answers.length === 0) return fail("no answer before the next completion");
+        const completions = after.map((message, index) => (isCompletion(message) ? index : -1)).filter((index) => index !== -1);
+        if (completions.length === 0) return fail("no completion arrived after the question, so nothing shows a helper was still running");
+        const window = after.slice(0, completions[1] ?? after.length);
+        const answers = window.filter((message) => message.info.role === "assistant");
+        if (answers.length === 0) return fail("no answer before the second completion");
         const notLead = answers.find((message) => message.info.agent !== "lead");
         if (notLead !== undefined) return fail(`answered by ${notLead.info.agent ?? "an unknown agent"}`);
         const text = answers.flatMap((message) => message.parts.filter((part) => part.type === "text").map((part) => part.text ?? "")).join("\n");
         const missing = terms.filter((term) => !mentions(text, term));
-        return missing.length === 0 ? ok("answered before the next completion") : fail(`the answer lacks ${missing.map(termLabel).join(", ")}`);
+        if (missing.length > 0) return fail(`the answer lacks ${missing.map(termLabel).join(", ")}`);
+        return ok(answers.some((message, index) => index < (completions[0] ?? 0) && message.parts.some((part) => part.type === "text" && part.text)) ? "answered before the first completion" : "answered after one completion landed in the turn");
       }
       return fail("the question was not found in a root session");
     },

@@ -339,11 +339,16 @@ describe("answeredDuringPlan and overlappingHandoffs", () => {
   const answered = (messages: ApiMessage[]) => run(answeredDuringPlan(question, terms), context({ sessions: [session(messages)], rootSessions: ["root"] }));
 
   test("passes when lead's answer sits between the question and the next completion", () => {
-    expect(answered([message("user", "lead", "/execute"), message("assistant", "lead", "started"), message("user", "lead", question), message("assistant", "lead", "Degrees Celsius by default."), completion(), message("assistant", "lead", "T1 done")])).toEqual({ pass: true, detail: "answered before the next completion" });
+    expect(answered([message("user", "lead", "/execute"), message("assistant", "lead", "started"), message("user", "lead", question), message("assistant", "lead", "Degrees Celsius by default."), completion(), message("assistant", "lead", "T1 done")])).toEqual({ pass: true, detail: "answered before the first completion" });
   });
 
-  test("fails when the only answer came after the next completion, when a helper answered, or when the terms are missing", () => {
-    expect(answered([message("user", "lead", question), completion(), message("assistant", "lead", "Celsius, and T1 is done")]).detail).toBe("no answer before the next completion");
+  test("passes when one completion landed inside lead's answering turn, but not when the answer waited for a second", () => {
+    const lookup: ApiMessage = { info: { id: `m${++id}`, sessionID: "root", role: "assistant", agent: "lead", time: { created: 0 } }, parts: [{ type: "tool", tool: "grep" }] };
+    expect(answered([message("user", "lead", question), lookup, completion(), message("assistant", "lead", "Celsius by default; and T1 is done"), completion(), message("assistant", "lead", "T2 done")])).toEqual({ pass: true, detail: "answered after one completion landed in the turn" });
+    expect(answered([message("user", "lead", question), lookup, completion(), message("assistant", "lead", "T1 done"), completion(), message("assistant", "lead", "Celsius, and T2 is done")]).detail).toBe("the answer lacks Celsius");
+  });
+
+  test("fails when a helper answered, when the terms are missing, or when the question is absent", () => {
     expect(answered([message("user", "lead", question), message("assistant", "scout", "Celsius"), completion()]).detail).toBe("answered by scout");
     expect(answered([message("user", "lead", question), message("assistant", "lead", "Kelvin"), completion()]).detail).toBe("the answer lacks Celsius");
     expect(answered([message("user", "lead", "something else")]).detail).toBe("the question was not found in a root session");
