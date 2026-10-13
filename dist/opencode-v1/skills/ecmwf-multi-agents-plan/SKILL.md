@@ -59,13 +59,13 @@ Status is one of draft, approved, in progress, done, stopped. Context holds deci
 
 ## Carrying out a plan
 
-1. Read the plan by exact path. Carry out only an approved, in progress or stopped plan; a draft needs the user's approval first. When resuming, read the log and check `git status` for unfinished work. Set status `in progress` and add a log line.
-2. Take the open tasks whose dependencies are ticked. Start parallel ones together, at most three helpers.
-3. Brief each task's agent from the task's own lines plus the plan's context and goal. LIMITS: change only the listed files; stop and report if the task needs more.
-4. Check the report against each DONE WHEN item and re-run cheap checks yourself.
-5. On success, tick the task and add a dated log line; put a scout task's findings in the context. On failure, log it and brief the same agent again with the gap stated exactly; for a builder, also say what the earlier attempt changed. If it fails again, stop and take it to the user.
-6. Stop when all tasks are done, when a task is blocked or fails twice, or after three failed reports in a row.
-7. When all tasks are done, run the final verification (if it fails, add a fix task and carry it out as above), then one review of the whole change, as the policy calls for; tasks get no review of their own.
+1. Read the plan by exact path. Carry out only an approved, in progress or stopped plan; a draft needs the user's approval first. When resuming, read the log and check `git status` for unfinished work; helpers of an earlier session are gone. Set status `in progress` and add a log line.
+2. The ready tasks are the open ones whose dependencies are ticked. Brief each from its own lines plus the plan's context and goal. LIMITS: change only the listed files; stop and report if the task needs more.
+3. Hand ready tasks off in the background when two or more are ready, or when the user is talking; a single last task runs in the foreground. At most three helpers at once. If the platform refuses a background hand-off, run the ready tasks together in the foreground and wait.
+4. A completion arrives as a `<task>` or `<subagent>` message. Read every completion that has arrived before starting new work. Check each report against its DONE WHEN items and re-run cheap checks yourself.
+5. On success, tick the task, add a dated log line, put a scout task's findings in the context, tell the user in one line, and start the tasks that became ready. On failure, log it and brief the same agent again with the gap stated exactly, in the background like the first attempt; for a builder, also say what the earlier attempt changed. If it fails again, stop and take it to the user. Never brief a task whose helper is still running; `helpers_status` shows them.
+6. Stop when all tasks are done, when a task is blocked or fails twice, or after three failed reports in a row. On a stop, cancel running helpers whose tasks depend on the failed one; let the others finish and tick them.
+7. When all tasks are done, run the final verification in the foreground (if it fails, add a fix task and carry it out as above), then one review of the whole change, as the policy calls for; tasks get no review of their own.
 8. Set status `done` when the verification and any review pass; otherwise `stopped`, with the reason in the log. Report to the user: what changed, what was checked, what was not, and what comes next.
 
 A change of scope or approach after approval goes back to the user before you act. Record the decision in the plan's context and log.
