@@ -337,7 +337,7 @@ Tasks, in order; **(par)** marks what can run side by side once 7a is done:
   talking), `steer` (the user redirects a running scout; the report names the amendment;
   cost against cancel-and-restart), `cancel`; the shared cases re-run to show no regression
 - [x] Samet: `CHANGELOG.md` entries and `docs/install.md`
-- [~] Tiago: Release 0.3.0 (Tiago agreed; the branch is merged as #2): `make release 0.3.0`
+- [x] Tiago: Release 0.3.0 (Tiago agreed; the branch is merged as #2): `make release 0.3.0`
 
 First real-model run of the three new cases (2026-10-12, default profile, opencode 1.18.35,
 one repeat each): all pass, $0.62 in total.
@@ -465,3 +465,6 @@ and a steer cost; `/guide` explains it in plain words.
   in that check, both from `/review` and `/progress` answering inline on 1.x (7f), fixed on
   `main`: a command sent while another agent works no longer takes over its run, and a
   background helper's completion wakes `lead`, not the helper that answered inline.
+- 2026-10-13: 0.3.0 released with `make release 0.3.0`: background helpers with status, steer
+  and cancel for `lead`, and the two inline `/review` and `/progress` fixes. Gate passed twice
+  (554 tests each); release commit, tag and GitHub release in one run.
