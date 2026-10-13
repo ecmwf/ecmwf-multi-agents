@@ -221,6 +221,12 @@ Findings to act on for 0.2.0:
 
 ## Phase 6: release
 
+- [~] Tiago: One central checkout, switched on per project with one line in the project's
+  `opencode.json`, `"plugin": ["{env:HOME}/.local/share/ecmwf-multi-agents"]`, on opencode
+  1.x: the plugin brings its own agents, commands and skills when they are not installed, and
+  the checkout's `package.json` names the plugin. Upgrading the checkout upgrades every
+  project that has the line. Groundwork for the npm package below
+- [~] Tiago: Release 0.4.0
 - [ ] npm package (plugin that also carries agents, commands and skills)
 - [ ] Central install on opencode 2 (generated `opencode.json` through `OPENCODE_CONFIG`)
 - [ ] CI: `make check` plus the integration suites in containers per opencode version
