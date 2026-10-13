@@ -25,8 +25,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
   tools, whatever was approved.
 - On opencode 1.x, typing into a running helper's own session now steers that helper. Before,
   the message switched the rest of its run to `lead`'s prompt, permissions and model.
-- Eval cases `background-scouts`, `steer` and `cancel`, and `review-background` (`/review`
-  while a background scout works).
+- Eval cases `background-scouts`, `steer`, `restart` (the same change of scope as `steer`,
+  done by stopping the scout and starting a new one, for comparison), `cancel`, and
+  `review-background` (`/review` while a background scout works).
 
 ### Changed
 
