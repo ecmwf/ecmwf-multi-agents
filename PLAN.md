@@ -78,7 +78,8 @@ Source content and generator code are written in parallel against the contracts 
 | 4 | Four agents with per-agent effort (generator and plugin; prompts and docs); Makefile and version tool; eval harness | Release 0.1.0 | done |
 | 5 | Eval runs, baseline, prompt fixes from the results | Release 0.2.0 (done); the open tasks feed the next release | in progress |
 | 6 | npm package, CI, v2 central install, docs polish | | |
-| 7 | Background helpers, steering and cancel: evidence and contract first; then plugin tools, 1.x enablement and prompts in parallel; then tests, evals and docs | Contract agreed (7a); gate and integration green on 1.18.35, 1.19.0 and 2.0.16; evals show the cost of a wake and of a steer | built and measured on a branch; release open |
+| 7 | Background helpers, steering and cancel: evidence and contract first; then plugin tools, 1.x enablement and prompts in parallel; then tests, evals and docs | Contract agreed (7a); gate and integration green on 1.18.35, 1.19.0 and 2.0.16; evals show the cost of a wake and of a steer | released in 0.3.0 |
+| 8 | `/go` carries out parallel tasks in the background: skill change, then evals | The `plan-go` eval passes with background hand-offs on 1.x and 2.0.16; wall clock and cost against the foreground run recorded | planned |
 
 Ownership rule for parallel work: every task owns a disjoint set of files; shared contracts
 (`docs/architecture.md`, `docs/adr/`, `src/manifest.jsonc`, `tools/types.ts`, this plan) change
@@ -415,6 +416,57 @@ that read only each session's final text, which after an inline review is `lead`
 
 Exit: gate and integration green on all three versions; the eval summary shows what a wake
 and a steer cost; `/guide` explains it in plain words.
+
+## Phase 8: `/go` in the background
+
+Today the plan skill briefs the tasks of a parallel wave together and waits for all of them:
+`lead` is blocked until the slowest builder finishes, a question from the user waits, and the
+next wave starts only when the whole wave is done. With background hand-offs (Phase 7)
+`lead` can tick each task as its completion arrives, start the next task whose dependencies
+just became satisfied, and answer the user in between. This is a change to the plan skill's
+execution procedure and to the `lead` prompt's background rule, not to the plugin.
+
+What it costs and what it gains, from the Phase 7 measurements: each completion is one `lead`
+turn ($0.02 to $0.04 on the sample repository), so N tasks cost up to N short turns where a
+wave costs one long one; against that the pipeline stays full, wall clock drops with the
+slowest task of each wave, and `lead` stays reachable. The rule in the `lead` prompt
+("background only when you have other work meanwhile") holds for `/go`, where the other work
+is the next task.
+
+Decisions, to agree with Tiago before 8b:
+
+| Topic | Proposal |
+|---|---|
+| When | Background when two or more tasks are ready at once, or when one task is ready and the user is talking; foreground when a single task is the only thing left, so the result comes back in the same turn. Without the 1.x flag the tool refuses `background`, and the skill falls back to the wave as today |
+| On a completion | Read every pending completion before starting new work; check its DONE WHEN items, re-run cheap checks, tick, log; then start the tasks that became ready, at most three helpers running at once. Keep the turn short: one line to the user per task, no summary until the plan is done or stopped |
+| On a failure | As today: brief the same agent again with the gap, in the background; stop after the second failure or three failed reports in a row, and cancel the other running helpers with `helpers_cancel` only if their work depends on the failed task |
+| Resuming | On `/go` in a new session, `helpers_status` shows no helpers (they belonged to the old session); unfinished work is found from the log and `git status` as today. Mid-session, a task whose helper is running stays in flight: never re-brief a running task |
+| Final verification and review | Foreground, as today: they are the last things and nothing runs beside them |
+| What the user sees | Each wake makes `lead` speak; the skill asks for one line per ticked task so a plan with five tasks does not read as five reports |
+
+8a. Contract
+
+- [~] Samet: `docs/architecture.md`, Planning and execution: the `/go` steps rewritten for
+  background hand-offs with the decisions above; the ADR 0002 consequences note that `/go`
+  uses the background; budgets measured after the skill change
+- [~] Samet: `src/skills/ecmwf-multi-agents-plan/SKILL.md`, Carrying out a plan, and the
+  `lead` prompt's background rule (one clause: `/go` hands parallel tasks off in the
+  background); within budget, the measured size recorded here
+
+8b. Verification
+
+- [ ] Samet: Integration: the stand-in `plan-go` shape in `plugin/background.integration.test.ts`
+  or a new suite: a plan with two parallel tasks and one dependent task; `lead` hands the two
+  off in the background, ticks each as its completion arrives, starts the third, finishes in
+  the foreground; on 1.x without the flag the same plan runs as waves
+- [ ] Samet: Evals: `plan-go` rerun on the default profile three times, with wall clock, cost
+  and `lead` requests against the 0.1.0 run ($1.12, 43 requests, 5m 28s); a `plan-go-chat`
+  variant where the user asks a question while the tasks run and gets an answer before the
+  plan ends
+- [ ] Samet: `CHANGELOG.md`, `/guide`, README line on `/go`
+
+Exit: the `plan-go` eval passes on both platforms with background hand-offs; the eval summary
+shows the wall clock and cost difference; `/guide` says what the user will see.
 
 ## Open questions
 
