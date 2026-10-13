@@ -79,7 +79,7 @@ Source content and generator code are written in parallel against the contracts 
 | 5 | Eval runs, baseline, prompt fixes from the results | Release 0.2.0 (done); the open tasks feed the next release | in progress |
 | 6 | npm package, CI, v2 central install, docs polish | | |
 | 7 | Background helpers, steering and cancel: evidence and contract first; then plugin tools, 1.x enablement and prompts in parallel; then tests, evals and docs | Contract agreed (7a); gate and integration green on 1.18.35, 1.19.0 and 2.0.16; evals show the cost of a wake and of a steer | released in 0.3.0 |
-| 8 | `/go` carries out parallel tasks in the background: skill change, then evals | The `plan-go` eval passes with background hand-offs on 1.x and 2.0.16; wall clock and cost against the foreground run recorded | built and measured on a branch |
+| 8 | `/go` carries out parallel tasks in the background: skill change, then evals | `go-chat` and `plan-go` pass on 1.18.35 (the evals drive 1.x only); wall clock and cost against 0.1.0 recorded | built and measured on a branch |
 
 Ownership rule for parallel work: every task owns a disjoint set of files; shared contracts
 (`docs/architecture.md`, `docs/adr/`, `src/manifest.jsonc`, `tools/types.ts`, this plan) change
@@ -479,11 +479,16 @@ read as a short progress log, not five reports. The `plan-go` check for a backgr
 hand-off is recorded only, since a plan may have none. Measured on 1.18.35; the run on
 2.0.16 is open below.
 
-- [ ] Samet: `go-chat` and `plan-go` once on 2.0.16 (the `subagent` tool's `background`,
-  no flag), and `go-chat` once more on 1.18.35 with the `answered-during-plan` check in place
+- [x] Samet: `go-chat` once more on 1.18.35 with the `answered-during-plan` check in place:
+  pass, 5 of 5, $0.78, 2m 48s (`evals/results/go-background.md`). On 2.0.16 the evals cannot
+  run: the runner drives the 1.x API only and refuses a 2.x binary; a 2.x eval runner is its
+  own task (below), and the skill's 2.0.16 side rests on the integration suite's pinned
+  facts (the `subagent` tool's `background`, each completion a wake)
+- [ ] Eval runner for opencode 2.0.16: the 2.x API routes (`/api/session`, `prompt` with
+  `text`, `location[directory]`, the password header), so the cases can run on both platforms
 
-Exit: `go-chat` and `plan-go` pass on both platforms; the eval summary shows the wall clock
-and cost against 0.1.0; `/guide` says what the user will see.
+Exit: `go-chat` and `plan-go` pass on 1.18.35 (the evals run on 1.x only); the eval summary
+shows the wall clock and cost against 0.1.0; `/guide` says what the user will see.
 
 ## Open questions
 
