@@ -561,7 +561,7 @@ hand-off is recorded only, since a plan may have none. Measured on 1.18.35; the 
   whole-repository check waits for running builders is measured (`execute-chat` overlaps T1
   only with the README-only T2)
 - [x] Tiago: Release 0.5.0
-- [~] Tiago: Release 0.5.1
+- [x] Tiago: Release 0.5.1
 
 Exit: `execute-chat` and `plan-execute` pass on 1.18.35 (the evals run on 1.x only); the eval summary
 shows the wall clock and cost against 0.1.0; `/guide` says what the user will see.
@@ -657,3 +657,8 @@ shows the wall clock and cost against 0.1.0; `/guide` says what the user will se
   back until `lead` has answered the user, on 1.x in `chat.message` and on opencode 2 out of
   `lead`'s requests with a queued wake. Rules in the prompt and a note after the report did
   not hold with a real model; the hold passed `execute-chat` 3 of 3.
+- 2026-10-14: 0.5.1 released with `make release 0.5.1` (gate passed twice, 603 tests each).
+  Checked from a fresh clone: an install of 0.5.0 updated to 0.5.1 with `./install.sh` keeps
+  its 19 files, the installed plugin holds reports, opencode 1.18.35 shows `lead` as default
+  with the six commands, and `doctor` finds no problems; on opencode 2.0.28 the install works,
+  with the warning that the harness is tested with 2.0.16.
