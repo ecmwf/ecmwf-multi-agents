@@ -637,6 +637,22 @@ export function overlappingHandoffs(count = 2): Check {
   };
 }
 
+/**
+ * The run took at most `count` turns: a later turn, which the case sends only while the work is
+ * unfinished, was not needed. A report that lead left unhandled when it ended a turn is never
+ * delivered again, so the work would stall until the user spoke; this shows it.
+ */
+export function finishedWithin(count: number, title: string): Check {
+  return {
+    id: "finished-unprompted",
+    title,
+    run(ctx) {
+      const taken = ctx.answers.length;
+      return taken <= count ? ok(`${taken} of ${count} turns`) : fail(`${taken} turns: the work needed a further prompt`);
+    },
+  };
+}
+
 export function runChecks(checks: Check[], ctx: CheckContext): CheckOutcome[] {
   const outcomes: CheckOutcome[] = [];
   for (const check of checks) {

@@ -7,6 +7,7 @@ import {
   answeredDuringPlan,
   committedLocally,
   completionsWakeLead,
+  finishedWithin,
   isGitWrite,
   isPushAttempt,
   listsPublicFunctions,
@@ -323,6 +324,14 @@ describe("completionsWakeLead", () => {
     const child = session([completion(), message("assistant", "scout", "x")], "child");
     const typed = session([message("user", "lead", '<task id="x"> typed by the user'), message("assistant", "reviewer", "x"), completion(), message("assistant", "lead", "ok")]);
     expect(run(completionsWakeLead(), context({ sessions: [child, typed], rootSessions: ["root"] }))).toEqual({ pass: true, detail: "1 completion(s), all answered by lead" });
+  });
+});
+
+describe("finishedWithin", () => {
+  test("passes when the turn sent only for unfinished work was not needed, and fails when it was", () => {
+    const check = finishedWithin(2, "finished without a nudge");
+    expect(run(check, context({ answers: ["started", "the range is -90 to 60"] }))).toEqual({ pass: true, detail: "2 of 2 turns" });
+    expect(run(check, context({ answers: ["started", "the range is -90 to 60", "carried on"] }))).toEqual({ pass: false, detail: "3 turns: the work needed a further prompt" });
   });
 });
 

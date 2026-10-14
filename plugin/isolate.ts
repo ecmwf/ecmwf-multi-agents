@@ -21,7 +21,7 @@ import { isSyntheticMessage } from "./inline.ts";
 
 /** A stored message as the hook receives it: its info and its parts. */
 export interface V1MessageWithParts {
-  info: { role?: string; agent?: string; sessionID?: string };
+  info: { id?: string; role?: string; agent?: string; sessionID?: string; finish?: string; error?: unknown; summary?: unknown };
   parts: unknown[];
 }
 

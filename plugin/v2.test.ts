@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, test } from "bun:test";
+import { WAKE_TEXT } from "./answer-first.ts";
 import { createPlugin } from "./plugin.ts";
 import { LEAD_PROMPT, embeddedFixture, fakeEnvironment } from "./testing.ts";
-import type { V2AgentEditor, V2AgentInfo, V2Context, V2Event, V2ToolCall, V2ToolInfo } from "./types.ts";
+import type { V2AgentEditor, V2AgentInfo, V2Context, V2ContextEvent, V2Event, V2ModelMessage, V2ToolCall, V2ToolInfo } from "./types.ts";
 import { v2ProjectRoot } from "./v2.ts";
 
 const harness = embeddedFixture();
@@ -23,6 +24,10 @@ class FakeHost {
   /** Tools added through the tool transform, and the execute.before hooks. */
   tools = new Map<string, V2ToolInfo>();
   toolHooks: Array<(call: V2ToolCall) => Promise<void> | void> = [];
+  /** The `context` session hooks, which see each model request before it is sent. */
+  contextHooks: Array<(event: V2ContextEvent) => Promise<void> | void> = [];
+  /** Messages the plugin asked opencode to write as its own. */
+  synthetics: Array<{ sessionID: string; text: string; description?: string; delivery?: string }> = [];
   prompts: Array<{ sessionID: string; text: string; delivery?: string }> = [];
   interrupts: string[] = [];
   sessions: Record<string, { parentID?: string; agent?: string }> = {};
@@ -63,6 +68,14 @@ class FakeHost {
       interrupt: async ({ sessionID }) => {
         this.interrupts.push(sessionID);
         return {};
+      },
+      synthetic: async (input) => {
+        this.synthetics.push(input);
+        return {};
+      },
+      hook: async (_name, callback) => {
+        this.contextHooks.push(callback);
+        return { dispose: async () => {} };
       },
     },
   };
@@ -371,5 +384,81 @@ describe("v2 helper tools and guard", () => {
     for (const hook of host.toolHooks) await hook({ tool: "read", sessionID: "c1", agent: "scout", input: { filePath: "/a" } });
     expect(await host.call("helpers_status", {}, { sessionID: "root", agent: "lead" })).toContain("c1, scout, running, 2 steps");
     expect(await host.call("helpers_status", {}, { sessionID: "root", agent: "lead" })).toContain("last: read");
+  });
+});
+
+describe("v2 answer first", () => {
+  const user = (text: string): V2ModelMessage => ({ role: "user", content: [{ type: "text", text }] });
+  const report = () => user('<subagent sessionID="ses_c" state="completed">\nSTATUS: DONE\n</subagent>');
+  const request = (): V2ModelMessage[] => [
+    user("What range does the quality check accept?"),
+    { role: "assistant", content: [{ type: "tool-call", id: "call_1", name: "read", input: {} }] },
+    { role: "tool", content: [{ type: "tool-result", id: "call_1", name: "read", result: { type: "text", value: "MIN = -90" } }] },
+    report(),
+  ];
+
+  test("lead's request leaves out a report that arrived while lead looked up the answer, and one wake is queued for after the turn", async () => {
+    const { host } = await start({});
+    expect(host.contextHooks).toHaveLength(1);
+    const first = { sessionID: "root", agent: "lead", messages: request() };
+    await host.contextHooks[0]!(first);
+    expect(first.messages).toHaveLength(3);
+    expect(first.messages.some((message) => message.content?.[0]?.text?.startsWith("<subagent "))).toBe(false);
+    expect(host.synthetics).toEqual([{ sessionID: "root", text: WAKE_TEXT, description: "Reports held until lead answered", delivery: "queue" }]);
+    // The next request of the same reply leaves it out again, without a second wake.
+    const second = { sessionID: "root", agent: "lead", messages: request() };
+    await host.contextHooks[0]!(second);
+    expect(second.messages).toHaveLength(3);
+    expect(host.synthetics).toHaveLength(1);
+  });
+
+  test("once lead has answered and the wake has come, the report is in view; another agent's request is untouched", async () => {
+    const { host } = await start({});
+    const woken = { sessionID: "root", agent: "lead", messages: [...request(), { role: "assistant", content: [{ type: "text", text: "From -90 to 60." }] }, user(WAKE_TEXT)] };
+    await host.contextHooks[0]!(woken);
+    expect(woken.messages).toHaveLength(6);
+    const scout = { sessionID: "c1", agent: "scout", messages: request() };
+    await host.contextHooks[0]!(scout);
+    expect(scout.messages).toHaveLength(4);
+    expect(host.synthetics).toEqual([]);
+  });
+
+  test("when no wake can be queued, the report stays in view and the error is reported, never thrown", async () => {
+    const write: string[] = [];
+    const host = new FakeHost();
+    host.ctx.session!.synthetic = async () => {
+      throw new Error("inbox closed");
+    };
+    const { host: started } = await start({}, host, write);
+    const event = { sessionID: "root", agent: "lead", messages: request() };
+    await started.contextHooks[0]!(event);
+    expect(event.messages).toHaveLength(4);
+    expect(write.some((line) => line.includes("internal error in the context hook"))).toBe(true);
+    delete (host.ctx.session as { synthetic?: unknown }).synthetic;
+    const without = { sessionID: "root", agent: "lead", messages: request() };
+    await started.contextHooks[0]!(without);
+    expect(without.messages).toHaveLength(4);
+  });
+
+  test("fail safe: a malformed event is ignored, and an error is reported, never thrown", async () => {
+    const write: string[] = [];
+    const { host } = await start({}, new FakeHost(), write);
+    const hook = host.contextHooks[0]!;
+    await hook(undefined as never);
+    await hook({ agent: "lead", messages: "none" as never });
+    const broken = {
+      get role(): string {
+        throw new Error("boom");
+      },
+    };
+    await hook({ agent: "lead", messages: [broken] });
+    expect(write.some((line) => line.includes("internal error in the context hook"))).toBe(true);
+  });
+
+  test("without the session hook (an older opencode 2), setup still completes", async () => {
+    const host = new FakeHost();
+    delete (host.ctx.session as { hook?: unknown }).hook;
+    const { cleanup } = await start({}, host);
+    expect(typeof cleanup).toBe("function");
   });
 });

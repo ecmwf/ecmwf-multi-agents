@@ -11,6 +11,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ## [Unreleased]
 
+### Fixed
+
+- `lead` answers your question before it acts on a task report that arrives while it is
+  looking the answer up, on opencode 1.x and 2: the plugin holds such a report back until
+  `lead` has answered, then delivers it. On opencode 2 a one-line message in the conversation
+  then tells `lead` to act on the held reports. This was the known issue in 0.5.0.
+
 ## [0.5.0] - 2026-10-14
 
 ### Changed

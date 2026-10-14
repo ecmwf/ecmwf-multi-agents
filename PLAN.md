@@ -237,7 +237,11 @@ Findings to act on for 0.2.0:
 - [ ] Central install on opencode 2 (generated `opencode.json` through `OPENCODE_CONFIG`)
 - [ ] opencode 2.0.28 (on Tiago's machine since 2026-10-14, with no 1.x beside it): the v2
   files are tested on 2.0.16 only; run the integration suites against 2.0.28 and move the
-  pin if they pass
+  pin if they pass. Found on 2026-10-14 with `V2_VERSION` set to 2.0.28 in a scratch copy: the
+  plugin and background suites pass; the emitter tests fail only because 2.0.28 appends a
+  default `browser * deny` rule after every agent's own rules. Also check that helpers get no
+  permission prompts for opencode's tool-output, tmp and config folders, which agents built by
+  a plugin no longer get by default (core/src/agent.ts)
 - [ ] CI: `make check` plus the integration suites in containers per opencode version
 - [ ] README quickstart for scientists; `/guide` content final
 - [ ] `tests/install.test.ts`: the "no opencode at all" test, and since 0.4.0 "with only
@@ -527,14 +531,19 @@ hand-off is recorded only, since a plan may have none. Measured on 1.18.35; the 
   completion arrived during the lookup. In every run where one did, 5 of 5 over both rounds,
   `lead` acted on it and dropped the question: a rule in the prompt does not outweigh the
   newest message. Released as a known issue in 0.5.0
-- [~] Tiago: For 0.5.1: the plugin makes `lead` answer the user before it acts on a
+- [x] Tiago: For 0.5.1: the plugin makes `lead` answer the user before it acts on a
   completion that arrives while it is still answering, since a rule in the prompt does not
-  hold. On opencode 2, where production runs (2.0.28 on Tiago's machine), and on 1.x, where
-  the evals run. First, per platform: how a completion reaches `lead` and which hook can
-  change what the model sees; then a one-line note on such a completion, in what the model
-  sees only: finish the answer to the user first, then act on the report. Unit tests,
-  integration tests with the stand-in model on 1.18.35, 1.19.0, 2.0.16 and 2.0.28, the
-  contract, `execute-chat` three times on 1.18.35
+  hold; on opencode 2, where production runs (2.0.28 on Tiago's machine), and on 1.x, where
+  the evals run. A note after such a completion, in what the model sees, was built first and
+  did not hold either: `execute-chat` 1 of 3 ($2.33), the question dropped in both runs where
+  a report arrived during the lookup. So the plugin holds the report back until `lead` has
+  answered (`plugin/answer-first.ts`): on 1.x it waits in `chat.message` until the session is
+  idle (the `session.idle` event, polling as a fallback) and arrives dated at delivery, as a
+  turn of its own; on opencode 2 the `context` hook leaves it out of `lead`'s requests and a
+  queued synthetic message wakes `lead` after the turn. `execute-chat` 3 of 3 ($2.43), T1's
+  report arriving during the lookup in every run; integration tests on 1.18.35, 1.19.0,
+  2.0.16 and 2.0.28 (the last with the suite's version check set to it); contract and
+  research note, section 12. `execute-chat` also counts a plan that needed a nudge to finish
 - [x] Tiago: Upgrade note: the changelog and the README say to run `./install.sh` after
   updating, since `git pull` alone leaves a linked install with a dangling `commands/go.md`
   and no `execute.md`; `docs/install.md` names an update as a cause of a broken link
@@ -643,3 +652,7 @@ shows the wall clock and cost against 0.1.0; `/guide` says what the user will se
   reports during it; the plugin-side fix is the 0.5.1 task in 8c. Checked from a fresh clone:
   an install of 0.4.0 updated to 0.5.0 with `./install.sh` swaps `go.md` for `execute.md`,
   and opencode 1.18.35 shows `lead` as default with the six commands.
+- 2026-10-14: The known issue of 0.5.0 fixed for 0.5.1: the plugin holds a helper's report
+  back until `lead` has answered the user, on 1.x in `chat.message` and on opencode 2 out of
+  `lead`'s requests with a queued wake. Rules in the prompt and a note after the report did
+  not hold with a real model; the hold passed `execute-chat` 3 of 3.

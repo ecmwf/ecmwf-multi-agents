@@ -21,6 +21,8 @@
 // `/review` in the user's session: it never takes a turn from lead (sent while lead works, it
 // runs in a child session; sent while another review answers, it waits), and a background
 // helper's completion always wakes lead, never the reviewer, without cutting a review short.
+// And on both, a builder's report that arrives while lead is still answering the user is held
+// back until lead has answered (answer-first.ts), and one that arrives later wakes lead at once.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
@@ -31,6 +33,7 @@ import { bundlePlugin } from "../tools/bundle-plugin.ts";
 import { emitV1 } from "../tools/emit-v1.ts";
 import { V2_VERSION, emitV2 } from "../tools/emit-v2.ts";
 import type { OutputFile, ResolvedHarness } from "../tools/types.ts";
+import { WAKE_TEXT } from "./answer-first.ts";
 import { HELPER_TOOLS, STATUS_LINES } from "./helpers.ts";
 import { resolvedFixture } from "./testing.ts";
 
@@ -56,6 +59,8 @@ const RUN_MS = STEPS * STEP_SECONDS * 1000;
 /** Steps of a slow review (`SLOW_REVIEW` in its request): long enough for a builder to finish meanwhile. */
 const REVIEW_STEPS = 8;
 const REVIEW_MS = REVIEW_STEPS * STEP_SECONDS * 1000;
+/** The slow lookup lead takes before it answers `ASK`: it outlasts the builder's last step and its report. */
+const LOOKUP_SECONDS = 3 * STEP_SECONDS;
 
 const ISOLATION = {
   OPENCODE_DISABLE_PROJECT_CONFIG: "1",
@@ -96,6 +101,7 @@ const textOf = (message: unknown): string => {
 /**
  * The stand-in. lead: `BG <tag>` delegates `SLOW <tag>` to the builder in the background,
  * `FG <tag>` in the foreground, `CONTINUE <id> <tag>` sends `MORE <tag>` to a running child;
+ * `ASK <tag>` is answered once, after one slow lookup step, whatever report arrives meanwhile;
  * anything else ends the turn. builder: `sleep` steps until it has taken STEPS, or until a
  * later user message says STOP (then it reports how many steps it had taken) or MORE.
  */
@@ -135,6 +141,12 @@ function standIn(script: Script) {
         const status = /^STATUS (\S+)/.exec(last);
         const steer = /^STEER (\S+) (\S+)/.exec(last);
         const cancel = /^CANCEL (\S+) (\S+)/.exec(last);
+        // The user's latest message, reports aside: a report can arrive while lead answers it.
+        const question = messages.filter((message) => role(message) === "user" && !/^<(task|subagent) /.test(textOf(message))).at(-1);
+        const ask = /^ASK \S+/.test(textOf(question));
+        const since = messages.slice(messages.indexOf(question) + 1);
+        const looked = since.some((message) => role(message) === "tool");
+        const answered = since.some((message) => role(message) === "assistant" && textOf(message).includes("lead answered"));
         if (bg && results === 0) tool = script.delegate(`SLOW ${bg[1]}`, true);
         else if (fg && results === 0) tool = script.delegate(`SLOW ${fg[1]}`, false);
         else if (more && !continued) tool = script.delegate(`MORE ${more[2]}`, true, more[1]);
@@ -144,6 +156,8 @@ function standIn(script: Script) {
           tool = { name: HELPER_TOOLS.steer, args: { id: steer[1], text: "STOP and report what you did" } };
         else if (cancel && !messages.some((message) => role(message) === "tool" && /Stopped|not running|not a helper/.test(textOf(message))))
           tool = { name: HELPER_TOOLS.cancel, args: { id: cancel[1] } };
+        else if (ask && !looked) tool = { name: script.shell, args: { command: `sleep ${LOOKUP_SECONDS}`, description: "slow lookup" } };
+        else if (ask && !answered) text = "lead answered";
         else text = "lead done";
       } else if (agent === "builder") {
         // A steer arrives as "lead amends your brief:\nSTOP ..."; on 2.0.16 the first message starts
@@ -711,6 +725,40 @@ for (const bin of v1Bins) {
           await plain.stop();
         }
       }, 180_000);
+
+      // A report that arrives while lead is still answering the user waits until lead has
+      // answered, then starts a turn of its own; one that arrives after lead's reply ended wakes
+      // lead at once.
+      test("a report that arrives while lead looks up an answer is held until lead has answered", async () => {
+        const tag = nextTag();
+        const session = await startWith(`BG ${tag}`);
+        await within(20_000, "lead's turn to end", async () => model.lead(tag).find((item) => item.reply === "lead done"));
+        // Asked when the builder has one step left, lead is still looking up the answer when the report arrives.
+        await stepsOf(tag, STEPS - 1);
+        await tell(session, `ASK ${tag}`);
+        const answer = await within(LOOKUP_SECONDS * 1000 + 20_000, "lead's answer", async () => model.lead(tag).find((item) => item.reply === "lead answered"));
+        expect(model.builder(tag).find((item) => item.reply === "builder finished")?.at).toBeLessThan(answer.at);
+        expect(answer.users.join("\n")).not.toContain("<task ");
+        const held = await within(20_000, "the held report", async () => model.lead(tag).find((item) => item.at > answer.at && item.users.some((user) => user.includes("<task "))));
+        expect(held.users.at(-1)).toStartWith("<task ");
+        expect(held.users.at(-1)).toContain("builder finished");
+        expect(held.users.at(-2)).toBe(`ASK ${tag}`);
+      }, 120_000);
+
+      test("a report that wakes lead after its reply ended is delivered at once", async () => {
+        const tag = nextTag();
+        const session = await startWith(`BG ${tag}`);
+        await within(20_000, "lead's turn to end", async () => model.lead(tag).find((item) => item.reply === "lead done"));
+        await tell(session, `HELLO ${tag}`);
+        const answer = await within(20_000, "lead's answer", async () => model.lead(tag).find((item) => item.users.at(-1) === `HELLO ${tag}`));
+        expect(answer.reply).toBe("lead done");
+        const woken = await within(RUN_MS + 20_000, "lead to be woken", async () => model.lead(tag).find((item) => item.users.some((user) => user.includes("<task "))));
+        expect(model.builder(tag).find((item) => item.reply === "builder finished")?.at).toBeGreaterThan(answer.at);
+        expect(woken.users.at(-1)).toStartWith("<task ");
+        expect(woken.users.at(-1)).toContain("builder finished");
+        expect(woken.users.at(-2)).toBe(`HELLO ${tag}`);
+        expect(model.all(tag).flatMap((item) => item.users).filter((user) => user.includes(WAKE_TEXT))).toEqual([]);
+      }, 120_000);
     });
   });
 }
@@ -947,6 +995,40 @@ describe.skipIf(!v2Available)(`background helpers in opencode ${V2_VERSION}`, ()
       );
       expect(call.state?.error?.message ?? JSON.stringify(call.state)).toMatch(/No tool named "helpers_status"|helpers may not use helpers_status/);
       expect(await wake(tag)).toContain("builder finished");
+    }, 120_000);
+
+    // A report that arrives while lead is still answering the user is left out of lead's
+    // requests until lead has answered, and a queued wake then starts a turn that shows it; one
+    // that arrives after lead's reply ended wakes lead at once.
+    test("a report that arrives while lead looks up an answer is held until lead has answered", async () => {
+      const tag = nextTag();
+      const session = await start(`BG ${tag}`);
+      await within(20_000, "lead's turn to end", async () => model.lead(tag).find((item) => item.reply === "lead done"));
+      // Asked when the builder has one step left, lead is still looking up the answer when the report arrives.
+      await stepsOf(tag, STEPS - 1);
+      await tell(session, `ASK ${tag}`);
+      const answer = await within(LOOKUP_SECONDS * 1000 + 20_000, "lead's answer", async () => model.lead(tag).find((item) => item.reply === "lead answered"));
+      expect(model.builder(tag).find((item) => item.reply === "builder finished")?.at).toBeLessThan(answer.at);
+      expect(answer.users.join("\n")).not.toContain("<subagent ");
+      const woken = await within(20_000, "the wake", async () => model.lead(tag).find((item) => item.at > answer.at && item.users.some((user) => user.includes("<subagent "))));
+      expect(woken.users.at(-1)).toBe(WAKE_TEXT);
+      expect(woken.users.at(-2)).toStartWith("<subagent ");
+      expect(woken.users.at(-2)).toContain("builder finished");
+    }, 120_000);
+
+    test("a report that wakes lead after its reply ended is delivered at once", async () => {
+      const tag = nextTag();
+      const session = await start(`BG ${tag}`);
+      await within(20_000, "lead's turn to end", async () => model.lead(tag).find((item) => item.reply === "lead done"));
+      await tell(session, `HELLO ${tag}`);
+      const answer = await within(20_000, "lead's answer", async () => model.lead(tag).find((item) => item.users.at(-1) === `HELLO ${tag}`));
+      expect(answer.reply).toBe("lead done");
+      const woken = await within(RUN_MS + 20_000, "lead to be woken", async () => model.lead(tag).find((item) => item.users.some((user) => user.includes("<subagent "))));
+      expect(model.builder(tag).find((item) => item.reply === "builder finished")?.at).toBeGreaterThan(answer.at);
+      expect(woken.users.at(-1)).toStartWith("<subagent ");
+      expect(woken.users.at(-1)).toContain("builder finished");
+      expect(woken.users.at(-2)).toBe(`HELLO ${tag}`);
+      expect(model.all(tag).flatMap((item) => item.users).filter((user) => user.includes(WAKE_TEXT))).toEqual([]);
     }, 120_000);
   });
 });

@@ -2,153 +2,6 @@
 // plugin/v1.ts
 import { fileURLToPath } from "url";
 
-// plugin/apply.ts
-function planAgents(harness, settings) {
-  const profile = harness.profiles.find((item) => item.id === settings.profile);
-  const problems = [];
-  const plans = harness.agents.map((agent) => {
-    const fromProfile = profile?.agents[agent.id];
-    const override = settings.agents[agent.id] ?? {};
-    const plan = { id: agent.id };
-    if (override.model !== undefined) {
-      plan.model = override.model;
-      if (override.effort !== undefined)
-        plan.effort = override.effort;
-    } else if (fromProfile?.model !== undefined) {
-      plan.model = fromProfile.model;
-      const effort = override.effort ?? fromProfile.effort;
-      if (effort !== undefined)
-        plan.effort = effort;
-    } else if (override.effort !== undefined) {
-      problems.push({
-        message: `${harness.name}: the effort ${JSON.stringify(override.effort)} for ${agent.id} was ignored: ` + `profile ${JSON.stringify(settings.profile)} gives ${agent.id} no model and the settings name none, ` + `so it uses the session model`,
-        notify: true
-      });
-    }
-    if (override.steps !== undefined)
-      plan.steps = override.steps;
-    return plan;
-  });
-  return { plans, problems };
-}
-var REVIEW_LINE = /^Review policy:[^\r\n]*/gm;
-function rewriteReviewLine(prompt, policy, agent) {
-  const count = prompt.match(REVIEW_LINE)?.length ?? 0;
-  if (count === 0)
-    return { problem: `the prompt of ${agent} has no "Review policy:" line, so the review policy stays as the prompt says` };
-  if (count > 1)
-    return { problem: `the prompt of ${agent} has ${count} "Review policy:" lines instead of one, so none was changed` };
-  return { prompt: prompt.replace(REVIEW_LINE, `Review policy: ${policy}`) };
-}
-function reviewProblem(harness, settings, problem) {
-  return { message: `${harness.name}: ${problem}`, notify: settings.reviewSet };
-}
-function isRecord(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function applyToV1Config(config, harness, settings, plans) {
-  const problems = [];
-  const changes = [];
-  const agents = isRecord(config.agent) ? config.agent : undefined;
-  for (const plan of plans) {
-    const agent = agents?.[plan.id];
-    if (!isRecord(agent))
-      continue;
-    changes.push(() => {
-      if (plan.model === undefined) {
-        delete agent.model;
-        delete agent.variant;
-      } else {
-        agent.model = plan.model;
-        if (plan.effort === undefined)
-          delete agent.variant;
-        else
-          agent.variant = plan.effort;
-      }
-      if (plan.steps !== undefined)
-        agent.steps = plan.steps;
-    });
-  }
-  const lead = agents?.[harness.defaultAgent];
-  if (isRecord(lead)) {
-    if (typeof lead.prompt === "string") {
-      const result = rewriteReviewLine(lead.prompt, settings.review, harness.defaultAgent);
-      if (result.problem !== undefined)
-        problems.push(reviewProblem(harness, settings, result.problem));
-      else
-        changes.push(() => lead.prompt = result.prompt);
-    } else {
-      problems.push(reviewProblem(harness, settings, `${harness.defaultAgent} has no prompt, so the review policy was not applied`));
-    }
-  }
-  if (settings.defaultAgent && !config.default_agent && isRecord(lead) && lead.disable !== true && lead.mode !== "subagent" && lead.hidden !== true) {
-    changes.push(() => config.default_agent = harness.defaultAgent);
-  }
-  for (const change of changes)
-    change();
-  return problems;
-}
-function modelRef(model, effort) {
-  const slash = model.indexOf("/");
-  const ref = { id: model.slice(slash + 1), providerID: model.slice(0, slash) };
-  if (effort !== undefined)
-    ref.variant = effort;
-  return ref;
-}
-function applyToV2Agents(editor, harness, settings, plans) {
-  const problems = [];
-  const changes = [];
-  for (const plan of plans) {
-    if (editor.get(plan.id) === undefined)
-      continue;
-    const model = plan.model === undefined ? undefined : modelRef(plan.model, plan.effort);
-    changes.push(() => editor.update(plan.id, (agent) => {
-      if (model === undefined)
-        delete agent.model;
-      else
-        agent.model = model;
-      if (plan.steps !== undefined)
-        agent.steps = plan.steps;
-    }));
-  }
-  const lead = editor.get(harness.defaultAgent);
-  if (lead !== undefined) {
-    if (typeof lead.system === "string") {
-      const result = rewriteReviewLine(lead.system, settings.review, harness.defaultAgent);
-      if (result.problem !== undefined)
-        problems.push(reviewProblem(harness, settings, result.problem));
-      else
-        changes.push(() => editor.update(harness.defaultAgent, (agent) => agent.system = result.prompt));
-    } else {
-      problems.push(reviewProblem(harness, settings, `${harness.defaultAgent} has no prompt, so the review policy was not applied`));
-    }
-  }
-  for (const change of changes)
-    change();
-  return problems;
-}
-
-// plugin/environment.ts
-import { readFileSync } from "fs";
-import os from "os";
-function processEnvironment() {
-  return {
-    env: { ...process.env },
-    home: os.homedir(),
-    platform: process.platform,
-    readFile(file) {
-      try {
-        return readFileSync(file, "utf8");
-      } catch (error) {
-        const code = error?.code;
-        if (code === "ENOENT" || code === "ENOTDIR")
-          return;
-        throw error;
-      }
-    }
-  };
-}
-
 // plugin/guard.ts
 function wildcardMatch(input, pattern, platform = process.platform) {
   const normalized = input.replaceAll("\\", "/");
@@ -781,11 +634,275 @@ async function waitForIdle(busy, options) {
     pause = Math.min(pause * 2, 1000);
   }
 }
+
+class IdleEvents {
+  waiting = new Map;
+  next(session) {
+    let settle = () => {};
+    const promise = new Promise((resolve) => {
+      settle = resolve;
+    });
+    const waits = this.waiting.get(session) ?? new Set;
+    waits.add(settle);
+    this.waiting.set(session, waits);
+    return {
+      promise,
+      cancel: () => {
+        waits.delete(settle);
+        if (waits.size === 0 && this.waiting.get(session) === waits)
+          this.waiting.delete(session);
+      }
+    };
+  }
+  idle(session) {
+    if (typeof session !== "string")
+      return;
+    const waits = this.waiting.get(session);
+    if (waits === undefined)
+      return;
+    this.waiting.delete(session);
+    for (const settle of waits)
+      settle();
+  }
+}
 function sleep(ms) {
   return new Promise((resolve) => {
     const timer = setTimeout(resolve, ms);
     timer.unref?.();
   });
+}
+
+// plugin/answer-first.ts
+function replyOpen(steps) {
+  for (let back = steps.length - 1;back >= 0; back--) {
+    const step = steps[back];
+    if (step === "request")
+      return true;
+    if (step === "ended" || step === "boundary")
+      return false;
+  }
+  return false;
+}
+function earlyReports(steps) {
+  const early = [];
+  steps.forEach((step, index) => {
+    if (step === "report" && replyOpen(steps.slice(0, index)))
+      early.push(index);
+  });
+  return early;
+}
+function heldReports(steps) {
+  return earlyReports(steps).filter((index) => !steps.slice(index + 1).some((step) => step === "ended" || step === "boundary"));
+}
+function requestBefore(steps, index) {
+  for (let back = index - 1;back >= 0; back--)
+    if (steps[back] === "request")
+      return back;
+  return -1;
+}
+function partsOf(parts) {
+  return Array.isArray(parts) ? parts.filter((part) => part !== null && typeof part === "object") : [];
+}
+function endedTurnV1(message) {
+  const { error, summary, finish } = message.info;
+  if (error || summary)
+    return true;
+  if (typeof finish !== "string" || finish === "tool-calls" || finish === "unknown")
+    return false;
+  return !partsOf(message.parts).some((part) => part.type === "tool" && part.metadata?.providerExecuted !== true);
+}
+function stepsV1(messages, lead) {
+  return messages.map((message) => {
+    const role = message?.info?.role;
+    if (role === "user") {
+      if (isCompletion(message.parts))
+        return "report";
+      if (isSyntheticMessage(message.parts))
+        return "other";
+      return message.info.agent === lead ? "request" : "boundary";
+    }
+    if (role === "assistant")
+      return endedTurnV1(message) ? "ended" : "other";
+    return "other";
+  });
+}
+var WAKE_TEXT = "Reports from your helpers arrived while you were answering the user, so they were held back until you had answered. They are above: act on them now.";
+var V2_REPORT_PREFIX = "<subagent ";
+var V2_CHECKPOINT_PREFIX = "<conversation-checkpoint>";
+function firstText(message) {
+  const text = partsOf(message?.content).find((part) => part.type === "text")?.text;
+  return typeof text === "string" ? text : "";
+}
+function stepsV2(messages) {
+  return messages.map((message) => {
+    if (message?.role === "user") {
+      const text = firstText(message);
+      if (text.startsWith(V2_REPORT_PREFIX))
+        return "report";
+      if (text.startsWith(V2_CHECKPOINT_PREFIX) || text.startsWith(WAKE_TEXT))
+        return "boundary";
+      return "request";
+    }
+    if (message?.role === "assistant")
+      return partsOf(message.content).some((part) => part.type === "tool-call") ? "other" : "ended";
+    return "other";
+  });
+}
+function heldReportsV2(messages) {
+  const steps = stepsV2(messages);
+  const held = heldReports(steps);
+  if (held.length === 0)
+    return;
+  const request = requestBefore(steps, held[0]);
+  return { held, reply: `${request}
+${request >= 0 ? firstText(messages[request]) : ""}` };
+}
+
+// plugin/apply.ts
+function planAgents(harness, settings) {
+  const profile = harness.profiles.find((item) => item.id === settings.profile);
+  const problems = [];
+  const plans = harness.agents.map((agent) => {
+    const fromProfile = profile?.agents[agent.id];
+    const override = settings.agents[agent.id] ?? {};
+    const plan = { id: agent.id };
+    if (override.model !== undefined) {
+      plan.model = override.model;
+      if (override.effort !== undefined)
+        plan.effort = override.effort;
+    } else if (fromProfile?.model !== undefined) {
+      plan.model = fromProfile.model;
+      const effort = override.effort ?? fromProfile.effort;
+      if (effort !== undefined)
+        plan.effort = effort;
+    } else if (override.effort !== undefined) {
+      problems.push({
+        message: `${harness.name}: the effort ${JSON.stringify(override.effort)} for ${agent.id} was ignored: ` + `profile ${JSON.stringify(settings.profile)} gives ${agent.id} no model and the settings name none, ` + `so it uses the session model`,
+        notify: true
+      });
+    }
+    if (override.steps !== undefined)
+      plan.steps = override.steps;
+    return plan;
+  });
+  return { plans, problems };
+}
+var REVIEW_LINE = /^Review policy:[^\r\n]*/gm;
+function rewriteReviewLine(prompt, policy, agent) {
+  const count = prompt.match(REVIEW_LINE)?.length ?? 0;
+  if (count === 0)
+    return { problem: `the prompt of ${agent} has no "Review policy:" line, so the review policy stays as the prompt says` };
+  if (count > 1)
+    return { problem: `the prompt of ${agent} has ${count} "Review policy:" lines instead of one, so none was changed` };
+  return { prompt: prompt.replace(REVIEW_LINE, `Review policy: ${policy}`) };
+}
+function reviewProblem(harness, settings, problem) {
+  return { message: `${harness.name}: ${problem}`, notify: settings.reviewSet };
+}
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function applyToV1Config(config, harness, settings, plans) {
+  const problems = [];
+  const changes = [];
+  const agents = isRecord(config.agent) ? config.agent : undefined;
+  for (const plan of plans) {
+    const agent = agents?.[plan.id];
+    if (!isRecord(agent))
+      continue;
+    changes.push(() => {
+      if (plan.model === undefined) {
+        delete agent.model;
+        delete agent.variant;
+      } else {
+        agent.model = plan.model;
+        if (plan.effort === undefined)
+          delete agent.variant;
+        else
+          agent.variant = plan.effort;
+      }
+      if (plan.steps !== undefined)
+        agent.steps = plan.steps;
+    });
+  }
+  const lead = agents?.[harness.defaultAgent];
+  if (isRecord(lead)) {
+    if (typeof lead.prompt === "string") {
+      const result = rewriteReviewLine(lead.prompt, settings.review, harness.defaultAgent);
+      if (result.problem !== undefined)
+        problems.push(reviewProblem(harness, settings, result.problem));
+      else
+        changes.push(() => lead.prompt = result.prompt);
+    } else {
+      problems.push(reviewProblem(harness, settings, `${harness.defaultAgent} has no prompt, so the review policy was not applied`));
+    }
+  }
+  if (settings.defaultAgent && !config.default_agent && isRecord(lead) && lead.disable !== true && lead.mode !== "subagent" && lead.hidden !== true) {
+    changes.push(() => config.default_agent = harness.defaultAgent);
+  }
+  for (const change of changes)
+    change();
+  return problems;
+}
+function modelRef(model, effort) {
+  const slash = model.indexOf("/");
+  const ref = { id: model.slice(slash + 1), providerID: model.slice(0, slash) };
+  if (effort !== undefined)
+    ref.variant = effort;
+  return ref;
+}
+function applyToV2Agents(editor, harness, settings, plans) {
+  const problems = [];
+  const changes = [];
+  for (const plan of plans) {
+    if (editor.get(plan.id) === undefined)
+      continue;
+    const model = plan.model === undefined ? undefined : modelRef(plan.model, plan.effort);
+    changes.push(() => editor.update(plan.id, (agent) => {
+      if (model === undefined)
+        delete agent.model;
+      else
+        agent.model = model;
+      if (plan.steps !== undefined)
+        agent.steps = plan.steps;
+    }));
+  }
+  const lead = editor.get(harness.defaultAgent);
+  if (lead !== undefined) {
+    if (typeof lead.system === "string") {
+      const result = rewriteReviewLine(lead.system, settings.review, harness.defaultAgent);
+      if (result.problem !== undefined)
+        problems.push(reviewProblem(harness, settings, result.problem));
+      else
+        changes.push(() => editor.update(harness.defaultAgent, (agent) => agent.system = result.prompt));
+    } else {
+      problems.push(reviewProblem(harness, settings, `${harness.defaultAgent} has no prompt, so the review policy was not applied`));
+    }
+  }
+  for (const change of changes)
+    change();
+  return problems;
+}
+
+// plugin/environment.ts
+import { readFileSync } from "fs";
+import os from "os";
+function processEnvironment() {
+  return {
+    env: { ...process.env },
+    home: os.homedir(),
+    platform: process.platform,
+    readFile(file) {
+      try {
+        return readFileSync(file, "utf8");
+      } catch (error) {
+        const code = error?.code;
+        if (code === "ENOENT" || code === "ENOTDIR")
+          return;
+        throw error;
+      }
+    }
+  };
 }
 
 // plugin/isolate.ts
@@ -1592,6 +1709,41 @@ function createServer(harness, options = {}) {
       const type = data[session]?.type;
       return type !== undefined && type !== "idle";
     };
+    const idleEvents = new IdleEvents;
+    const untilIdle = async (session) => {
+      const event = idleEvents.next(session);
+      let idle = false;
+      event.promise.then(() => {
+        idle = true;
+      });
+      try {
+        return await waitForIdle(async () => idle ? false : busyState(session), { ...waiting, sleep: (ms) => Promise.race([waiting.sleep(ms), event.promise]) });
+      } finally {
+        event.cancel();
+      }
+    };
+    const storedMessages = async (session) => {
+      const list = input?.client?.session?.messages;
+      if (typeof list !== "function")
+        return;
+      const data = (await inTime(list.call(input.client?.session, { path: { id: session } }), LOOKUP_TIMEOUT_MS).catch(() => {
+        return;
+      }))?.data;
+      if (!Array.isArray(data))
+        return;
+      return data.map((item) => ({ info: item?.info ?? {}, parts: Array.isArray(item?.parts) ? item.parts : [] }));
+    };
+    const holdWhileReplying = async (session, target) => {
+      if (await busyState(session) !== true)
+        return;
+      const messages = await storedMessages(session);
+      if (messages === undefined || !replyOpen(stepsV1(messages, harness.defaultAgent)))
+        return;
+      if (await untilIdle(session) !== false)
+        return;
+      if (target.time !== undefined)
+        target.time.created = now();
+    };
     const shareSession = async (session, target, parts, command) => {
       const completion = isCompletion(parts);
       const facts = async (busy) => ({
@@ -1649,6 +1801,8 @@ function createServer(harness, options = {}) {
               sessions.setChild(info.id, typeof info.parentID === "string" && info.parentID !== "");
           } else if (event?.type === "session.error") {
             activity.end(event.properties?.sessionID, "failed");
+          } else if (event?.type === "session.idle" || event?.type === "session.status" && event.properties?.status?.type === "idle") {
+            idleEvents.idle(event.properties?.sessionID);
           }
         } catch (error) {
           reporter.internal("the event hook", error);
@@ -1686,6 +1840,8 @@ function createServer(harness, options = {}) {
               pinMessage(target, helper, plans.find((plan) => plan.id === helper));
             }
             if (sessions.isChild(session) === false) {
+              if (isCompletion(output?.parts))
+                await holdWhileReplying(session, target);
               await shareSession(session, target, output?.parts, command);
               const agent = target.agent;
               if (typeof agent === "string" && !helpers.has(agent) && !TOOL_LESS_AGENTS.has(agent))
@@ -2063,6 +2219,31 @@ function createSetup(harness, options = {}) {
           }
           if (message !== undefined)
             throw new Error(message);
+        });
+      }
+      if (typeof ctx.session?.hook === "function") {
+        const woken = new Set;
+        await ctx.session.hook("context", async (event) => {
+          try {
+            if (event?.agent !== harness.defaultAgent || !Array.isArray(event.messages))
+              return;
+            const found = heldReportsV2(event.messages);
+            if (found === undefined)
+              return;
+            const sessionID = event.sessionID;
+            const key = `${sessionID}
+${found.reply}`;
+            if (!woken.has(key)) {
+              if (typeof sessionID !== "string" || typeof ctx.session?.synthetic !== "function")
+                return;
+              await ctx.session.synthetic({ sessionID, text: WAKE_TEXT, description: "Reports held until lead answered", delivery: "queue" });
+              woken.add(key);
+            }
+            for (const index of [...found.held].reverse())
+              event.messages.splice(index, 1);
+          } catch (error) {
+            reporter.internal("the context hook", error);
+          }
         });
       }
       const late = new LateTransform(ctx, (editor) => {

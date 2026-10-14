@@ -41,7 +41,8 @@ scripts of the same shape; their results are quoted.
 | 8 | Can the plugin add tools, and only for `lead`? | Yes on both. 1.x: the `tool` hook; 2.0.16: `ctx.tool.transform`, registered with `codemode: false` to be a direct tool. A `<tool> * deny` rule removes the tool from an agent on both |
 | 9 | What happens when a wake lands while a helper answers inline in the user's session (1.x `/review`)? | The wake is written as the session's current agent, the helper; the helper's run continues and reads it; `lead` gets no turn and sees the text on its next turn |
 | 10 | Do `helpers_*` tool ids clash with anything? | No, on any of the three versions |
-| 11 | How does the plugin see a session's children on 2.0.16? | Not through the plugin context, which has no session list and no messages; through the event stream, whose `session.created` and `session.execution.*` events carry what a status line needs |
+| 11 | How does the plugin see a session's children on 2.0.16? | Not through the plugin context, which has no session list; through the event stream, whose `session.created` and `session.execution.*` events carry what a status line needs |
+| 12 | Does `lead` answer the user when a report arrives while it looks up the answer? | Not on its own: on both platforms the report joins the running turn as the newest message, and a real model acted on it instead, also with a rule in the prompt and with a note after the report. The plugin holds the report back until `lead` has answered: on 1.x in `chat.message` until the session is idle; on opencode 2 out of `lead`'s requests, with a queued message that wakes `lead` after the turn |
 
 ## 1. Background hand-offs
 
@@ -273,8 +274,9 @@ identifiers in the Code Mode section of its system prompt, read from the stand-i
 ## 11. The 2.0.16 event stream
 
 Answer. The plugin context's session domain is a `Pick` of the client API with `create`,
-`get`, `prompt`, `interrupt`, `wait` and a few more, but no `list` and no `message.list`, so a
-plugin cannot ask for a session's children or read its messages. The event subscription
+`get`, `prompt`, `interrupt`, `wait`, `context` and a few more, but no `list`, so a plugin
+cannot ask for a session's children; `context` returns a session's active messages
+(`v2src: protocol/src/groups/session.ts:567`). The event subscription
 (`ctx.event.subscribe`) yields envelopes `{ id, created, type, location, data }` with the
 payload under `data`. The events a status line needs: `session.created` with `sessionID`,
 `parentID`, `agent` and `title`; `session.execution.started`, `.succeeded`, `.failed` and
@@ -292,6 +294,56 @@ error: `{"id":"evt_...","type":"session.created",...,"data":{"sessionID":"ses_..
 "projectID":"global",...}}` and `{"type":"session.execution.started","data":{"sessionID":...}}`;
 a `helpers_status` built from `event.sessionID` saw nothing until it read `event.data`.
 
+## 12. A report that arrives mid-reply
+
+Answer. On both platforms a background helper's report that arrives while `lead`'s turn runs
+joins that turn at its next step. opencode 1.x writes it with an ordinary `prompt()`, which
+joins the running loop; the loop reloads the messages at every step and answers the newest
+user message, written by opencode or not. opencode 2 writes it with `delivery: "steer"`, which
+the runner promotes at the next step boundary; only `queue` waits for the turn to end, and
+completions never use it. The report is then the newest message the model sees. The turn ends
+at the first step without tool calls, whatever that step answered, and the report is not
+delivered again.
+
+With a real model, `lead` acted on the report and never answered the user's question whenever
+a report arrived while it looked the answer up: 7 times in 7, with and without a rule in the
+`lead` prompt and the plan skill that says to answer first, and also with a note after the
+report, in what the model sees, saying the same. When no report arrived during the lookup,
+`lead` answered.
+
+So the plugin holds the report back until `lead` has answered. On 1.x a report waits in the
+`chat.message` hook, which runs before opencode saves it, as the plugin already does while a
+helper answers inline. It waits until the session is idle: opencode publishes `session.idle`
+with every idle status, so the wait ends at once. The report is then dated at delivery, is
+listed after `lead`'s answer, since messages are ordered by creation time, and starts a turn
+of its own. opencode 2 has no hook that can delay or reorder a message, but the `context`
+session hook receives the messages of each model request and opencode sends what the hook
+leaves, as opencode's own Plan plugin uses it. The plugin leaves the report out while the reply
+runs and queues a synthetic message with `delivery: "queue"`, which opencode writes once the
+turn has ended and which wakes the session; in that turn the report is in view again.
+
+Evidence, source: `v1src: opencode/src/tool/task.ts:227-253` (the completion is a `prompt()`
+with a synthetic text part), `v1src: opencode/src/session/prompt.ts:1092` (messages reloaded
+at each step), `v1src: opencode/src/session/message-v2.ts:595-617` (the newest user message),
+`prompt.ts:1106-1130` (when the loop ends), `prompt.ts:999-1047` (`chat.message` before the
+message is saved), `session/status.ts:39-47` (`session.idle`), `session/message-v2.ts:452`
+(ordered by creation time); `v2src: core/src/session/subagent-completion.ts:36-43`,
+`core/src/session/session.ts:274-311` (`synthetic`: `delivery` defaults to `steer`, and the
+session is woken unless `resume` is false), `core/src/session/runner/llm.ts:82-85` and
+`:165-177` (promotion at the step boundary), `core/src/session/inbox.ts:43-48` (`queue`),
+`core/src/session/runner/to-llm-message.ts:284-285` (a synthetic message reaches the model as
+its text), `core/src/session/model-request.ts:378-385` (the `context` hook),
+`core/src/plugin/plan.ts:58` (the Plan plugin's use of it). The same code is at `v2.0.28`.
+
+Evidence, runtime: `evals/results/go-background.md`, the runs of `execute-chat` with a
+question that needs a lookup (opencode 1.18.35): with the rules and with the note, the question
+was dropped whenever a report arrived during the lookup; with the hold, all three runs passed,
+with T1's report arriving during the lookup in each. `plugin/background.integration.test.ts`
+with the stand-in: on 1.18.35 and 1.19.0 `lead`'s answering request holds no report, and the
+report starts a turn of its own 0.2 to 0.5 s after the answer, released by `session.idle`; on
+2.0.16, and on 2.0.28 with the suite's version check set to it, the answering request holds no
+report, and one queued wake follows the turn with the report in view.
+
 ## What the design takes from this
 
 - Build on the native background mode: no job registry, poller or queue in the plugin. The
@@ -299,8 +351,7 @@ a `helpers_status` built from `event.sessionID` saw nothing until it read `event
 - `helpers_steer` sends to a running child: 1.x `prompt_async` naming the child's agent, from
   which opencode resolves its model and effort; 2.0.16 `prompt` with `delivery: "steer"`. A
   finished helper is continued through the delegation tool's continuation parameter, which
-  both platforms handle well, and which is the one thing the plugin cannot do on 2.0.16 (no
-  messages to return) (sections 3, 4, 7, 11).
+  both platforms handle well, so the plugin leaves it to that tool (sections 3, 4, 7, 11).
 - `helpers_cancel` reports the cancel in its own result on 1.x, because the platform does not;
   `helpers_status` shows a child that the user cancelled (section 5).
 - The 1.x plugin pins messages that land in a helper's child session to that helper's agent,
@@ -318,3 +369,6 @@ a `helpers_status` built from `event.sessionID` saw nothing until it read `event
   isolation hook skips user messages opencode wrote itself (`synthetic: true`) when it looks
   for the request, so the reviewer keeps its brief and steps; `lead` reads the completion on
   its next turn, not as a wake (section 9).
+- A report that arrives while `lead` replies to the user is held back until `lead` has
+  answered: on 1.x it waits in `chat.message` until the session is idle; on opencode 2 it is
+  left out of `lead`'s requests, and a queued message wakes `lead` after the turn (section 12).

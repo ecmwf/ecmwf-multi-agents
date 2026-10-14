@@ -23,7 +23,12 @@
 // is enough: nothing later removes a tool another plugin added. The `execute.before` hook
 // refuses a helper's call to them and feeds the activity tracker; the event subscription feeds
 // the session tracker besides watching for activations.
+//
+// The `context` session hook leaves a background helper's report that arrives while lead is still
+// replying to the user out of lead's requests until the reply has ended, and a message queued for
+// after the turn wakes lead to act on it; see answer-first.ts.
 
+import { heldReportsV2, WAKE_TEXT } from "./answer-first.ts";
 import { applyToV2Agents, planAgents, type AgentPlan } from "./apply.ts";
 import { processEnvironment } from "./environment.ts";
 import { Activity, helperIds, toolCallBlock } from "./helpers.ts";
@@ -168,6 +173,29 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
           }
           // The one deliberate throw: opencode refuses the call and tells the model why.
           if (message !== undefined) throw new Error(message);
+        });
+      }
+      if (typeof ctx.session?.hook === "function") {
+        /** Replies whose held reports already have a wake queued, by session and request. */
+        const woken = new Set<string>();
+        await ctx.session.hook("context", async (event) => {
+          // A session hook that throws cannot fail cleanly (core/src/plugin/hooks.ts:23-28).
+          try {
+            if (event?.agent !== harness.defaultAgent || !Array.isArray(event.messages)) return;
+            const found = heldReportsV2(event.messages);
+            if (found === undefined) return;
+            const sessionID = event.sessionID;
+            const key = `${sessionID}\n${found.reply}`;
+            if (!woken.has(key)) {
+              // Without a queued wake nothing would deliver the reports again: leave them in view.
+              if (typeof sessionID !== "string" || typeof ctx.session?.synthetic !== "function") return;
+              await ctx.session.synthetic({ sessionID, text: WAKE_TEXT, description: "Reports held until lead answered", delivery: "queue" });
+              woken.add(key);
+            }
+            for (const index of [...found.held].reverse()) event.messages.splice(index, 1);
+          } catch (error) {
+            reporter.internal("the context hook", error);
+          }
         });
       }
 

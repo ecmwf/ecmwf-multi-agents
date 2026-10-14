@@ -23,6 +23,9 @@
 // a helper answers inline; see inline.ts. The owner is the agent of the session's latest request
 // that was not a helper's, from `chat.params`.
 //
+// A background helper's report that arrives while lead is still replying to the user waits in
+// `chat.message` until the reply has ended, so lead answers first; see answer-first.ts.
+//
 // The helper tools (tools-v1.ts) let lead see, redirect and stop its helpers. A message that
 // lands in a helper's child session is pinned to that helper's agent, model and effort in
 // `chat.message`, because the run takes them from the latest user message and the TUI sends
@@ -40,12 +43,14 @@
 // can itself start with a helper's message, because `/review` and `/progress` answer inline.
 
 import { fileURLToPath } from "node:url";
+import { replyOpen, stepsV1 } from "./answer-first.ts";
 import { applyToV1Config, planAgents, type AgentPlan } from "./apply.ts";
 import { processEnvironment } from "./environment.ts";
 import { checkShellCommand } from "./guard.ts";
 import { Activity, HELPER_TOOL_IDS, helperIds, pinMessage, remember, toolCallBlock } from "./helpers.ts";
 import {
   INLINE_WAIT_LIMIT_MS,
+  IdleEvents,
   Owners,
   PendingCommands,
   giveTo,
@@ -220,6 +225,40 @@ export function createServer(harness: EmbeddedHarness, options: V1Options = {}) 
       const type = data[session]?.type;
       return type !== undefined && type !== "idle";
     };
+    const idleEvents = new IdleEvents();
+    /** Wait until the session is idle: its idle event, or polling when the event is missed. */
+    const untilIdle = async (session: string): Promise<boolean | undefined> => {
+      const event = idleEvents.next(session);
+      let idle = false;
+      void event.promise.then(() => {
+        idle = true;
+      });
+      try {
+        return await waitForIdle(async () => (idle ? false : busyState(session)), { ...waiting, sleep: (ms) => Promise.race([waiting.sleep(ms), event.promise]) });
+      } finally {
+        event.cancel();
+      }
+    };
+    /** A session's stored messages; undefined when the server cannot say in time. */
+    const storedMessages = async (session: string) => {
+      const list = input?.client?.session?.messages;
+      if (typeof list !== "function") return undefined;
+      const data = (await inTime(list.call(input.client?.session, { path: { id: session } }), LOOKUP_TIMEOUT_MS).catch(() => undefined))?.data;
+      if (!Array.isArray(data)) return undefined;
+      return data.map((item) => ({ info: item?.info ?? {}, parts: Array.isArray(item?.parts) ? item.parts : [] }));
+    };
+    /**
+     * A report that arrives while lead is replying to the user waits until the reply has ended,
+     * then is dated at delivery, so it starts a turn of its own (answer-first.ts). When the state
+     * cannot be read, or the reply outlasts the limit, opencode's way stands.
+     */
+    const holdWhileReplying = async (session: string, target: V1UserMessage) => {
+      if ((await busyState(session)) !== true) return;
+      const messages = await storedMessages(session);
+      if (messages === undefined || !replyOpen(stepsV1(messages, harness.defaultAgent))) return;
+      if ((await untilIdle(session)) !== false) return;
+      if (target.time !== undefined) target.time.created = now();
+    };
     /**
      * A message of a helper in the user's own session: answer inline, run in a child session, go to
      * the session's owner, or wait for the helper that answers there now (see inline.ts).
@@ -278,6 +317,8 @@ export function createServer(harness: EmbeddedHarness, options: V1Options = {}) 
             if (typeof info?.id === "string") sessions.setChild(info.id, typeof info.parentID === "string" && info.parentID !== "");
           } else if (event?.type === "session.error") {
             activity.end(event.properties?.sessionID, "failed");
+          } else if (event?.type === "session.idle" || (event?.type === "session.status" && event.properties?.status?.type === "idle")) {
+            idleEvents.idle(event.properties?.sessionID);
           }
         } catch (error) {
           reporter.internal("the event hook", error);
@@ -322,6 +363,7 @@ export function createServer(harness: EmbeddedHarness, options: V1Options = {}) 
               pinMessage(target, helper, plans.find((plan) => plan.id === helper));
             }
             if (sessions.isChild(session) === false) {
+              if (isCompletion(output?.parts)) await holdWhileReplying(session, target);
               await shareSession(session, target, output?.parts, command);
               const agent = target.agent;
               if (typeof agent === "string" && !helpers.has(agent) && !TOOL_LESS_AGENTS.has(agent)) owners.note(session, agent, target.model);

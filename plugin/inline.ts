@@ -192,6 +192,41 @@ export async function waitForIdle(busy: () => Promise<boolean | undefined>, opti
   }
 }
 
+/**
+ * Waits that end when opencode reports a session idle (`session.idle`, published with every idle
+ * status, opencode/src/session/status.ts:39-47 at v1.18.35), sooner than the next poll.
+ */
+export class IdleEvents {
+  private readonly waiting = new Map<string, Set<() => void>>();
+
+  /** Settles at the session's next idle event; cancel it once it is no longer needed. */
+  next(session: string): { promise: Promise<void>; cancel: () => void } {
+    let settle = () => {};
+    const promise = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    const waits = this.waiting.get(session) ?? new Set<() => void>();
+    waits.add(settle);
+    this.waiting.set(session, waits);
+    return {
+      promise,
+      cancel: () => {
+        waits.delete(settle);
+        if (waits.size === 0 && this.waiting.get(session) === waits) this.waiting.delete(session);
+      },
+    };
+  }
+
+  /** The session is idle: settle every wait for it. */
+  idle(session: unknown): void {
+    if (typeof session !== "string") return;
+    const waits = this.waiting.get(session);
+    if (waits === undefined) return;
+    this.waiting.delete(session);
+    for (const settle of waits) settle();
+  }
+}
+
 /** A pause that does not keep the process alive. */
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {

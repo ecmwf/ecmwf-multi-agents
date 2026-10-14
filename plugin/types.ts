@@ -142,7 +142,10 @@ export interface V1Client {
     get?: (options: { path: { id: string } }) => Promise<{ data?: V1SessionInfo | null } | undefined>;
     children?: (options: { path: { id: string } }) => Promise<{ data?: V1SessionInfo[] | null } | undefined>;
     /** The session's messages, oldest first. */
-    messages?: (options: { path: { id: string }; query?: { limit?: number } }) => Promise<{ data?: Array<{ info?: { role?: string; agent?: string } }> | null } | undefined>;
+    messages?: (options: {
+      path: { id: string };
+      query?: { limit?: number };
+    }) => Promise<{ data?: Array<{ info?: { role?: string; agent?: string; finish?: string; error?: unknown; summary?: unknown }; parts?: unknown[] }> | null } | undefined>;
     /** Sessions with work in progress, keyed by id; idle sessions are absent. */
     status?: () => Promise<{ data?: Record<string, { type?: string }> | null } | undefined>;
     promptAsync?: (options: { path: { id: string }; body: { agent?: string; parts: Array<{ type: "text"; text: string }> } }) => Promise<unknown>;
@@ -206,9 +209,12 @@ export interface V1Hooks {
   tool: Record<string, V1ToolDefinition>;
   /**
    * Every server event (`properties` is the event's data). The plugin reads `session.created`
-   * for a session's parent and `session.error` to mark a helper's run as failed.
+   * for a session's parent, `session.error` to mark a helper's run as failed, and `session.idle`
+   * and `session.status` for a session that has gone idle.
    */
-  event: (input: { event?: { type?: string; properties?: { sessionID?: string; info?: { id?: string; parentID?: string } } } }) => Promise<void>;
+  event: (input: {
+    event?: { type?: string; properties?: { sessionID?: string; info?: { id?: string; parentID?: string }; status?: { type?: string } } };
+  }) => Promise<void>;
   "chat.message": (
     input: { sessionID: string; agent?: string },
     output: { message?: V1UserMessage; parts?: unknown[] },
@@ -221,7 +227,12 @@ export interface V1Hooks {
   "experimental.session.compacting": (input: { sessionID: string }, output: unknown) => Promise<void>;
   "experimental.chat.messages.transform": (
     input: unknown,
-    output: { messages?: Array<{ info: { role?: string; agent?: string; sessionID?: string }; parts: unknown[] }> },
+    output: {
+      messages?: Array<{
+        info: { id?: string; role?: string; agent?: string; sessionID?: string; finish?: string; error?: unknown; summary?: unknown };
+        parts: unknown[];
+      }>;
+    },
   ) => Promise<void>;
 }
 
@@ -295,6 +306,21 @@ export interface V2ToolCall {
   input?: unknown;
 }
 
+/** A message as a model request carries it (@opencode/ai Message: a role and content parts). */
+export interface V2ModelMessage {
+  role?: string;
+  content?: ReadonlyArray<{ type?: string; text?: string; [key: string]: unknown }>;
+  [key: string]: unknown;
+}
+
+/** The `context` session hook's event: the request being built for an agent (plugin/src/promise/session.ts:25-36). */
+export interface V2ContextEvent {
+  sessionID?: string;
+  agent?: string;
+  messages?: V2ModelMessage[];
+  [key: string]: unknown;
+}
+
 export interface V2Context {
   location?: { directory?: string; project?: { directory?: string } };
   agent: { transform: (callback: (editor: V2AgentEditor) => void) => Promise<V2Registration> };
@@ -307,6 +333,9 @@ export interface V2Context {
     get?: (input: { sessionID: string }) => Promise<V2SessionInfo | undefined>;
     prompt?: (input: { sessionID: string; text: string; delivery?: "steer" | "queue" }) => Promise<unknown>;
     interrupt?: (input: { sessionID: string }) => Promise<unknown>;
+    /** A message opencode writes as its own; `queue` delivers it once the running turn has ended. */
+    synthetic?: (input: { sessionID: string; text: string; description?: string; delivery?: "steer" | "queue" }) => Promise<unknown>;
+    hook?: (name: "context", callback: (event: V2ContextEvent) => Promise<void> | void) => Promise<V2Registration>;
   };
 }
 

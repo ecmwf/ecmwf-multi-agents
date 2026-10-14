@@ -150,6 +150,18 @@ once, so three background scouts can cost three `lead` turns where three paralle
 scouts cost one; `/onboard` stays in the foreground. A wake is read like any report: `lead`
 checks the DONE WHEN items and does not re-run the helper's checks twice.
 
+A completion that arrives while `lead` is still replying to the user, for example while it looks
+something up, would join that reply at its next step on both platforms, as the newest message
+`lead` sees, and the model then acts on the report and drops the question; neither a rule in the
+prompt nor a note after the report prevented that. So the plugin holds such a report back until
+`lead` has answered (`plugin/answer-first.ts`). On opencode 1.x the report waits in the
+`chat.message` hook until the session is idle, then arrives dated at delivery and starts a turn
+of its own. On opencode 2, which has no hook that can delay a message, the `context` session
+hook leaves the report out of `lead`'s requests while the reply runs, and a short message queued
+for after the turn wakes `lead` to act on it; if that message cannot be queued, the report stays
+in view. `lead` is replying when a message from the user to `lead` came after its last step that
+ended a turn; a report that arrives otherwise, also one that wakes `lead`, is delivered at once.
+
 Three tools from the plugin let `lead` see, redirect and stop its helpers; helpers never
 have them:
 
@@ -293,7 +305,8 @@ Either way, `lead` acts on a REJECT or on a plan's state only when the user asks
    the same turn. Where the platform refuses a background hand-off (opencode 1.x without its
    flag), the taken tasks run together in the foreground, as a wave.
 3. A question from the user is answered first, even if a completion arrives while `lead`
-   looks up the answer. Then, on each completion, check the report against the criteria and
+   looks up the answer; the plugin holds such a completion back until `lead` has answered (see
+   Background helpers). Then, on each completion, check the report against the criteria and
    re-run cheap checks; a check that reads the whole repository waits until no builder is
    running. Read every completion that has arrived before starting new work.
 4. On a failure, the stop conditions come first: a task that has failed twice, or a third

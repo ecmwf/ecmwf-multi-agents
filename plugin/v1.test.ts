@@ -788,3 +788,97 @@ describe("v1 switched on with a plugin line only (no harness files installed)", 
     expect(cfg.skills).toBeUndefined();
   });
 });
+
+describe("v1 answer first", () => {
+  const REPORT = '<task id="ses_child" state="completed">\n<task_result>\nbuilder finished\n</task_result>\n</task>';
+
+  interface Box {
+    hooks: V1Hooks;
+    busy: boolean;
+    /** The session's stored messages; undefined when the server cannot list them. */
+    stored: Array<{ info: Record<string, unknown>; parts: unknown[] }> | undefined;
+    pauses: number;
+    onPause: (() => void) | undefined;
+    clock: number;
+  }
+
+  async function box(): Promise<Box> {
+    const state = { busy: true, stored: undefined, pauses: 0, onPause: undefined, clock: 1_000 } as unknown as Box;
+    const client: V1Client = {
+      session: {
+        get: async ({ path }) => ({ data: { id: path.id, agent: "lead" } }),
+        status: async () => ({ data: (state.busy ? { root: { type: "busy" } } : {}) as Record<string, { type?: string }> }),
+        messages: async () => ({ data: state.stored ?? null }),
+      },
+    };
+    const plugin = createPlugin(harness, {
+      environment: () => fakeEnvironment({}),
+      schedule: (run) => run(),
+      now: () => state.clock,
+      sleep: async (ms) => {
+        state.pauses += 1;
+        state.clock += ms;
+        state.onPause?.();
+      },
+    });
+    state.hooks = await plugin.server({ client, directory: "/repo", worktree: "/repo" });
+    await state.hooks.event({ event: { type: "session.created", properties: { info: { id: "root" } } } });
+    await state.hooks["chat.params"]({ sessionID: "root", agent: "lead", message: { model: { providerID: "anthropic", modelID: "claude-opus-5-5" } } }, {});
+    return state;
+  }
+
+  const question = { info: { role: "user", agent: "lead" }, parts: [{ type: "text", text: "What range?" }] };
+  const lookup = { info: { role: "assistant", agent: "lead", finish: "tool-calls" }, parts: [{ type: "tool", tool: "read" }] };
+  const answered = { info: { role: "assistant", agent: "lead", finish: "stop" }, parts: [{ type: "text", text: "From -90 to 60." }] };
+  const earlier = { info: { role: "user", agent: "lead" }, parts: [{ type: "text", text: REPORT, synthetic: true }] };
+  const report = () => ({
+    message: { agent: "lead", time: { created: 5 } } as V1UserMessage,
+    parts: [{ id: "prt_9", sessionID: "root", messageID: "msg_9", type: "text", synthetic: true, text: REPORT }] as unknown[],
+  });
+  const deliver = async (b: Box) => {
+    const output = report();
+    await b.hooks["chat.message"]({ sessionID: "root", agent: "lead" }, output);
+    return output;
+  };
+
+  test("a report that arrives while lead replies to the user waits for the reply to end, then is dated at delivery", async () => {
+    const b = await box();
+    b.stored = [question, lookup];
+    // opencode reports the session idle while the plugin waits: the report goes at once.
+    b.onPause = () => {
+      if (b.pauses === 1) void b.hooks.event({ event: { type: "session.idle", properties: { sessionID: "root" } } });
+    };
+    const sent = await deliver(b);
+    expect(b.pauses).toBe(1);
+    expect(sent.message.time).toEqual({ created: b.clock });
+    expect(b.clock).toBeGreaterThan(1_000);
+  });
+
+  test("when the idle event is missed, polling releases the report once the session is idle", async () => {
+    const b = await box();
+    b.stored = [question, lookup];
+    b.onPause = () => {
+      if (b.pauses === 3) b.busy = false;
+    };
+    const sent = await deliver(b);
+    expect(b.pauses).toBe(3);
+    expect(sent.message.time).toEqual({ created: b.clock });
+  });
+
+  test("a report while lead works on earlier reports, not on a request, joins the run at once", async () => {
+    const b = await box();
+    b.stored = [question, lookup, answered, earlier, lookup];
+    const sent = await deliver(b);
+    expect(b.pauses).toBe(0);
+    expect(sent.message.time).toEqual({ created: 5 });
+  });
+
+  test("fail safe: when the messages cannot be read, or the session is idle, the report goes at once", async () => {
+    const b = await box();
+    expect((await deliver(b)).message.time).toEqual({ created: 5 });
+    b.stored = [question, lookup];
+    b.busy = false;
+    expect((await deliver(b)).message.time).toEqual({ created: 5 });
+    expect(b.pauses).toBe(0);
+  });
+});
