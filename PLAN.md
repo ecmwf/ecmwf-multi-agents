@@ -527,11 +527,14 @@ hand-off is recorded only, since a plan may have none. Measured on 1.18.35; the 
   completion arrived during the lookup. In every run where one did, 5 of 5 over both rounds,
   `lead` acted on it and dropped the question: a rule in the prompt does not outweigh the
   newest message. Released as a known issue in 0.5.0
-- [ ] Tiago: For 0.5.1, on opencode 1.x: the plugin adds a one-line note, in what the model
-  sees only, to a completion that arrives while `lead` is still answering the user: finish
-  that answer first, then act on the report. Unit tests, an integration test with the
-  stand-in model, the contract, `execute-chat` three times; check whether 2.0.16 has a hook
-  for the same
+- [~] Tiago: For 0.5.1: the plugin makes `lead` answer the user before it acts on a
+  completion that arrives while it is still answering, since a rule in the prompt does not
+  hold. On opencode 2, where production runs (2.0.28 on Tiago's machine), and on 1.x, where
+  the evals run. First, per platform: how a completion reaches `lead` and which hook can
+  change what the model sees; then a one-line note on such a completion, in what the model
+  sees only: finish the answer to the user first, then act on the report. Unit tests,
+  integration tests with the stand-in model on 1.18.35, 1.19.0, 2.0.16 and 2.0.28, the
+  contract, `execute-chat` three times on 1.18.35
 - [x] Tiago: Upgrade note: the changelog and the README say to run `./install.sh` after
   updating, since `git pull` alone leaves a linked install with a dangling `commands/go.md`
   and no `execute.md`; `docs/install.md` names an update as a cause of a broken link
