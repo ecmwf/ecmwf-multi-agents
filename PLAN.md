@@ -235,13 +235,14 @@ Findings to act on for 0.2.0:
 - [x] Tiago: Release 0.4.0
 - [ ] npm package (plugin that also carries agents, commands and skills)
 - [ ] Central install on opencode 2 (generated `opencode.json` through `OPENCODE_CONFIG`)
-- [ ] opencode 2.0.28 (on Tiago's machine since 2026-10-14, with no 1.x beside it): the v2
+- [~] Tiago: opencode 2.0.28 (on Tiago's machine since 2026-10-14, with no 1.x beside it): the v2
   files are tested on 2.0.16 only; run the integration suites against 2.0.28 and move the
   pin if they pass. Found on 2026-10-14 with `V2_VERSION` set to 2.0.28 in a scratch copy: the
   plugin and background suites pass; the emitter tests fail only because 2.0.28 appends a
   default `browser * deny` rule after every agent's own rules. Also check that helpers get no
   permission prompts for opencode's tool-output, tmp and config folders, which agents built by
   a plugin no longer get by default (core/src/agent.ts)
+- [~] Tiago: Release 0.5.2
 - [ ] CI: `make check` plus the integration suites in containers per opencode version
 - [ ] README quickstart for scientists; `/guide` content final
 - [ ] `tests/install.test.ts`: the "no opencode at all" test, and since 0.4.0 "with only
