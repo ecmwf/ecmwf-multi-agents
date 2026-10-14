@@ -11,6 +11,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ## [Unreleased]
 
+### Changed
+
+- opencode 2 is tested on 2.0.28, the version in use now; it was 2.0.16, which still works and
+  now gets the installer's warning for an untested version.
+- On opencode 2.0.28, opencode no longer asks before any agent, the harness's included, reads
+  or edits a file outside the project (opencode 1.x and 2.0.16 ask). The harness keeps that
+  default.
+
 ## [0.5.1] - 2026-10-14
 
 ### Fixed

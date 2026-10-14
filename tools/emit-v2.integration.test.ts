@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
 // SPDX-License-Identifier: Apache-2.0
 
-// Opt-in check that emitV2 output loads in a real opencode 2.0.16. Runs only when
+// Opt-in check that emitV2 output loads in a real opencode 2 (V2_VERSION). Runs only when
 // ECMWF_MULTI_AGENTS_INTEGRATION=1; the binary comes from OPENCODE_V2_BIN (default opencode2).
 //
 // The test writes the output into the config directory of a fresh sandbox (tools/sandbox.sh),
@@ -255,10 +255,22 @@ describe.skipIf(!enabled)(`emitV2 output in opencode ${V2_VERSION}`, () => {
     expect(model("builder")).toBeUndefined();
   });
 
+  /**
+   * What opencode appends after every agent's own rules: its browser plugin hides the browser
+   * tools until a desktop browser attaches (plugin-browser/src/connection.ts:25-28 at v2.0.28).
+   */
+  const TRAILING = [{ action: "browser", resource: "*", effect: "deny" }];
+  /** An agent's rules without what opencode appends after them. */
+  const ownRules = (agents: ApiAgent[], id: string) => {
+    const rules = agents.find((agent) => agent.id === id)!.permissions;
+    expect(rules.slice(rules.length - TRAILING.length)).toEqual(TRAILING);
+    return rules.slice(0, rules.length - TRAILING.length);
+  };
+
   test("agent rules follow the built-in defaults in order, with dropped actions absent", async () => {
     const agents = await get<ApiAgent[]>("/api/agent");
     for (const expected of harness.agents) {
-      const rules = agents.find((item) => item.id === expected.id)!.permissions;
+      const rules = ownRules(agents, expected.id);
       const mapped = v2Permissions(expected.permissions).rules;
       expect(rules[0]).toEqual({ action: "*", resource: "*", effect: "allow" });
       expect(rules.slice(rules.length - mapped.length)).toEqual(mapped);
@@ -266,10 +278,10 @@ describe.skipIf(!enabled)(`emitV2 output in opencode ${V2_VERSION}`, () => {
     }
   });
 
-  test("rules use the 2.0.16 action names (written out here, independent of the emitter)", async () => {
+  test("rules use opencode 2's action names (written out here, independent of the emitter)", async () => {
     const agents = await get<ApiAgent[]>("/api/agent");
     const tail = (id: string, count: number) => {
-      const rules = agents.find((agent) => agent.id === id)!.permissions;
+      const rules = ownRules(agents, id);
       return rules.slice(rules.length - count).map((rule) => `${rule.action} ${rule.resource} ${rule.effect}`);
     };
     expect(tail("lead", 7)).toEqual([

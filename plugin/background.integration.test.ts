@@ -40,7 +40,7 @@ import { resolvedFixture } from "./testing.ts";
 const enabled = process.env.ECMWF_MULTI_AGENTS_INTEGRATION === "1";
 const v1Bins = (process.env.OPENCODE_V1_BINS ?? "opencode").split(/\s+/).filter((bin) => bin !== "");
 const v2Bin = process.env.OPENCODE_V2_BIN ?? "opencode2";
-/** True when the 2.0.16 binary runs; its suite is skipped otherwise, as the other suites do. */
+/** True when the opencode 2 binary runs; its suite is skipped otherwise, as the other suites do. */
 const v2Available = (() => {
   if (!enabled) return false;
   try {
@@ -160,7 +160,7 @@ function standIn(script: Script) {
         else if (ask && !answered) text = "lead answered";
         else text = "lead done";
       } else if (agent === "builder") {
-        // A steer arrives as "lead amends your brief:\nSTOP ..."; on 2.0.16 the first message starts
+        // A steer arrives as "lead amends your brief:\nSTOP ..."; on opencode 2 the first message starts
         // with the platform's own "You are a subagent spawned by another session." line.
         const forbidden = users[0]?.includes("SLOW forbidden-") && results === 0;
         if (users.some((user) => /(^|\n)STOP/.test(user))) text = `builder stopped after ${results} steps`;
@@ -764,7 +764,7 @@ for (const bin of v1Bins) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// opencode 2.0.16
+// opencode 2 (V2_VERSION)
 
 interface V2Session {
   id: string;
@@ -818,7 +818,7 @@ describe.skipIf(!v2Available)(`background helpers in opencode ${V2_VERSION}`, ()
     if (!version.stdout.toString().includes(V2_VERSION)) throw new Error(`${v2Bin} is not opencode ${V2_VERSION}: ${version.stdout.toString().trim() || version.stderr.toString().trim()}`);
     model = standIn(v2Script);
     box = makeSandbox("background-v2-", emitV2(modelLessFixture()));
-    // 2.0.16 reads the 1.x spelling of a provider and normalizes it (package, settings, capabilities).
+    // opencode 2 reads the 1.x spelling of a provider and normalizes it (package, settings, capabilities).
     const provider = {
       name: "Stand-in",
       npm: "@ai-sdk/openai-compatible",
@@ -917,7 +917,7 @@ describe.skipIf(!v2Available)(`background helpers in opencode ${V2_VERSION}`, ()
           .flatMap((message) => message.content ?? [])
           .find((item) => item.type === "tool" && item.name === name && (item.state?.status === "completed" || item.state?.status === "error")),
       );
-    /** A 2.0.16 tool result: `state.content`, a list of text parts. */
+    /** An opencode 2 tool result: `state.content`, a list of text parts. */
     const outputText = (item: V2Content): string => {
       const content = item.state?.content;
       if (typeof content === "string") return content;

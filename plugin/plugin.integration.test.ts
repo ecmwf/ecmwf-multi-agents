@@ -8,7 +8,7 @@
 //
 // Each binary gets a fresh sandbox (tools/sandbox.sh): the emitter output and the bundled plugin
 // in the sandbox config directory, settings files written per scenario, and a git project.
-// opencode 1.x is read back with `opencode debug agent` and `debug config`; opencode 2.0.16 with
+// opencode 1.x is read back with `opencode debug agent` and `debug config`; opencode 2 with
 // `opencode serve` and its HTTP API, as in tools/emit-v2.integration.test.ts. The first 1.x start
 // with a plugin installs @opencode-ai/plugin into the config directory (network, about 20 s).
 //
@@ -669,7 +669,7 @@ for (const bin of v1Bins) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// opencode 2.0.16
+// opencode 2 (V2_VERSION)
 
 interface V2Agent {
   id: string;

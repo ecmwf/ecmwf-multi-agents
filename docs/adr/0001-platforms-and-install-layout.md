@@ -19,8 +19,10 @@ The evidence behind every decision here is in `docs/research/opencode-v1.md`,
 ### Supported versions
 
 - opencode 1.x from 1.18.35 is the main target, tested on 1.18.35 and 1.19.0.
-- opencode 2 is pinned to 2.0.16, the version weave's v2 adapter is built against. The pin
-  moves only after the integration tests pass on a newer version.
+- opencode 2 is pinned to 2.0.28 since 0.5.2, after the integration tests passed on it. It
+  was pinned to 2.0.16, the version weave's v2 adapter is built against; 2.0.16 still works
+  and gets the installer's warning for an untested version. The pin moves only after the
+  integration tests pass on a newer version.
 
 ### Two outputs that never share a directory
 
@@ -102,7 +104,7 @@ opencode's own default agent.
 - Target: the global config directory `${XDG_CONFIG_HOME:-$HOME/.config}/opencode` by default,
   `DIR/.opencode` with `--project DIR`, or DIR itself with `--central DIR`.
 - Platform: detected from `opencode --version` and `opencode2 --version`, following the table
-  above; `--platform v1|v2` overrides. A v2 version other than 2.0.16 gets a warning.
+  above; `--platform v1|v2` overrides. A v2 version other than the pinned one gets a warning.
 - Global installs link each file, so `git pull` updates them. Project installs copy, because
   projects may commit `.opencode/` and share it; `--link` and `--copy` override.
 - It never overwrites or removes a file that is neither a link into this clone nor a file

@@ -4,7 +4,7 @@
 // Installs the real dist/ with install.sh into sandboxes and checks the result with real
 // opencode binaries. Opt-in: set ECMWF_MULTI_AGENTS_INTEGRATION=1. Binaries:
 //   OPENCODE_V1_BINS  space-separated opencode 1.x binaries (default: "opencode" on PATH)
-//   OPENCODE_V2_BIN   the opencode 2.0.16 binary (default: "opencode2" on PATH; skipped if missing)
+//   OPENCODE_V2_BIN   the opencode 2 binary, the tested version (default: "opencode2" on PATH; skipped if missing)
 // The first opencode 1.x start with a plugin installs a package into the config folder over
 // the network, so timeouts are generous.
 
@@ -152,7 +152,7 @@ run_("install.sh with real opencode", () => {
     }, TIMEOUT);
   }
 
-  (V2_BIN ? test : test.skip)("opencode 2.0.16: install picks the v2 files; doctor passes", () => {
+  (V2_BIN ? test : test.skip)("opencode 2: install picks the v2 files; doctor passes", () => {
     const box = sandbox(V2_BIN!, true);
     const installed = install(box);
     expect(installed.code).toBe(0);

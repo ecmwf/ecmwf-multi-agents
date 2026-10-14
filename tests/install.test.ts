@@ -312,13 +312,13 @@ describe("platform", () => {
   });
 
   test("opencode 1.x and 2 together get the v1 files, which opencode 2 also reads", () => {
-    const box = makeBox({ opencode: "1.18.35", opencode2: "opencode v2.0.16" });
+    const box = makeBox({ opencode: "1.18.35", opencode2: "opencode v2.0.28" });
     expect(run(box, []).code).toBe(0);
     expect(linkedPlatform(box)).toBe("v1");
   });
 
   test("opencode 2 alone gets the v2 files", () => {
-    const box = makeBox({ opencode: "opencode v2.0.16", opencode2: "opencode v2.0.16" });
+    const box = makeBox({ opencode: "opencode v2.0.28", opencode2: "opencode v2.0.28" });
     const { code, out } = run(box, []);
     expect(code).toBe(0);
     expect(linkedPlatform(box)).toBe("v2");
@@ -329,7 +329,7 @@ describe("platform", () => {
     const box = makeBox({ opencode2: "opencode v2.0.20" });
     const { code, out } = run(box, []);
     expect(code).toBe(0);
-    expect(out).toContain("tested with opencode 2.0.16");
+    expect(out).toContain("tested with opencode 2.0.28");
   });
 
   test("no opencode at all stops with advice", () => {
@@ -389,7 +389,7 @@ describe("project and central installs", () => {
   });
 
   test("--central needs opencode 1.x", () => {
-    const box = makeBox({ opencode2: "opencode v2.0.16" });
+    const box = makeBox({ opencode2: "opencode v2.0.28" });
     const { code, out } = run(box, ["--central", path.join(box.dir, "central")]);
     expect(code).toBe(1);
     expect(out).toContain("opencode 1.x only");
@@ -451,7 +451,7 @@ describe("background helpers on opencode 1.x", () => {
   });
 
   test("an install for opencode 2 says nothing about the flag", () => {
-    const box = makeBox({ opencode2: "opencode v2.0.16" });
+    const box = makeBox({ opencode2: "opencode v2.0.28" });
     const { out } = run(box, []);
     expect(out).not.toContain(FLAG);
   });
@@ -521,7 +521,7 @@ describe("doctor", () => {
   });
 
   test("on opencode 2 says the agents cannot be checked from the shell", () => {
-    const box = makeBox({ opencode2: "opencode v2.0.16" });
+    const box = makeBox({ opencode2: "opencode v2.0.28" });
     run(box, []);
     const { code, out } = run(box, ["doctor"]);
     expect(code).toBe(0);
@@ -584,7 +584,7 @@ describe("doctor for a project switched on by a plugin line", () => {
   });
 
   test("with only opencode 2 the line does nothing, and doctor says so", () => {
-    const box = makeBox({ opencode2: "opencode v2.0.16" });
+    const box = makeBox({ opencode2: "opencode v2.0.28" });
     checkout(box);
     const { code, out } = run(box, ["doctor", "--project", project(box)]);
     expect(code).toBe(1);

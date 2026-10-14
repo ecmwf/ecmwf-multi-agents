@@ -66,6 +66,10 @@ denies `git push` globally gets an approval prompt in `lead` instead.
 | Code Mode (opencode 2) | user policy | deny | user policy | deny |
 | Helper tools (`helpers_status`, `helpers_steer`, `helpers_cancel`) | user policy | deny | deny | deny |
 
+Files outside the project follow each platform's default, since the harness sets no rule for
+them: opencode 1.x and 2.0.16 ask before an agent reads or edits one, and opencode 2.0.28 asks
+for no agent (`docs/research/opencode-v2.md`, Addendum: 2.0.28).
+
 The helper tools come from the plugin (see Background helpers). A `tool` rule in the manifest
 names one tool id; the emitters write it as that id's own permission key, which on both
 platforms removes a denied tool from the agent's requests. The plugin also refuses, at
@@ -275,7 +279,7 @@ differs by platform:
   completion wakes `lead`. A helper command or a completion that arrives while a helper answers
   inline waits for its report (at most 30 minutes), so an answer is never cut short. When the
   plugin cannot read the session's state, it leaves the message as opencode made it.
-- On opencode 2.0.16 a command for a helper runs in a child session. Running it in the user's
+- On opencode 2 a command for a helper runs in a child session. Running it in the user's
   session would first switch the whole session to the helper, so the user's next message would
   go to the helper. When the child finishes, opencode wakes `lead` with the report; `lead`
   relays it briefly, without re-running its checks.
@@ -408,7 +412,7 @@ applies to the profile's model. `steps` replaces the agent's step limit.
 
 The generator writes a JSON Schema for this file; the plugin validates with the same patterns.
 A file with unknown keys or invalid values is ignored as a whole and reported: on opencode 1.x
-in the log and as a toast in the TUI; on opencode 2.0.16, whose plugin API offers neither, on
+in the log and as a toast in the TUI; on opencode 2, whose plugin API offers neither, on
 standard error only. `install.sh doctor` checks the review and profile values. There is no
 setting that returns a single agent to the session model; the `inherit` profile does that for
 all agents.
@@ -472,7 +476,7 @@ src/skills/<id>/SKILL.md  skill bodies
 src/profiles/*.jsonc      model profiles
 tools/                    generator (TypeScript on Bun)
 dist/opencode-v1/         output for opencode 1.x
-dist/opencode-v2/         output for opencode 2.0.16
+dist/opencode-v2/         output for opencode 2 (tested on 2.0.28)
 plugin/                   runtime plugin sources
 ```
 

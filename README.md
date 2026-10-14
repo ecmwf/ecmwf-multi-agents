@@ -73,7 +73,7 @@ environment before opencode starts; the installer tells you where to put it and
 
 ## Requirements
 
-- opencode 1.18.35 or later in the 1.x series. opencode 2.0.16 is also supported.
+- opencode 1.18.35 or later in the 1.x series. opencode 2 is also supported, tested on 2.0.28.
 - Access to the models in your chosen profile. The default profile needs Anthropic and GitHub
   Copilot, connected with `opencode auth login`.
 - A POSIX shell for the installer.

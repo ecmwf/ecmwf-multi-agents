@@ -565,3 +565,37 @@ Evidence: `types: cli/package.json` (`"bin": {"opencode": "./bin/opencode.exe", 
   without a model. Nothing else is needed.
 - `tools/frontmatter.ts`: no change needed. Its quoting of values with `#`, `*` or a leading `.`
   produced files that 2.0.16 parsed as intended in every sandbox run.
+
+## Addendum: 2.0.28
+
+The harness moved its opencode 2 pin from 2.0.16 to 2.0.28 in 0.5.2. Checked against tag
+`v2.0.28` of `anomalyco/opencode`, cited as `v2.0.28:` with paths relative to `packages/`, and
+the `@opencode/cli@2.0.28` binary.
+
+- Agent files: the agent and model config schemas the emitter checks against are unchanged
+  apart from their regular expressions gaining the `u` flag (`v2.0.28:
+  schema/src/config/agent.ts`, `schema/src/config/model.ts`), and the permission action names
+  are the same. The emitter's output loads as on 2.0.16.
+- Plugin API: `setup`, the agent and tool transforms, the `execute.before` tool hook and the
+  event names the plugin reads are unchanged (`v2.0.28: plugin/src/promise/plugin.ts:60-63`,
+  `plugin/src/promise/tool.ts`, `schema/src/session-event.ts`). The `context` session hook and
+  `session.synthetic`, which the plugin uses since 0.5.1, exist at both versions.
+- Permissions: an agent now starts with `* * allow` and the three `.env` read rules only
+  (`v2.0.28: schema/src/agent.ts:46-51`, `core/src/agent.ts:62-66`). 2.0.16 also gave every
+  agent `external_directory * ask` and allows for opencode's own data, temporary and config
+  folders (`src: schema/src/agent.ts:46-52`, `core/src/agent.ts:59-64` and `:74-82`). So on
+  2.0.28 nothing asks before an agent reads or edits a file outside the project, which
+  opencode's own tests expect (`v2.0.28: core/test/agent.test.ts:205`). Measured with opencode's
+  evaluator (`POST /api/session/:id/permission`) for each harness agent: `external_directory`
+  on `/etc/*` is `ask` on 2.0.16 and `allow` on 2.0.28; opencode's own folders are allowed on
+  both. The harness keeps each platform's default and sets no `external_directory` rule.
+- A truncated tool result is saved under opencode's data folder (`v2.0.28:
+  core/src/tool-output.ts:55` and `:86-90`), and so is shell output (`core/src/shell.ts:136`
+  and `:246-247`). Reading either checks `external_directory` on the file's folder, then `read`
+  (`core/src/file-access.ts:112-121` and `:144-159`), which 2.0.28 allows, so a helper in the
+  background never waits on a prompt for them.
+- opencode's browser plugin appends `browser * deny` after every agent's own rules, so the
+  desktop browser's tools stay hidden until a browser attaches and allows them for its session
+  (`v2.0.28: plugin-browser/src/connection.ts:25-53`, `core/src/plugin/internal.ts:255-256`).
+  The harness's agents do not use them; the emitter's integration test expects the rule.
+- The emitter, plugin, background helper and installer integration suites pass on 2.0.28.

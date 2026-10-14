@@ -235,13 +235,15 @@ Findings to act on for 0.2.0:
 - [x] Tiago: Release 0.4.0
 - [ ] npm package (plugin that also carries agents, commands and skills)
 - [ ] Central install on opencode 2 (generated `opencode.json` through `OPENCODE_CONFIG`)
-- [~] Tiago: opencode 2.0.28 (on Tiago's machine since 2026-10-14, with no 1.x beside it): the v2
-  files are tested on 2.0.16 only; run the integration suites against 2.0.28 and move the
-  pin if they pass. Found on 2026-10-14 with `V2_VERSION` set to 2.0.28 in a scratch copy: the
-  plugin and background suites pass; the emitter tests fail only because 2.0.28 appends a
-  default `browser * deny` rule after every agent's own rules. Also check that helpers get no
-  permission prompts for opencode's tool-output, tmp and config folders, which agents built by
-  a plugin no longer get by default (core/src/agent.ts)
+- [x] Tiago: opencode 2.0.28 (on Tiago's machine since 2026-10-14, with no 1.x beside it): the
+  pin moved from 2.0.16 to 2.0.28 (`V2_VERSION`, the installer's `V2_PINNED`, tests and docs;
+  ADR 0001 amended). The agent and model schemas and the plugin API are unchanged; the
+  emitter's integration test now expects the `browser * deny` rule that 2.0.28's browser
+  plugin appends after every agent's own rules. Helpers get no permission prompts for
+  opencode's tool-output, tmp and config folders: 2.0.28 dropped the `external_directory *
+  ask` default together with those exceptions, so nothing asks outside the project for any
+  agent, and Tiago chose to keep that default (no rule added). Integration on 1.18.35, 1.19.0
+  and 2.0.28: 120 pass. `docs/research/opencode-v2.md`, Addendum: 2.0.28
 - [~] Tiago: Release 0.5.2
 - [ ] CI: `make check` plus the integration suites in containers per opencode version
 - [ ] README quickstart for scientists; `/guide` content final

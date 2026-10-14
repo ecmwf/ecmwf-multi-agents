@@ -162,7 +162,7 @@ describe("emitV2 layout", () => {
 });
 
 describe("emitV2 agents", () => {
-  test("lead file matches the 2.0.16 native format exactly", () => {
+  test("lead file matches the opencode 2 native format exactly", () => {
     const lead = emitV2(fixture()).find((item) => item.path === "agents/lead.md");
     expect(lead?.content).toBe(
       [
@@ -198,14 +198,14 @@ describe("emitV2 agents", () => {
     );
   });
 
-  test("writes only native agent keys, so 2.0.16 never takes the legacy v1 path", () => {
+  test("writes only native agent keys, so opencode 2 never takes the legacy v1 path", () => {
     const native = new Set(["description", "mode", "model", "steps", "color", "permissions"]);
     for (const item of emitV2(fixture()).filter((entry) => entry.path.startsWith("agents/"))) {
       for (const key of Object.keys(parse(item.content).data)) expect(native.has(key)).toBe(true);
     }
   });
 
-  test("the prompt is the body, which 2.0.16 uses as the system prompt", () => {
+  test("the prompt is the body, which opencode 2 uses as the system prompt", () => {
     const files = emitV2(fixture());
     expect(file(files, "agents/lead.md").body).toBe("Lead prompt.\n\nSecond paragraph.\n");
     expect(file(files, "agents/reviewer.md").body).toBe("Reviewer prompt.\n\nSecond part.\n");
@@ -261,8 +261,8 @@ describe("emitV2 agents", () => {
     const scout = file(emitV2(fixture()), "agents/scout.md");
     expect(scout.comments).toEqual([
       MARKER,
-      '# no todo action in opencode 2.0.16, rule left out: todo "*" deny',
-      '# no list action in opencode 2.0.16, rule left out: list "*" allow',
+      '# no todo action in opencode 2.0.28, rule left out: todo "*" deny',
+      '# no list action in opencode 2.0.28, rule left out: list "*" allow',
     ]);
     const actions = (scout.data.permissions as { action: string }[]).map((rule) => rule.action);
     expect(actions).not.toContain("todo");
@@ -274,7 +274,7 @@ describe("emitV2 agents", () => {
     expect("permissions" in file(emitV2(fixture()), "agents/reviewer.md").data).toBe(false);
   });
 
-  test("rejects values that opencode 2.0.16 would silently drop or ignore", () => {
+  test("rejects values that opencode 2 would silently drop or ignore", () => {
     const bad: Partial<ResolvedAgent>[] = [
       { color: "primary" },
       { color: "#12345" },
