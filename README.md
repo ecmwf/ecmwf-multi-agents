@@ -93,7 +93,8 @@ installer. Versions are `MAJOR.MINOR.MICRO` without a `v`.
 
 The installer finds your opencode version, links the agents, commands, skills and plugin into
 `~/.config/opencode/`, and writes a settings file. Restart opencode afterwards. To update, run
-`git pull` and restart opencode. It never overwrites files it did not create.
+`git pull` and `./install.sh` again, then restart opencode. It never overwrites files it did
+not create.
 
 Other ways to install:
 

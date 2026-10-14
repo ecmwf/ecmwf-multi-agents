@@ -624,6 +624,8 @@ find ~/.config/opencode ~/.opencode ~/.claude/skills ~/code/.claude -newer <firs
 and of the 1.x TUI's rendering of that tool. Commands and tools are separate namespaces on both
 platforms: the command list (`packages/opencode/src/command/index.ts:70-88` at v1.18.35, the
 built-in command plugin on 2.0.16) has no `execute`, and the 1.x TUI's slash commands do not
-either. Checked with the same greps as above at both tags. A later version that adds a
+either. Checked with the same greps as above at v1.18.35, v1.19.0 and v2.0.16; on 1.19.0 too
+the built-in commands are `init` and `review`, and no slash command is named `execute`. A later
+version that adds a
 built-in `/execute` command would be replaced by the harness's file on 1.x (as `review` is)
 and would need the same decision as `review`.

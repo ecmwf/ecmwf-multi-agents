@@ -156,8 +156,8 @@ Each line starts with OK, WARN or FAIL:
 - the opencode versions found, and whether the installed files suit them;
 - for a project switched on by a plugin line instead of an install: which config file has the
   line, and whether it names a checkout of the harness, with its version;
-- every installed file present and still from the harness (a broken link usually means the
-  checkout was moved: run `./install.sh` again);
+- every installed file present and still from the harness (a broken link means the checkout
+  was moved, or an update removed the file: run `./install.sh` again);
 - whether the checkout has files that are not installed yet, or the other way round;
 - your settings files: the review value and the profile name;
 - whether the models of your profile are available (a WARN with the provider to connect);

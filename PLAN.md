@@ -515,13 +515,13 @@ hand-off is recorded only, since a plan may have none. Measured on 1.18.35; the 
   which no task update can contain, and the answer is `lead`'s first message that names every
   term, with at most one completion before it; unit tests for a task update that uses the
   term and for a preamble before the answer; `execute-chat` rerun three times
-- [~] Tiago: Upgrade note: the changelog and the README say to run `./install.sh` after
+- [x] Tiago: Upgrade note: the changelog and the README say to run `./install.sh` after
   updating, since `git pull` alone leaves a linked install with a dangling `commands/go.md`
-  and no `execute.md`
+  and no `execute.md`; `docs/install.md` names an update as a cause of a broken link
 - [~] Tiago: Resuming: `lead` logs each task's start and asks before briefing again a task
   logged as started but not ticked, since another session of the same opencode may still be
   running its helper; skill and architecture
-- [~] Tiago: The clash note names 1.19.0
+- [x] Tiago: The clash note names 1.19.0
 - [ ] An eval case with two code-writing tasks in parallel, so the rule that a
   whole-repository check waits for running builders is measured (`execute-chat` overlaps T1
   only with the README-only T2)
