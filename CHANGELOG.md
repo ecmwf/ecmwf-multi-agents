@@ -11,6 +11,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-10-14
+
 ### Changed
 
 - opencode 2 is tested on 2.0.28, the version in use now; it was 2.0.16, which still works and
@@ -162,7 +164,8 @@ helpers it hands work to.
 - Scenario evals (`make evals`) that compare the harness with plain opencode on a sample
   repository, using real models.
 
-[Unreleased]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.5.1...HEAD
+[Unreleased]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.5.2...HEAD
+[0.5.2]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.5.1...0.5.2
 [0.5.1]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.5.0...0.5.1
 [0.5.0]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.4.0...0.5.0
 [0.4.0]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.3.0...0.4.0
