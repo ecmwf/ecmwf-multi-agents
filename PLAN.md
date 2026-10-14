@@ -244,7 +244,7 @@ Findings to act on for 0.2.0:
   ask` default together with those exceptions, so nothing asks outside the project for any
   agent, and Tiago chose to keep that default (no rule added). Integration on 1.18.35, 1.19.0
   and 2.0.28: 120 pass. `docs/research/opencode-v2.md`, Addendum: 2.0.28
-- [~] Tiago: Release 0.5.2
+- [x] Tiago: Release 0.5.2
 - [ ] CI: `make check` plus the integration suites in containers per opencode version
 - [ ] README quickstart for scientists; `/guide` content final
 - [ ] `tests/install.test.ts`: the "no opencode at all" test, and since 0.4.0 "with only
@@ -665,3 +665,8 @@ shows the wall clock and cost against 0.1.0; `/guide` says what the user will se
   its 19 files, the installed plugin holds reports, opencode 1.18.35 shows `lead` as default
   with the six commands, and `doctor` finds no problems; on opencode 2.0.28 the install works,
   with the warning that the harness is tested with 2.0.16.
+- 2026-10-14: 0.5.2 released with `make release 0.5.2` (gate passed twice, 603 tests each):
+  opencode 2 is tested on 2.0.28. Checked from a fresh clone: an install of 0.5.1 updated to
+  0.5.2 keeps its 19 files, opencode 1.18.35 shows `lead` and the six commands, and `doctor`
+  finds no problems; on opencode 2.0.28 the install gives no warning and `doctor` reports
+  `OK opencode 2.0.28`.
