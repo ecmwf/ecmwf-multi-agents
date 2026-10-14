@@ -292,16 +292,17 @@ Either way, `lead` acts on a REJECT or on a plan's state only when the user asks
    in the background; otherwise one task runs in the foreground, so its result comes back in
    the same turn. Where the platform refuses a background hand-off (opencode 1.x without its
    flag), the taken tasks run together in the foreground, as a wave.
-3. On each completion, check the report against the criteria and re-run cheap checks. Read
-   every completion that has arrived before starting new work.
-4. On success, tick the task, add a line to the plan's log, tell the user in one line, and
-   fill the free helper slots from the ready tasks that are not running yet, with the same
-   file rule. On failure, log it and brief the same agent again with
-   the gap stated exactly, the same way as the first attempt. A task whose helper is still
-   running is never briefed again.
-5. Stop when all tasks are done, a task is blocked or fails twice, or three reports in a row
-   fail. After a stop nothing new starts; running helpers finish and those that pass are
-   ticked.
+3. On each completion, check the report against the criteria and re-run cheap checks. A
+   check that reads the whole repository waits until no builder is running. Read every
+   completion that has arrived before starting new work.
+4. On a failure, the stop conditions come first: a task that has failed twice, or a third
+   failed report in a row, stops the plan. Otherwise log it and brief the same agent again
+   with the gap stated exactly, the same way as the first attempt. On success, tick the
+   task, add a line to the plan's log, tell the user in one line, and fill the free helper
+   slots from the ready tasks that are not running yet, with the same file rule. A task
+   whose helper is still running is never briefed again.
+5. The plan also stops when all tasks are done or a task is blocked. After a stop nothing
+   new starts; running helpers finish and those that pass are ticked.
 6. Run the plan's final verification in the foreground, then one review of the whole change
    if the policy calls for it. Tasks get no review of their own.
 
