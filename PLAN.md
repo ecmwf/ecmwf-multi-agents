@@ -509,6 +509,24 @@ hand-off is recorded only, since a plan may have none. Measured on 1.18.35; the 
   different namespaces and nothing clashed on 2.0.16, but watch for a built-in `/execute`
   command in later versions (the clash note lists where to look)
 
+8c. Follow-ups from the review of #3, and release
+
+- [~] Tiago: The `answered-during-plan` check: `execute-chat` asks the quality check's range,
+  which no task update can contain, and the answer is `lead`'s first message that names every
+  term, with at most one completion before it; unit tests for a task update that uses the
+  term and for a preamble before the answer; `execute-chat` rerun three times
+- [~] Tiago: Upgrade note: the changelog and the README say to run `./install.sh` after
+  updating, since `git pull` alone leaves a linked install with a dangling `commands/go.md`
+  and no `execute.md`
+- [~] Tiago: Resuming: `lead` logs each task's start and asks before briefing again a task
+  logged as started but not ticked, since another session of the same opencode may still be
+  running its helper; skill and architecture
+- [~] Tiago: The clash note names 1.19.0
+- [ ] An eval case with two code-writing tasks in parallel, so the rule that a
+  whole-repository check waits for running builders is measured (`execute-chat` overlaps T1
+  only with the README-only T2)
+- [~] Tiago: Release 0.5.0
+
 Exit: `execute-chat` and `plan-execute` pass on 1.18.35 (the evals run on 1.x only); the eval summary
 shows the wall clock and cost against 0.1.0; `/guide` says what the user will see.
 
@@ -591,3 +609,5 @@ shows the wall clock and cost against 0.1.0; `/guide` says what the user will se
 - 2026-10-13: 0.4.0 released with `make release 0.4.0` (gate passed twice, 573 tests each).
   Checked from a fresh clone of the tag: a project with the line gets `lead` as default agent
   and the six commands, `doctor --project` reports version 0.4.0, the checkout stays clean.
+- 2026-10-14: Phase 8 merged as #3 after Tiago's review of `80e5298` and `46c3109`; the four
+  follow-ups the review named are taken on `main` (8c).
