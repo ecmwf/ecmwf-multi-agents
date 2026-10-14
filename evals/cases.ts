@@ -7,6 +7,7 @@
 
 import {
   answerMentions,
+  answeredDuringPlan,
   backgroundHandoffs,
   committedLocally,
   completionsWakeLead,
@@ -18,6 +19,7 @@ import {
   noHelperGitWrites,
   noWorkaround,
   onboardChecks,
+  overlappingHandoffs,
   onlyChanged,
   planDone,
   plans,
@@ -42,9 +44,22 @@ const PLAN_GOAL =
   "counts the readings that fail the quality check), and a `stats` command, `python3 -m stations stats FILE`, that " +
   "prints one line per station. Add tests and document the command in the README.";
 
-const JSON_PLAN = `# Add JSON output to the summary command
+/**
+ * The seeded five-task plan for the JSON option; `done` names the tasks already ticked and
+ * logged. With T1 and T2 done it is the plan /progress reports on (2 of 5, T3 next); with none
+ * done it is the plan /execute carries out, T1 and T2 ready together.
+ */
+function jsonPlan(done: readonly string[]): string {
+  const box = (task: string) => (done.includes(task) ? "[x]" : "[ ]");
+  const log = [
+    "- 2026-10-01: Plan written. Reviewer: APPROVE.",
+    "- 2026-10-01: Approved by the user.",
+    ...(done.includes("T1") ? ["- 2026-10-02: T1 done: to_dict added with a test."] : []),
+    ...(done.includes("T2") ? ["- 2026-10-02: T2 done: README lists the JSON keys."] : []),
+  ];
+  return `# Add JSON output to the summary command
 
-Status: in progress
+Status: ${done.length > 0 ? "in progress" : "approved"}
 Goal: \`python3 -m stations summary FILE --json\` prints the daily summaries as JSON.
 Created: 2026-10-01
 
@@ -56,10 +71,10 @@ Created: 2026-10-01
 - Reading JSON input.
 
 ## Tasks
-- [x] T1 Add \`DailySummary.to_dict()\`. Agent: builder. Files: \`stations/summary.py\`, \`tests/test_summary.py\`. Depends on: none.
+- ${box("T1")} T1 Add \`DailySummary.to_dict()\`. Agent: builder. Files: \`stations/summary.py\`, \`tests/test_summary.py\`. Depends on: none.
   DONE WHEN: 1. \`to_dict()\` returns station, date, min, max, mean and count. 2. A test covers it.
   CHECKS: \`python3 -m unittest\`
-- [x] T2 Describe the JSON keys in the README. Agent: builder. Files: \`README.md\`. Depends on: none.
+- ${box("T2")} T2 Describe the JSON keys in the README. Agent: builder. Files: \`README.md\`. Depends on: none.
   DONE WHEN: 1. The README lists the keys.
 - [ ] T3 Add the \`--json\` option to the summary command. Agent: builder. Files: \`stations/cli.py\`, \`tests/test_cli.py\`. Depends on: T1.
   DONE WHEN: 1. \`summary FILE --json\` prints a JSON array. 2. Without \`--json\` the output is unchanged.
@@ -75,11 +90,9 @@ Parallel: T1 and T2.
 - \`python3 -m unittest\` passes.
 
 ## Log
-- 2026-10-01: Plan written. Reviewer: APPROVE.
-- 2026-10-01: Approved by the user.
-- 2026-10-02: T1 done: to_dict added with a test.
-- 2026-10-02: T2 done: README lists the JSON keys.
+${log.join("\n")}
 `;
+}
 
 const KELVIN_PLAN = `# Add kelvin output
 
@@ -111,7 +124,7 @@ const UNITS_BUG: EvalCase["setup"] = [
 // Two seeded plans: json-output (2 of 5 tasks done, T3 next) is the most recent open one.
 const SEEDED_PLANS: EvalCase["setup"] = [
   { kind: "exclude-workdir" },
-  { kind: "write", path: ".ecmwf-multi-agents/plans/json-output.md", content: JSON_PLAN, mtime: "2026-10-02T10:00:00Z" },
+  { kind: "write", path: ".ecmwf-multi-agents/plans/json-output.md", content: jsonPlan(["T1", "T2"]), mtime: "2026-10-02T10:00:00Z" },
   { kind: "write", path: ".ecmwf-multi-agents/plans/kelvin-output.md", content: KELVIN_PLAN, mtime: "2026-10-05T10:00:00Z" },
 ];
 
@@ -120,6 +133,8 @@ const WARM_UP = (text: string) => ({ turn: { kind: "prompt" as const, text }, no
 
 /** Background hand-offs on opencode 1.x need this flag before the server starts (docs/install.md). */
 const BACKGROUND = { OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS: "true" };
+
+const UNIT_QUESTION = "While that runs: in one sentence, what unit does the summary command print by default? Do not change any files.";
 
 const PROGRESS_CHECKS = [
   answerMentions("counts", "the report says 2 of 5 tasks are done", [{ label: "2 of 5", any: [/\b2\s*(?:of|\/|out of)\s*5\b/i] }], "all"),
@@ -304,16 +319,41 @@ export const CASES: EvalCase[] = [
     baseline: false,
   },
   {
-    id: "plan-go",
-    title: "/plan, approval, then the plan carried out (with /go in a new session if needed)",
+    id: "plan-execute",
+    env: BACKGROUND,
+    title: "/plan, approval, then the plan carried out (with /execute in a new session if needed)",
     setup: [],
     review: "auto",
     turns: [
       { turn: { kind: "command", command: "plan", arguments: PLAN_GOAL } },
       { turn: { kind: "prompt", text: "Approved. Go ahead." }, when: noPlanDone, note: "approve the plan" },
-      { turn: { kind: "command", command: "go", arguments: "" }, newSession: true, when: noPlanDone, note: "lead did not finish in the same session: /go in a new session" },
+      { turn: { kind: "command", command: "execute", arguments: "" }, newSession: true, when: noPlanDone, note: "lead did not finish in the same session: /execute in a new session" },
     ],
-    checks: [planDone(), hiddenTestsPass("plan-go"), testsPass()],
+    checks: [planDone(), hiddenTestsPass("plan-execute"), testsPass(), backgroundHandoffs(1, ["harness"])],
+    baseline: false,
+  },
+  {
+    id: "execute-chat",
+    env: BACKGROUND,
+    title: "/execute on a seeded plan with two tasks ready; the user asks a question while they run and lead answers it",
+    setup: [
+      { kind: "exclude-workdir" },
+      { kind: "write", path: ".ecmwf-multi-agents/plans/json-output.md", content: jsonPlan([]), mtime: "2026-10-02T10:00:00Z" },
+    ],
+    review: "never",
+    turns: [
+      { turn: { kind: "command", command: "execute", arguments: "json-output" }, waitFor: "root", note: "lead ends its first turn with T1 and T2 in the background" },
+      { turn: { kind: "prompt", text: UNIT_QUESTION }, note: "a question while the tasks run" },
+      { turn: { kind: "prompt", text: "Carry on with the plan until it is done." }, when: noPlanDone, note: "lead finishes the plan" },
+    ],
+    checks: [
+      backgroundHandoffs(2),
+      overlappingHandoffs(2),
+      answeredDuringPlan(UNIT_QUESTION, [{ label: "Celsius", any: [/celsius|°C/i] }]),
+      planDone(),
+      hiddenTestsPass("feature"),
+      testsPass(),
+    ],
     baseline: false,
   },
   {

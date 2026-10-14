@@ -201,10 +201,10 @@
       "agent": "lead",
       "template": "commands/plan.md"
     },
-    "go": {
-      "description": "Carry out an approved plan task by task",
+    "execute": {
+      "description": "Carry out an approved plan: ready tasks run together in the background, every result is checked; stops when it needs you",
       "agent": "lead",
-      "template": "commands/go.md"
+      "template": "commands/execute.md"
     },
     "review": {
       "description": "Independent review of your uncommitted changes, a branch, a commit, a pull request or a plan",

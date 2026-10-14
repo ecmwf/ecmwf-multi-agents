@@ -28,9 +28,12 @@ shift
 mkdir -p "$dir/home/.config" "$dir/home/.local/share" "$dir/home/.local/state" "$dir/home/.cache"
 home=$(cd "$dir/home" && pwd)
 
+# OPENCODE_SERVER_USERNAME and OPENCODE_SERVER_PASSWORD would make a sandboxed server demand
+# the enclosing session's basic auth, so every unauthenticated test request would get 401.
 exec env \
 	-u OPENCODE -u OPENCODE_PID -u AGENT \
 	-u OPENCODE_CONFIG -u OPENCODE_CONFIG_DIR -u OPENCODE_CONFIG_CONTENT \
+	-u OPENCODE_SERVER_USERNAME -u OPENCODE_SERVER_PASSWORD \
 	-u XDG_CONFIG_DIRS \
 	HOME="$home" \
 	XDG_CONFIG_HOME="$home/.config" \

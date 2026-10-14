@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
 # SPDX-License-Identifier: Apache-2.0
 
-# Hidden test for the plan-go case: per-station statistics over a whole file.
+# Hidden test for the plan-execute case: per-station statistics over a whole file.
 # Runs from the project root, which holds the stations package and data/sample.csv.
 
 import os

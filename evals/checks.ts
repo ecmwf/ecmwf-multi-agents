@@ -5,7 +5,7 @@
 // CheckContext, so the checks can be tested without opencode.
 
 import { WORK_DIR } from "./project.ts";
-import type { Check, CheckContext, CheckOutcome, CheckResult, ToolCall, Variant } from "./types.ts";
+import type { ApiMessage, Check, CheckContext, CheckOutcome, CheckResult, ToolCall, Variant } from "./types.ts";
 
 const ok = (detail: string): CheckResult => ({ pass: true, detail });
 const fail = (detail: string): CheckResult => ({ pass: false, detail });
@@ -136,13 +136,14 @@ export function testsPass(): Check {
   };
 }
 
-/** The case's hidden tests pass; they live outside the project and import its package. */
-export function hiddenTestsPass(caseId: string): Check {
+/** The hidden tests of `folder` (a case id under evals/hidden/) pass; they live outside the project and import its package. */
+export function hiddenTestsPass(folder: string): Check & { folder: string } {
   return {
     id: "hidden-tests",
-    title: `hidden tests pass (evals/hidden/${caseId})`,
+    folder,
+    title: `hidden tests pass (evals/hidden/${folder})`,
     run(ctx) {
-      const dir = ctx.hiddenTests(caseId);
+      const dir = ctx.hiddenTests(folder);
       const result = ctx.exec(["python3", "-m", "unittest", "discover", "-s", dir, "-t", dir, "-p", "test_*.py"]);
       return result.code === 0 ? ok(lastLine(result.output)) : fail(shorten(result.output));
     },
@@ -553,9 +554,7 @@ export function completionsWakeLead(): Check {
       const wrong: string[] = [];
       for (const session of ctx.sessions.filter((item) => roots.has(item.id))) {
         session.messages.forEach((message, index) => {
-          const texts = message.parts.filter((part) => part.type === "text");
-          const completion = message.info.role === "user" && texts.length > 0 && texts.every((part) => part.synthetic === true) && (texts[0]?.text ?? "").startsWith("<task ");
-          if (!completion) return;
+          if (!isCompletion(message)) return;
           completions += 1;
           const answer = session.messages.slice(index + 1).find((next) => next.info.role === "assistant");
           if (answer === undefined) wrong.push("one was never answered");
@@ -564,6 +563,78 @@ export function completionsWakeLead(): Check {
       }
       if (completions === 0) return fail("no background completion arrived in the user's session");
       return wrong.length === 0 ? ok(`${completions} completion(s), all answered by lead`) : fail(wrong.join("; "));
+    },
+  };
+}
+
+/** A user message opencode wrote itself as a background helper's completion (`<task ...>`). */
+function isCompletion(message: ApiMessage): boolean {
+  const texts = message.parts.filter((part) => part.type === "text");
+  return message.info.role === "user" && texts.length > 0 && texts.every((part) => part.synthetic === true) && (texts[0]?.text ?? "").startsWith("<task ");
+}
+
+/**
+ * lead answered the user's question as its next piece of work, while the plan's helpers were
+ * still running. In a root session, the answering turn is the first assistant message with
+ * text after the question; it must be lead's, contain every term, and come before the second
+ * background completion. One completion may land inside lead's answering turn (a helper
+ * finishes while lead looks something up; the completion then queues behind the turn), so the
+ * window ends at the second. Later messages, such as a tick line that happens to use the same
+ * words, do not count. At least one completion must follow the question, or nothing shows a
+ * helper was still running.
+ */
+export function answeredDuringPlan(question: string, terms: Term[]): Check {
+  return {
+    id: "answered-during-plan",
+    title: "lead answered the question while helpers were still running",
+    variants: ["harness"],
+    run(ctx) {
+      const roots = new Set(ctx.rootSessions);
+      for (const session of ctx.sessions.filter((item) => roots.has(item.id))) {
+        const messages = session.messages;
+        const asked = messages.findIndex((message) => message.info.role === "user" && message.parts.some((part) => part.type === "text" && part.text === question));
+        if (asked === -1) continue;
+        const after = messages.slice(asked + 1);
+        const completions = after.map((message, index) => (isCompletion(message) ? index : -1)).filter((index) => index !== -1);
+        if (completions.length === 0) return fail("no completion arrived after the question, so nothing shows a helper was still running");
+        const textOf = (message: ApiMessage) => message.parts.filter((part) => part.type === "text").map((part) => part.text ?? "").join("\n").trim();
+        const answerAt = after.findIndex((message) => message.info.role === "assistant" && textOf(message) !== "");
+        if (answerAt === -1) return fail("no answer at all");
+        const secondCompletion = completions[1] ?? after.length;
+        if (answerAt > secondCompletion) return fail("the first answer came only after a second completion was processed");
+        const answer = after[answerAt]!;
+        if (answer.info.agent !== "lead") return fail(`answered by ${answer.info.agent ?? "an unknown agent"}`);
+        const missing = terms.filter((term) => !mentions(textOf(answer), term));
+        if (missing.length > 0) return fail(`the first answer lacks ${missing.map(termLabel).join(", ")}`);
+        return ok(answerAt < (completions[0] ?? 0) ? "answered before the first completion" : "answered after one completion landed in the turn");
+      }
+      return fail("the question was not found in a root session");
+    },
+  };
+}
+
+/**
+ * At least `count` background hand-offs by lead were in flight together: that many began before
+ * the first background completion arrived in a root session. Two hand-offs made one after the
+ * other, each waited for, would not pass.
+ */
+export function overlappingHandoffs(count = 2): Check {
+  return {
+    id: "overlapping-handoffs",
+    title: `${count} background hand-offs ran at the same time`,
+    variants: ["harness"],
+    run(ctx) {
+      const roots = new Set(ctx.rootSessions);
+      const firstCompletion = Math.min(
+        ...ctx.sessions
+          .filter((item) => roots.has(item.id))
+          .flatMap((session) => session.messages.filter(isCompletion).map((message) => message.info.time?.created ?? Number.POSITIVE_INFINITY)),
+      );
+      const started = ctx.metrics.toolCalls.filter(
+        (call) => call.agent === "lead" && (call.tool === "task" || call.tool === "subagent") && call.status === "completed" && call.input.background === true && call.start !== undefined && call.start < firstCompletion,
+      );
+      if (!Number.isFinite(firstCompletion)) return started.length >= count ? ok(`${started.length} started, none completed yet`) : fail("no background completion arrived");
+      return started.length >= count ? ok(`${started.length} started before the first completion`) : fail(`${started.length} of ${count} started before the first completion`);
     },
   };
 }

@@ -255,7 +255,7 @@ differs by platform:
   The session loop always runs the agent of its newest message, so sharing the session needs
   three rules, which the plugin applies in `chat.message` before opencode saves a message
   (`plugin/inline.ts`). A helper command sent while another agent works (for example `/progress`
-  during a long `/go`) runs in a child session instead, as every helper command did before 0.2.0:
+  during a long `/execute`) runs in a child session instead, as every helper command did before 0.2.0:
   the working agent finishes its step, the helper runs, and opencode tells that agent to go on
   with the report in view. A background helper's completion is written as the session's current
   agent, which after an inline command is the helper; the plugin gives it back to the session's
@@ -280,19 +280,34 @@ Either way, `lead` acts on a REJECT or on a plan's state only when the user asks
 4. The reviewer checks the plan, depending on the review policy.
 5. `lead` explains the plan in plain words and stops for approval.
 
-`/go` carries out an approved plan:
+`/execute` carries out an approved plan:
 
-1. Read the plan file; start with the first open task whose dependencies are done.
-2. Brief the task's agent (`builder` or `scout`) with the task's files, criteria and checks.
-3. Check the report against the criteria; re-run cheap checks.
-4. On success, tick the task and add a line to the plan's log. On failure, log it and brief
-   the same agent again with the gap stated exactly.
-5. Repeat until all tasks are done, a task is blocked or fails twice, or three reports in a
-   row fail.
-6. Run the plan's final verification, then one review of the whole change if the policy
-   calls for it. Tasks get no review of their own.
+1. Read the plan file; the open tasks whose dependencies are done are ready. Take as many
+   of them as there are free helper slots, at most three helpers at once, and never two
+   whose file sets overlap (the rule under Routing): a ready task that shares a file with a
+   running or taken task waits for it. The plan's `Parallel` line names the sets that may
+   run together.
+2. Brief each taken task's agent (`builder` or `scout`) with the task's files, criteria and
+   checks. When two or more are taken, or the user may want to keep talking, hand them off
+   in the background; otherwise one task runs in the foreground, so its result comes back in
+   the same turn. Where the platform refuses a background hand-off (opencode 1.x without its
+   flag), the taken tasks run together in the foreground, as a wave.
+3. On each completion, check the report against the criteria and re-run cheap checks. A
+   check that reads the whole repository waits until no builder is running. Read every
+   completion that has arrived before starting new work.
+4. On a failure, the stop conditions come first: a task that has failed twice, or a third
+   failed report in a row, stops the plan. Otherwise log it and brief the same agent again
+   with the gap stated exactly, the same way as the first attempt. On success, tick the
+   task, add a line to the plan's log, tell the user in one line, and fill the free helper
+   slots from the ready tasks that are not running yet, with the same file rule. A task
+   whose helper is still running is never briefed again.
+5. The plan also stops when all tasks are done or a task is blocked. After a stop nothing
+   new starts; running helpers finish and those that pass are ticked.
+6. Run the plan's final verification in the foreground, then one review of the whole change
+   if the policy calls for it. Tasks get no review of their own.
 
-`/go` works in a fresh session because the plan file carries everything needed.
+`/execute` works in a fresh session because the plan file carries everything needed; helpers of an
+earlier session are gone, so unfinished work is found from the log and `git status`.
 
 ## Review policy
 

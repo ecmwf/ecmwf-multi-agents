@@ -39,7 +39,7 @@ function manifest(): Json {
       scout: { mode: "subagent", description: "Looks.", prompt: ["agents/scout.md"], budget: "helper", steps: 10 },
       builder: { mode: "subagent", description: "Builds.", prompt: ["agents/builder.md", "fragments/helper.md"], budget: "helper" },
     },
-    commands: { go: { description: "Go.", agent: "lead", template: "commands/go.md" } },
+    commands: { execute: { description: "Execute.", agent: "lead", template: "commands/execute.md" } },
     skills: { "test-plan": { description: "Plan format.", body: "skills/test-plan/SKILL.md", hidden: true } },
   };
 }
@@ -49,7 +49,7 @@ const MARKDOWN: Record<string, string> = {
   "agents/scout.md": "You are scout.\n",
   "agents/builder.md": "You build.\n",
   "fragments/helper.md": "Helpers never ask.\n",
-  "commands/go.md": "Go: $ARGUMENTS\n",
+  "commands/execute.md": "Execute: $ARGUMENTS\n",
   "skills/test-plan/SKILL.md": "# Plan\n",
 };
 
@@ -137,7 +137,7 @@ describe("output", () => {
         "agents/builder.md",
         "agents/lead.md",
         "agents/scout.md",
-        "commands/go.md",
+        "commands/execute.md",
         "plugins/test.js",
         "skills/test-plan/SKILL.md",
         ...SUPPORT,
@@ -241,7 +241,7 @@ describe("output", () => {
       "agent    lead           9   1000 lead",
       "agent    scout          4    500 helper",
       "agent    builder        8    500 helper",
-      "command  go             4    300 command",
+      "command  execute        5    300 command",
       "skill    test-plan      2    400 skill",
       "dist/p1: 11 files (11 written, 0 removed)",
       "dist/p2: 8 files (8 written, 0 removed)",

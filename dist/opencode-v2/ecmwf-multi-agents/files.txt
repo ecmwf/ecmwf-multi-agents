@@ -2,7 +2,7 @@ agents/builder.md
 agents/lead.md
 agents/reviewer.md
 agents/scout.md
-commands/go.md
+commands/execute.md
 commands/guide.md
 commands/onboard.md
 commands/plan.md

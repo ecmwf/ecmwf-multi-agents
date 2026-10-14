@@ -161,10 +161,11 @@ describe("every case's setup on the fixture", () => {
       // The units bug of the review-reject and review-warm cases breaks the existing tests on
       // purpose: the reviewer can find it.
       expect(tests.code).toBe(item.setup === CASES.find((other) => other.id === "review-reject")?.setup ? 1 : 0);
-      const hiddenCheck = item.checks.find((check) => check.id === "hidden-tests");
+      // A case may reuse another case's hidden tests; the check names the folder it runs.
+      const hiddenCheck = item.checks.find((check): check is typeof check & { folder: string } => check.id === "hidden-tests" && "folder" in check);
       if (hiddenCheck) {
-        expect(existsSync(path.join(HIDDEN, item.id))).toBe(true);
-        expect(hidden(made.project, item.id).code).not.toBe(0);
+        expect(existsSync(path.join(HIDDEN, hiddenCheck.folder))).toBe(true);
+        expect(hidden(made.project, hiddenCheck.folder).code).not.toBe(0);
       }
       if (made.remote) {
         expect(exec(["git", "--git-dir", made.remote, "rev-parse", "main"], { cwd: made.dir }).output.trim()).toBe(head);

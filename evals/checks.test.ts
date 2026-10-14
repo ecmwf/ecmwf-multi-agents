@@ -4,6 +4,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   answerMentions,
+  answeredDuringPlan,
   committedLocally,
   completionsWakeLead,
   isGitWrite,
@@ -14,6 +15,7 @@ import {
   noWorkaround,
   onboardChecks,
   onlyChanged,
+  overlappingHandoffs,
   planDone,
   planState,
   pushRefused,
@@ -321,5 +323,55 @@ describe("completionsWakeLead", () => {
     const child = session([completion(), message("assistant", "scout", "x")], "child");
     const typed = session([message("user", "lead", '<task id="x"> typed by the user'), message("assistant", "reviewer", "x"), completion(), message("assistant", "lead", "ok")]);
     expect(run(completionsWakeLead(), context({ sessions: [child, typed], rootSessions: ["root"] }))).toEqual({ pass: true, detail: "1 completion(s), all answered by lead" });
+  });
+});
+
+describe("answeredDuringPlan and overlappingHandoffs", () => {
+  let id = 0;
+  const message = (role: string, agent: string, text: string, synthetic = false, created = 0): ApiMessage => ({
+    info: { id: `m${++id}`, sessionID: "root", role, agent, time: { created } },
+    parts: [{ type: "text", text, ...(synthetic ? { synthetic: true } : {}) }],
+  });
+  const completion = (created = 0) => message("user", "lead", '<task id="ses_c" state="completed">\nTemperatures in degrees Celsius.\n</task>', true, created);
+  const question = "What unit?";
+  const terms = [{ label: "Celsius", any: [/celsius/i] }];
+  const session = (messages: ApiMessage[]): SessionData => ({ id: "root", messages });
+  const answered = (messages: ApiMessage[]) => run(answeredDuringPlan(question, terms), context({ sessions: [session(messages)], rootSessions: ["root"] }));
+
+  test("passes when lead's answer sits between the question and the next completion", () => {
+    expect(answered([message("user", "lead", "/execute"), message("assistant", "lead", "started"), message("user", "lead", question), message("assistant", "lead", "Degrees Celsius by default."), completion(), message("assistant", "lead", "T1 done")])).toEqual({ pass: true, detail: "answered before the first completion" });
+  });
+
+  test("passes when one completion landed inside lead's answering turn, but not when the first answer waited for a second", () => {
+    const lookup: ApiMessage = { info: { id: `m${++id}`, sessionID: "root", role: "assistant", agent: "lead", time: { created: 0 } }, parts: [{ type: "tool", tool: "grep" }] };
+    expect(answered([message("user", "lead", question), lookup, completion(), message("assistant", "lead", "Celsius by default; and T1 is done"), completion(), message("assistant", "lead", "T2 done")])).toEqual({ pass: true, detail: "answered after one completion landed in the turn" });
+    expect(answered([message("user", "lead", question), lookup, completion(), message("assistant", "lead", "T1 done"), completion(), message("assistant", "lead", "Celsius, and T2 is done")]).detail).toBe("the first answer lacks Celsius");
+  });
+
+  test("the answering turn is judged on its own: a later line that uses the term does not rescue a first answer that lacks it", () => {
+    expect(answered([message("user", "lead", question), message("assistant", "lead", "T1 is done."), message("assistant", "lead", "Celsius."), completion()]).detail).toBe("the first answer lacks Celsius");
+  });
+
+  test("fails when a helper answered, when the terms are missing, or when the question is absent", () => {
+    expect(answered([message("user", "lead", question), message("assistant", "scout", "Celsius"), completion()]).detail).toBe("answered by scout");
+    expect(answered([message("user", "lead", question), message("assistant", "lead", "Kelvin"), completion()]).detail).toBe("the first answer lacks Celsius");
+    expect(answered([message("user", "lead", "something else")]).detail).toBe("the question was not found in a root session");
+  });
+
+  test("a helper's report that mentions the term does not count", () => {
+    expect(answered([message("user", "lead", question), completion(), message("assistant", "lead", "T3 done")]).pass).toBe(false);
+  });
+
+  const handoff = (start: number, background = true): ToolCall => ({ sessionID: "root", agent: "lead", tool: "task", status: "completed", input: { subagent_type: "builder", background }, start });
+  const overlap = (calls: ToolCall[], messages: ApiMessage[]) => run(overlappingHandoffs(2), context({ calls, sessions: [session(messages)], rootSessions: ["root"] }));
+
+  test("two hand-offs that both started before the first completion overlapped", () => {
+    expect(overlap([handoff(10), handoff(12)], [message("user", "lead", "/execute"), completion(50), completion(90)])).toEqual({ pass: true, detail: "2 started before the first completion" });
+  });
+
+  test("two hand-offs made one after the other, each waited for, did not", () => {
+    expect(overlap([handoff(10), handoff(60)], [message("user", "lead", "/execute"), completion(50), completion(90)]).detail).toBe("1 of 2 started before the first completion");
+    expect(overlap([handoff(10, false), handoff(12, false)], [completion(50)]).detail).toBe("0 of 2 started before the first completion");
+    expect(overlap([handoff(10)], []).detail).toBe("no background completion arrived");
   });
 });

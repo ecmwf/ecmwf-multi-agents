@@ -127,7 +127,7 @@ opencode's own default agent.
 
 ### Names
 
-- Commands: `onboard`, `plan`, `go`, `review`, `progress`, `guide`. `review` deliberately
+- Commands: `onboard`, `plan`, `execute` (named `go` up to and including 0.4.0), `review`, `progress`, `guide`. `review` deliberately
   replaces opencode's built-in review command. `progress` replaces the planned `status`,
   which clashes with the TUI's own `/status`.
 - A project's own command or agent with the same name takes precedence in that project, as

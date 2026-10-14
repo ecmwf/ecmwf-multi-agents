@@ -78,7 +78,8 @@ Source content and generator code are written in parallel against the contracts 
 | 4 | Four agents with per-agent effort (generator and plugin; prompts and docs); Makefile and version tool; eval harness | Release 0.1.0 | done |
 | 5 | Eval runs, baseline, prompt fixes from the results | Release 0.2.0 (done); the open tasks feed the next release | in progress |
 | 6 | npm package, CI, v2 central install, docs polish | | |
-| 7 | Background helpers, steering and cancel: evidence and contract first; then plugin tools, 1.x enablement and prompts in parallel; then tests, evals and docs | Contract agreed (7a); gate and integration green on 1.18.35, 1.19.0 and 2.0.16; evals show the cost of a wake and of a steer | built and measured on a branch; release open |
+| 7 | Background helpers, steering and cancel: evidence and contract first; then plugin tools, 1.x enablement and prompts in parallel; then tests, evals and docs | Contract agreed (7a); gate and integration green on 1.18.35, 1.19.0 and 2.0.16; evals show the cost of a wake and of a steer | released in 0.3.0 |
+| 8 | `/execute` (named `/go` up to and including 0.4.0) carries out parallel tasks in the background: skill change, then evals | `execute-chat` and `plan-execute` pass on 1.18.35 (the evals drive 1.x only); wall clock and cost against 0.1.0 recorded | built and measured on a branch |
 
 Ownership rule for parallel work: every task owns a disjoint set of files; shared contracts
 (`docs/architecture.md`, `docs/adr/`, `src/manifest.jsonc`, `tools/types.ts`, this plan) change
@@ -236,10 +237,11 @@ Findings to act on for 0.2.0:
 - [ ] Central install on opencode 2 (generated `opencode.json` through `OPENCODE_CONFIG`)
 - [ ] CI: `make check` plus the integration suites in containers per opencode version
 - [ ] README quickstart for scientists; `/guide` content final
-- [ ] `tests/install.test.ts`: the "no opencode at all" test finds a distro-packaged
-  `/usr/bin/opencode` through its system PATH and fails on such machines; give the installer
-  a PATH of only the tools it needs, and have `make setup` or `lint` name `reuse` and
-  `shellcheck` when they are missing instead of failing with "command not found"
+- [ ] `tests/install.test.ts`: the "no opencode at all" test, and since 0.4.0 "with only
+  opencode 2 the line does nothing" too, find a distro-packaged `/usr/bin/opencode` through
+  the system PATH and fail on such machines; give the installer a PATH of only the tools it
+  needs, and have `make setup` or `lint` name `reuse` and `shellcheck` when they are missing
+  instead of failing with "command not found"
 - [x] Version 0.1.0
 
 ## Phase 7: background helpers, steering and cancel
@@ -416,6 +418,100 @@ that read only each session's final text, which after an inline review is `lead`
 Exit: gate and integration green on all three versions; the eval summary shows what a wake
 and a steer cost; `/guide` explains it in plain words.
 
+## Phase 8: `/execute` in the background
+
+Today the plan skill briefs the tasks of a parallel wave together and waits for all of them:
+`lead` is blocked until the slowest builder finishes, a question from the user waits, and the
+next wave starts only when the whole wave is done. With background hand-offs (Phase 7)
+`lead` can tick each task as its completion arrives, start the next task whose dependencies
+just became satisfied, and answer the user in between. This is a change to the plan skill's
+execution procedure and to the `lead` prompt's background rule, not to the plugin.
+
+What it costs and what it gains, from the Phase 7 measurements: each completion is one `lead`
+turn ($0.02 to $0.04 on the sample repository), so N tasks cost up to N short turns where a
+wave costs one long one; against that the pipeline stays full, wall clock drops with the
+slowest task of each wave, and `lead` stays reachable. The rule in the `lead` prompt
+("background only when you have other work meanwhile") holds for `/execute`, where the other work
+is the next task.
+
+Decisions (built on this basis; Tiago reviews them with the pull request):
+
+| Topic | Proposal |
+|---|---|
+| When | Background when two or more tasks are ready at once, or when the user may want to keep talking; otherwise one task runs in the foreground, so the result comes back in the same turn. Ready means dependencies ticked and no file shared with a running or taken task; the plan's `Parallel` line names the safe sets. Without the 1.x flag the tool refuses `background`, and the skill falls back to the wave as today |
+| On a completion | A question from the user is answered first; completions wait. Then read every pending completion before starting new work; check its DONE WHEN items, re-run cheap checks, tick, log; then fill the free helper slots from the ready tasks not yet running, at most three helpers at once. Keep the turn short: one line to the user per task |
+| On a failure | The stop conditions come first (a second failure of the task, or a third failed report in a row), so a retry never starts after a stop; otherwise brief the same agent again with the gap, the same way as the first attempt. After a stop nothing new starts; running helpers finish and those that pass are ticked (a running helper's task cannot depend on a failed one: a task starts only when its dependencies are ticked). A check that reads the whole repository waits until no builder is running |
+| Resuming | On `/execute` in a new session, `helpers_status` shows no helpers (they belonged to the old session); unfinished work is found from the log and `git status` as today. Mid-session, a task whose helper is running stays in flight: never re-brief a running task |
+| Final verification and review | Foreground, as today: they are the last things and nothing runs beside them |
+| What the user sees | Each wake makes `lead` speak; the skill asks for one line per ticked task so a plan with five tasks does not read as five reports |
+
+8a. Contract
+
+- [x] Samet: `docs/architecture.md`, Planning and execution: the `/execute` steps rewritten for
+  background hand-offs with the decisions above; the ADR 0002 consequences note that `/execute`
+  uses the background; budgets measured after the skill change
+- [x] Samet: `src/skills/ecmwf-multi-agents-plan/SKILL.md`, Carrying out a plan, and the
+  `lead` prompt's background rule (one clause: `/execute` hands parallel tasks off in the
+  background); within budget: the plan skill 1,186 to 1,359 of 1,450, `lead` 2,010 to 2,018
+
+8b. Verification
+
+- [x] Samet: Integration: not added. The stand-in suite scripts `lead`'s moves by hand, so a
+  scripted `/execute` would test the script, not the skill; the platform facts the skill relies on
+  (several background hand-offs in one turn, each completion a wake, refusal without the 1.x
+  flag) are already pinned there. The skill is prose a model follows, which only the evals
+  can check
+- [x] Samet: Evals: `plan-execute` (then `plan-go`) rerun on the default profile three times, with wall clock, cost
+  and requests against the 0.1.0 run ($1.12, 43 requests, 5m 28s); an `execute-chat` case (then `go-chat`) where
+  the user asks a question while the tasks run and `lead` answers it before the next
+  completion (checked in the session's messages, not by word-matching reports)
+- [x] Samet: `CHANGELOG.md`, `/guide`, README line on `/execute`
+
+Measured (2026-10-13, default profile, 1.18.35, three repeats each, all pass, $5.78):
+
+| Case | Cost | Wall clock | Requests, all agents | Background hand-offs | What happened |
+|---|---|---|---|---|---|
+| `execute-chat` (then named `plan-go-chat`) | $0.80, $0.82, $0.76 | 2m 45s, 3m 10s, 2m 30s | 45, 39, 43 | 5 of 5 each | T1 and T2 together in the background, the user's question answered while they ran (read from the transcripts; the check that proves it was added after this run), every completion ticked in one line, the plan done |
+| `plan-execute` (then `plan-go`) | $1.05, $1.28, $1.08 | 5m 06s, 6m 17s, 5m 19s | 44, 56, 48 | 2 of 5, 2 of 6, 0 of 4 | The plans `lead` wrote were chains (function, then command, then tests, then README) with at most two independent tasks, so the skill ran most tasks in the foreground, as its rule says; against 0.1.0 ($1.12, 43 requests, 5m 28s) no difference |
+
+So the background `/execute` pays when a plan has parallel tasks or the user wants to talk, and
+costs nothing on a chain. The one-line-per-task rule held: the `lead` turns of `execute-chat`
+read as a short progress log, not five reports. The `plan-execute` check for a background
+hand-off is recorded only, since a plan may have none. Measured on 1.18.35; the run on
+2.0.16 is open below.
+
+- [x] Samet: `execute-chat` once more on 1.18.35 with the `answered-during-plan` check in place:
+  pass, 5 of 5, $0.78, 2m 48s; and again with that check requiring a real later completion
+  and the new `overlapping-handoffs` check (both hand-offs began before the first completion,
+  so a sequential run would fail): pass, 6 of 6, $0.88. A later single run then failed that
+  check: `lead` began a lookup for the user's question, a completion queued behind the turn,
+  and `lead` processed it and the next one before answering, two completions and fifteen
+  steps later. The `lead` prompt now says: when the user has asked something, answer first,
+  completions wait. Three runs after that rule: all pass, the answer at `lead`'s first step
+  every time, before any completion ($0.79 to $0.91; `evals/results/go-background.md`).
+  Then, from review: the stop conditions are checked before any retry (a third failed report
+  in a row no longer starts a retry first), a repository-wide check waits until no builder
+  is running, and the answer check judges the first answering turn on its own. One more run
+  after that: pass, 6 of 6, $0.75 On 2.0.16 the evals cannot
+  run: the runner drives the 1.x API only and refuses a 2.x binary; a 2.x eval runner is its
+  own task (below), and the skill's 2.0.16 side rests on the integration suite's pinned
+  facts (the `subagent` tool's `background`, each completion a wake)
+- [ ] Eval runner for opencode 2.0.16: the 2.x API routes (`/api/session`, `prompt` with
+  `text`, `location[directory]`, the password header), so the cases can run on both platforms
+- [ ] `evals/checks.ts`: `recordOnly` is a list of variants on `backgroundHandoffs`,
+  `remoteUnchanged` and `pushRefused`, so `backgroundHandoffs(1, ["harness"])` reads as a
+  variant filter; a `recordOnly: boolean` option would say what it means
+
+- [x] Samet: `/go` renamed `/execute`, everywhere the command is named (manifest, template,
+  prompts, skills, docs, evals, tests); the clash check redone for the new name; history in
+  this file and in `evals/results/` keeps the old name
+- [ ] `/execute` is also the name of opencode 2's Code Mode tool; a command and a tool are
+  different namespaces and nothing clashed on 2.0.16, but watch for a built-in `/execute`
+  command in later versions (the clash note lists where to look)
+
+Exit: `execute-chat` and `plan-execute` pass on 1.18.35 (the evals run on 1.x only); the eval summary
+shows the wall clock and cost against 0.1.0; `/guide` says what the user will see.
+
 ## Open questions
 
 - npm scope for the plugin package (the repository is github.com/ecmwf/ecmwf-multi-agents).
@@ -448,6 +544,16 @@ and a steer cost; `/guide` explains it in plain words.
   mechanics against their source and a stand-in model on 1.18.35 and 2.0.23 (table in the
   phase). opencode's own background mode is enough; the plugin adds status, steer and cancel
   for `lead` and pins 1.x child sessions to their helper.
+- 2026-10-13: Phase 8 built and measured by Samet on a branch, on 1.18.35: `/execute` hands ready
+  tasks off in the background (skill and contract, no plugin change). On a seeded plan with
+  two independent tasks the user's question is answered while they run and the plan finishes
+  in about three minutes; on the plans `lead` writes for the sample repository, which are
+  chains, nothing changes against 0.1.0. Summaries in `evals/results/go-background.md`.
+  Independent review before the pull request: the stop rule had a clause that could never
+  apply (no running task can depend on a failed one) and lacked the one that matters (start
+  nothing after a stop); the interim-answer check matched a helper's report, now it reads the
+  session's messages; the command's description still said "task by task"; two restated
+  numbers were wrong. All fixed on the branch.
 - 2026-10-12: Tiago's review of the branch. Blocking: a session that starts with `/review`
   or `/progress` on 1.x was pinned to that helper for good, because the plugin took a session
   whose first message is a helper's for a child; children now come from the `session.created`

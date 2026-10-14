@@ -52,7 +52,7 @@ function manifest(): Json {
       },
       builder: { mode: "subagent", description: "Builds.", prompt: ["agents/builder.md"], budget: "helper", steps: 30 },
     },
-    commands: { go: { description: "Go.", agent: "lead", template: "commands/go.md" } },
+    commands: { execute: { description: "Execute.", agent: "lead", template: "commands/execute.md" } },
     skills: { "test-plan": { description: "Plan format.", body: "skills/test-plan/SKILL.md", hidden: true } },
   };
 }
@@ -61,7 +61,7 @@ const MARKDOWN: Record<string, string> = {
   "agents/lead.md": "You are lead.\n\nReview policy: auto\n",
   "agents/scout.md": "You are scout.\n",
   "agents/builder.md": "You are builder.\n",
-  "commands/go.md": "Go: $ARGUMENTS\n",
+  "commands/execute.md": "Execute: $ARGUMENTS\n",
   "skills/test-plan/SKILL.md": "# Plan\n\nRules.\n",
 };
 
@@ -150,7 +150,7 @@ describe("valid source", () => {
       { use: "writes", effect: "ask" },
     ]);
     expect(source.manifest.commands).toEqual([
-      { id: "go", description: "Go.", agent: "lead", template: "commands/go.md", subtask: false },
+      { id: "execute", description: "Execute.", agent: "lead", template: "commands/execute.md", subtask: false },
     ]);
     expect(source.manifest.skills).toEqual([
       { id: "test-plan", description: "Plan format.", body: "skills/test-plan/SKILL.md", hidden: true },
@@ -247,7 +247,7 @@ describe("unknown keys", () => {
       m.agents.lead.permissions[0].pattern = "*";
       m.agents.lead.permissions[1].resource = "*";
       m.ruleSets.writes[0].effect = "deny";
-      m.commands.go.model = "x/y";
+      m.commands.execute.model = "x/y";
       m.skills["test-plan"].license = "MIT";
     });
     const profile = { ...DEFAULT_PROFILE, models: {}, agents: { lead: { model: "acme/big-1", steps: 3 } } };
@@ -259,7 +259,7 @@ describe("unknown keys", () => {
       "src/manifest.jsonc: agents.lead.permissions[0].pattern: unknown key; allowed keys are action, resource and effect",
       "src/manifest.jsonc: agents.lead.permissions[1].resource: unknown key; allowed keys are use and effect",
       "src/manifest.jsonc: ruleSets.writes[0].effect: unknown key; allowed keys are action and resource",
-      "src/manifest.jsonc: commands.go.model: unknown key",
+      "src/manifest.jsonc: commands.execute.model: unknown key",
       "src/manifest.jsonc: skills.test-plan.license: unknown key",
       "src/profiles/default.jsonc: models: unknown key; allowed keys are description and agents",
       "src/profiles/default.jsonc: agents.lead.steps: unknown key; allowed keys are model and effort",
@@ -464,15 +464,15 @@ describe("agents", () => {
 describe("commands and skills", () => {
   test("command id, agent, template and subtask", async () => {
     const m = edited((m) => {
-      m.commands.Go = { description: "Go.", agent: "lead", template: "commands/go.md" };
-      m.commands.go.agent = "boss";
-      m.commands.go.subtask = "yes";
+      m.commands.Execute = { description: "Execute.", agent: "lead", template: "commands/execute.md" };
+      m.commands.execute.agent = "boss";
+      m.commands.execute.subtask = "yes";
       m.commands.check = { description: "Check.", agent: "scout" };
     });
     expect(await problemsOf({ manifest: m })).toEqual([
-      "src/manifest.jsonc: commands.go.agent: names no agent; agents: lead, scout and builder",
-      'src/manifest.jsonc: commands.go.subtask: must be true or false, not "yes"',
-      "src/manifest.jsonc: commands.Go: command id must match ^[a-z][a-z0-9-]*$",
+      "src/manifest.jsonc: commands.execute.agent: names no agent; agents: lead, scout and builder",
+      'src/manifest.jsonc: commands.execute.subtask: must be true or false, not "yes"',
+      "src/manifest.jsonc: commands.Execute: command id must match ^[a-z][a-z0-9-]*$",
       "src/manifest.jsonc: commands.check.template: required key is missing",
     ]);
   });
@@ -507,7 +507,7 @@ describe("Markdown files", () => {
         "agents/lead.md": "---\ndescription: x\n---\n\nYou are lead.\n\nReview policy: auto\n",
         "agents/scout.md": "\n\n---\nmode: subagent\n---\nBody",
         // A licence header comment, split so that licence scanners do not read it as this file's.
-        "commands/go.md": `<!--\n${"SPDX-"}License-Identifier: Apache-2.0\n-->\n\nGo.`,
+        "commands/execute.md": `<!--\n${"SPDX-"}License-Identifier: Apache-2.0\n-->\n\nGo.`,
         "agents/builder.md": " \n\n",
         "skills/test-plan/SKILL.md": null,
       },
@@ -521,15 +521,15 @@ describe("Markdown files", () => {
       'src/agents/lead.md: starts with "---": source Markdown carries no frontmatter; the generator writes it from the manifest (named at agents.lead.prompt[0] in src/manifest.jsonc)',
       'src/agents/scout.md: starts with "---": source Markdown carries no frontmatter; the generator writes it from the manifest (named at agents.scout.prompt[0] in src/manifest.jsonc)',
       "src/agents/builder.md: is empty (named at agents.builder.prompt[0] in src/manifest.jsonc)",
-      'src/commands/go.md: starts with "<!--": the comment would reach the model; prompt files get their licence from REUSE.toml (named at commands.go.template in src/manifest.jsonc)',
+      'src/commands/execute.md: starts with "<!--": the comment would reach the model; prompt files get their licence from REUSE.toml (named at commands.execute.template in src/manifest.jsonc)',
       "src/manifest.jsonc: skills.test-plan.body: src/skills/test-plan/SKILL.md is a directory, not a file",
     ]);
   });
 
   test("command templates must not run shell commands", async () => {
-    const problems = await problemsOf({ markdown: { "commands/go.md": "Status:\n!`git status`\n" } });
+    const problems = await problemsOf({ markdown: { "commands/execute.md": "Status:\n!`git status`\n" } });
     expect(problems).toEqual([
-      'src/commands/go.md: has a "!`command`" block, which opencode runs before any permission check; templates must not run commands (named at commands.go.template in src/manifest.jsonc)',
+      'src/commands/execute.md: has a "!`command`" block, which opencode runs before any permission check; templates must not run commands (named at commands.execute.template in src/manifest.jsonc)',
     ]);
   });
 
@@ -606,10 +606,10 @@ describe("VERSION", () => {
   test("problems name the file and are reported with the others", async () => {
     expect(await problemsOf({ version: null })).toEqual(["VERSION: does not exist; it must hold the harness version, such as 1.2.3"]);
     const m = edited((m) => {
-      m.commands.go.agent = "nobody";
+      m.commands.execute.agent = "nobody";
     });
     expect(await problemsOf({ manifest: m, version: "v0.2.0\n" })).toEqual([
-      "src/manifest.jsonc: commands.go.agent: names no agent; agents: lead, scout and builder",
+      "src/manifest.jsonc: commands.execute.agent: names no agent; agents: lead, scout and builder",
       'VERSION: "v0.2.0" starts with "v"; write the version without it, as 0.2.0',
     ]);
   });
@@ -618,14 +618,14 @@ describe("VERSION", () => {
 test("every problem is reported in one run", async () => {
   const m = edited((m) => {
     m.agents.scout.mode = "helper";
-    m.commands.go.agent = "nobody";
+    m.commands.execute.agent = "nobody";
   });
   const problems = await problemsOf({ manifest: m, markdown: { "skills/test-plan/SKILL.md": null } });
   expect(problems).toHaveLength(3);
   expectProblems(
     problems,
     "src/manifest.jsonc: agents.scout.mode:",
-    "src/manifest.jsonc: commands.go.agent:",
+    "src/manifest.jsonc: commands.execute.agent:",
     "src/manifest.jsonc: skills.test-plan.body: src/skills/test-plan/SKILL.md does not exist",
   );
 });

@@ -1,4 +1,4 @@
-Carry out an approved plan, task by task.
+Carry out an approved plan: every task briefed to a helper, every result checked, the plan file kept up to date.
 
 Plan (may be empty): $ARGUMENTS
 
