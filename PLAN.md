@@ -233,7 +233,7 @@ Findings to act on for 0.2.0:
   model, opencode writes nothing into the checkout, and a project without the line sees none
   of it. opencode 2.0.16 ignores the line. ADR 0003
 - [x] Tiago: Release 0.4.0
-- [ ] npm package (plugin that also carries agents, commands and skills)
+- [~] Tiago: npm package (plugin that also carries agents, commands and skills)
 - [ ] Central install on opencode 2 (generated `opencode.json` through `OPENCODE_CONFIG`)
 - [x] Tiago: opencode 2.0.28 (on Tiago's machine since 2026-10-14, with no 1.x beside it): the
   pin moved from 2.0.16 to 2.0.28 (`V2_VERSION`, the installer's `V2_PINNED`, tests and docs;
