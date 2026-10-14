@@ -518,9 +518,12 @@ hand-off is recorded only, since a plan may have none. Measured on 1.18.35; the 
 - [x] Tiago: Upgrade note: the changelog and the README say to run `./install.sh` after
   updating, since `git pull` alone leaves a linked install with a dangling `commands/go.md`
   and no `execute.md`; `docs/install.md` names an update as a cause of a broken link
-- [~] Tiago: Resuming: `lead` logs each task's start and asks before briefing again a task
-  logged as started but not ticked, since another session of the same opencode may still be
-  running its helper; skill and architecture
+- [x] Tiago: Resuming: for a plan still `in progress` from another session, whose helpers may
+  still be running there (another session of the same opencode keeps them, and
+  `helpers_status` cannot see them), `/execute` asks the user and carries on only once they
+  have finished; skill and architecture. No log line per start, as first proposed: the status
+  already says a session was carrying the plan out, and normal runs stay as they are. The
+  skill budget goes from 1,450 to 1,500 (measured 1,470)
 - [x] Tiago: The clash note names 1.19.0
 - [ ] An eval case with two code-writing tasks in parallel, so the rule that a
   whole-repository check waits for running builders is measured (`execute-chat` overlaps T1

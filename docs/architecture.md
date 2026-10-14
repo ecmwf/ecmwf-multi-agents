@@ -292,9 +292,10 @@ Either way, `lead` acts on a REJECT or on a plan's state only when the user asks
    in the background; otherwise one task runs in the foreground, so its result comes back in
    the same turn. Where the platform refuses a background hand-off (opencode 1.x without its
    flag), the taken tasks run together in the foreground, as a wave.
-3. On each completion, check the report against the criteria and re-run cheap checks. A
-   check that reads the whole repository waits until no builder is running. Read every
-   completion that has arrived before starting new work.
+3. A question from the user is answered first, even if a completion arrives while `lead`
+   looks up the answer. Then, on each completion, check the report against the criteria and
+   re-run cheap checks; a check that reads the whole repository waits until no builder is
+   running. Read every completion that has arrived before starting new work.
 4. On a failure, the stop conditions come first: a task that has failed twice, or a third
    failed report in a row, stops the plan. Otherwise log it and brief the same agent again
    with the gap stated exactly, the same way as the first attempt. On success, tick the
@@ -306,8 +307,11 @@ Either way, `lead` acts on a REJECT or on a plan's state only when the user asks
 6. Run the plan's final verification in the foreground, then one review of the whole change
    if the policy calls for it. Tasks get no review of their own.
 
-`/execute` works in a fresh session because the plan file carries everything needed; helpers of an
-earlier session are gone, so unfinished work is found from the log and `git status`.
+`/execute` works in a fresh session because the plan file carries everything needed;
+unfinished work is found from the log and `git status`. Helpers of an earlier session are gone
+after a restart, but another session of the same running opencode keeps its helpers running,
+and `helpers_status` cannot see them. So for a plan still `in progress` from another session,
+`lead` asks the user and carries on only once those helpers have finished.
 
 ## Review policy
 
@@ -487,7 +491,7 @@ Prompt budgets, checked by the generator at about four characters per token:
 | `lead` prompt | 2,050 tokens |
 | Helper prompt | 750 tokens |
 | Command template | 500 tokens |
-| Skill | 1,450 tokens |
+| Skill | 1,500 tokens |
 
 A budget is a ceiling, not a target. It is raised only to the measured size of a change,
 rounded up to the next 50, and the manifest records why; the evals then show what the

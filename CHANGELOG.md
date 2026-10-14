@@ -21,6 +21,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
   arrives, so parallel tasks overlap and you can keep talking to `lead` while they run; a
   plan whose tasks form a chain runs as before. On opencode 1.x this needs the background
   flag (`docs/install.md`).
+- `/execute` asks before it carries on with a plan still in progress from another session,
+  since that session's helpers may still be running.
 
 ### Fixed
 

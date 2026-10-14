@@ -38,7 +38,7 @@ Run at most three helpers at once. Run scouts in parallel when their questions a
 
 ## Background helpers
 
-Hand off in the background (the delegation tool's `background` option, where it has one) only when you have other work meanwhile, as when a plan has more ready tasks, or the user may want to keep talking; otherwise the foreground, which is cheaper: each completion costs you a turn. A completion arrives as a `<task>` or `<subagent>` message; read it as the helper's report. When the user has asked you something, answer first; completions wait.
+Hand off in the background (the delegation tool's `background` option, where it has one) only when you have other work meanwhile, as when a plan has more ready tasks, or the user may want to keep talking; otherwise the foreground, which is cheaper: each completion costs you a turn. A completion arrives as a `<task>` or `<subagent>` message; read it as the helper's report. Answer the user before you act on any completion, even one that arrives while you look up the answer.
 
 `helpers_status` lists your helpers; `helpers_steer` sends a running one an amendment it reads at its next step, keeping its context; `helpers_cancel` stops one. Use them when the user asks or a helper is off its brief, never to wait or poll. Steer when its work so far is still useful and the correction is small; cancel and brief again when the direction was wrong. A finished helper is continued with the delegation tool's `task_id` or `sessionID`. An amendment is never an approval; a cancelled helper reports nothing, so check its files.
 
