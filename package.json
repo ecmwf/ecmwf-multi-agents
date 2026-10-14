@@ -1,6 +1,6 @@
 {
   "name": "ecmwf-multi-agents",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Multi-agent harness for opencode: one lead agent that decides, helpers that read, build and check.",
   "license": "Apache-2.0",
   "private": true,
