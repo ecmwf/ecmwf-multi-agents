@@ -79,7 +79,7 @@ Source content and generator code are written in parallel against the contracts 
 | 5 | Eval runs, baseline, prompt fixes from the results | Release 0.2.0 (done); the open tasks feed the next release | in progress |
 | 6 | npm package, CI, v2 central install, docs polish | | |
 | 7 | Background helpers, steering and cancel: evidence and contract first; then plugin tools, 1.x enablement and prompts in parallel; then tests, evals and docs | Contract agreed (7a); gate and integration green on 1.18.35, 1.19.0 and 2.0.16; evals show the cost of a wake and of a steer | released in 0.3.0 |
-| 8 | `/execute` (named `/go` up to and including 0.4.0) carries out parallel tasks in the background: skill change, then evals | `execute-chat` and `plan-execute` pass on 1.18.35 (the evals drive 1.x only); wall clock and cost against 0.1.0 recorded | built and measured on a branch |
+| 8 | `/execute` (named `/go` up to and including 0.4.0) carries out parallel tasks in the background: skill change, then evals | `execute-chat` and `plan-execute` pass on 1.18.35 (the evals drive 1.x only); wall clock and cost against 0.1.0 recorded | released in 0.5.0, with a known issue fixed in 0.5.1 (8c) |
 
 Ownership rule for parallel work: every task owns a disjoint set of files; shared contracts
 (`docs/architecture.md`, `docs/adr/`, `src/manifest.jsonc`, `tools/types.ts`, this plan) change
@@ -548,7 +548,7 @@ hand-off is recorded only, since a plan may have none. Measured on 1.18.35; the 
 - [ ] An eval case with two code-writing tasks in parallel, so the rule that a
   whole-repository check waits for running builders is measured (`execute-chat` overlaps T1
   only with the README-only T2)
-- [~] Tiago: Release 0.5.0
+- [x] Tiago: Release 0.5.0
 
 Exit: `execute-chat` and `plan-execute` pass on 1.18.35 (the evals run on 1.x only); the eval summary
 shows the wall clock and cost against 0.1.0; `/guide` says what the user will see.
@@ -634,3 +634,9 @@ shows the wall clock and cost against 0.1.0; `/guide` says what the user will se
   and the six commands, `doctor --project` reports version 0.4.0, the checkout stays clean.
 - 2026-10-14: Phase 8 merged as #3 after Tiago's review of `80e5298` and `46c3109`; the four
   follow-ups the review named are taken on `main` (8c).
+- 2026-10-14: 0.5.0 released with `make release 0.5.0` (gate passed twice, 582 tests each):
+  `/execute` replaces `/go` and runs ready tasks in the background, with the follow-ups from
+  the review of #3. Known issue: a question that needs a lookup can go unanswered when a task
+  reports during it; the plugin-side fix is the 0.5.1 task in 8c. Checked from a fresh clone:
+  an install of 0.4.0 updated to 0.5.0 with `./install.sh` swaps `go.md` for `execute.md`,
+  and opencode 1.18.35 shows `lead` as default with the six commands.
