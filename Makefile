@@ -65,6 +65,7 @@ test: ## Unit tests (the integration suites skip themselves)
 integration: ## Suites against real opencode binaries, no models: OPENCODE_V1_BINS="a b" OPENCODE_V2_BIN=c
 	ECMWF_MULTI_AGENTS_INTEGRATION=1 \
 	$(if $(OPENCODE_V1_BINS),OPENCODE_V1_BINS="$(OPENCODE_V1_BINS)") \
+	$(if $(OPENCODE_V1_BIN),,$(if $(OPENCODE_V1_BINS),OPENCODE_V1_BIN="$(firstword $(OPENCODE_V1_BINS))")) \
 	$(if $(OPENCODE_V2_BIN),OPENCODE_V2_BIN="$(OPENCODE_V2_BIN)") \
 		$(BUN) test --timeout 600000 $(INTEGRATION_TESTS)
 

@@ -575,13 +575,13 @@ function isCompletion(message: ApiMessage): boolean {
 
 /**
  * lead answered the user's question as its next piece of work, while the plan's helpers were
- * still running. In a root session, the answering turn is the first assistant message with
- * text after the question; it must be lead's, contain every term, and come before the second
- * background completion. One completion may land inside lead's answering turn (a helper
- * finishes while lead looks something up; the completion then queues behind the turn), so the
- * window ends at the second. Later messages, such as a tick line that happens to use the same
- * words, do not count. At least one completion must follow the question, or nothing shows a
- * helper was still running.
+ * still running. In a root session, the answer is the first assistant message after the
+ * question that names every term, and it must be lead's. At most one background completion may
+ * come before it: one may land inside lead's answering turn (a helper finishes while lead looks
+ * something up; the completion then queues behind the turn), a second means lead processed
+ * completions before answering. The terms must be ones no task update can contain, so a tick
+ * line is never taken for the answer and a preamble before a lookup does not fail it. At least
+ * one completion must follow the question, or nothing shows a helper was still running.
  */
 export function answeredDuringPlan(question: string, terms: Term[]): Check {
   return {
@@ -597,16 +597,14 @@ export function answeredDuringPlan(question: string, terms: Term[]): Check {
         const after = messages.slice(asked + 1);
         const completions = after.map((message, index) => (isCompletion(message) ? index : -1)).filter((index) => index !== -1);
         if (completions.length === 0) return fail("no completion arrived after the question, so nothing shows a helper was still running");
-        const textOf = (message: ApiMessage) => message.parts.filter((part) => part.type === "text").map((part) => part.text ?? "").join("\n").trim();
-        const answerAt = after.findIndex((message) => message.info.role === "assistant" && textOf(message) !== "");
-        if (answerAt === -1) return fail("no answer at all");
-        const secondCompletion = completions[1] ?? after.length;
-        if (answerAt > secondCompletion) return fail("the first answer came only after a second completion was processed");
+        const textOf = (message: ApiMessage) => message.parts.filter((part) => part.type === "text").map((part) => part.text ?? "").join("\n");
+        const answerAt = after.findIndex((message) => message.info.role === "assistant" && terms.every((term) => mentions(textOf(message), term)));
+        if (answerAt === -1) return fail(`no answer names ${terms.map(termLabel).join(", ")}`);
         const answer = after[answerAt]!;
         if (answer.info.agent !== "lead") return fail(`answered by ${answer.info.agent ?? "an unknown agent"}`);
-        const missing = terms.filter((term) => !mentions(textOf(answer), term));
-        if (missing.length > 0) return fail(`the first answer lacks ${missing.map(termLabel).join(", ")}`);
-        return ok(answerAt < (completions[0] ?? 0) ? "answered before the first completion" : "answered after one completion landed in the turn");
+        const before = completions.filter((index) => index < answerAt).length;
+        if (before > 1) return fail(`the answer came only after ${before} completions were processed`);
+        return ok(before === 0 ? "answered before the first completion" : "answered after one completion landed in the turn");
       }
       return fail("the question was not found in a root session");
     },

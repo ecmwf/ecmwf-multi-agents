@@ -235,6 +235,9 @@ Findings to act on for 0.2.0:
 - [x] Tiago: Release 0.4.0
 - [ ] npm package (plugin that also carries agents, commands and skills)
 - [ ] Central install on opencode 2 (generated `opencode.json` through `OPENCODE_CONFIG`)
+- [ ] opencode 2.0.28 (on Tiago's machine since 2026-10-14, with no 1.x beside it): the v2
+  files are tested on 2.0.16 only; run the integration suites against 2.0.28 and move the
+  pin if they pass
 - [ ] CI: `make check` plus the integration suites in containers per opencode version
 - [ ] README quickstart for scientists; `/guide` content final
 - [ ] `tests/install.test.ts`: the "no opencode at all" test, and since 0.4.0 "with only
@@ -511,10 +514,24 @@ hand-off is recorded only, since a plan may have none. Measured on 1.18.35; the 
 
 8c. Follow-ups from the review of #3, and release
 
-- [~] Tiago: The `answered-during-plan` check: `execute-chat` asks the quality check's range,
+- [x] Tiago: The `answered-during-plan` check: `execute-chat` asks the quality check's range,
   which no task update can contain, and the answer is `lead`'s first message that names every
   term, with at most one completion before it; unit tests for a task update that uses the
-  term and for a preamble before the answer; `execute-chat` rerun three times
+  term and for a preamble before the answer; `execute-chat` rerun three times. With the range
+  question it failed 0 of 3 ($2.55): in every run `lead` read `stations/quality.py`, a
+  completion arrived during the read, and `lead` turned to the plan and never answered. The
+  unit question had passed because `lead` could answer it with no lookup
+- [x] Tiago: The `lead` prompt and the plan skill say to answer the user before acting on any
+  completion, even one that arrives during the lookup; the skill no longer puts reading every
+  completion first. `execute-chat` 1 of 3 ($2.55): the pass was the one run where no
+  completion arrived during the lookup. In every run where one did, 5 of 5 over both rounds,
+  `lead` acted on it and dropped the question: a rule in the prompt does not outweigh the
+  newest message. Released as a known issue in 0.5.0
+- [ ] Tiago: For 0.5.1, on opencode 1.x: the plugin adds a one-line note, in what the model
+  sees only, to a completion that arrives while `lead` is still answering the user: finish
+  that answer first, then act on the report. Unit tests, an integration test with the
+  stand-in model, the contract, `execute-chat` three times; check whether 2.0.16 has a hook
+  for the same
 - [x] Tiago: Upgrade note: the changelog and the README say to run `./install.sh` after
   updating, since `git pull` alone leaves a linked install with a dangling `commands/go.md`
   and no `execute.md`; `docs/install.md` names an update as a cause of a broken link
@@ -525,6 +542,9 @@ hand-off is recorded only, since a plan may have none. Measured on 1.18.35; the 
   already says a session was carrying the plan out, and normal runs stay as they are. The
   skill budget goes from 1,450 to 1,500 (measured 1,470)
 - [x] Tiago: The clash note names 1.19.0
+- [x] Tiago: `make integration` gives the eval runner suite the first of `OPENCODE_V1_BINS`
+  as `OPENCODE_V1_BIN`; it used the `opencode` on PATH, which on Tiago's machine is 2.0.28
+  since 2026-10-14, so the suite failed its "opencode 1.x" test there
 - [ ] An eval case with two code-writing tasks in parallel, so the rule that a
   whole-repository check waits for running builders is measured (`execute-chat` overlaps T1
   only with the README-only T2)

@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts 
 SPDX-License-Identifier: Apache-2.0
 -->
 
-<!-- Eval runs on the go-background branch (after 0.3.0), default profile, opencode 1.18.35: plan-go (lead writes and carries out a plan) and plan-go-chat, since renamed execute-chat (a seeded five-task plan with two independent tasks, and a question from the user while they run), three repeats each; then execute-chat under stricter checks (the answer read from the session messages; both hand-offs begun before the first completion); then, after the rule that lead answers the user before processing completions, execute-chat three times more. Kept for comparison with evals/results/0.1.0.md. The eval runner drives opencode 1.x only. -->
+<!-- Eval runs on the go-background branch (after 0.3.0), default profile, opencode 1.18.35: plan-go (lead writes and carries out a plan) and plan-go-chat, since renamed execute-chat (a seeded five-task plan with two independent tasks, and a question from the user while they run), three repeats each; then execute-chat under stricter checks (the answer read from the session messages; both hand-offs begun before the first completion); then, after the rule that lead answers the user before processing completions, execute-chat three times more. Then, on main after the merge (#3), execute-chat with a question that needs a lookup, the quality check's range, three times before and three times after the answer-first wording in the lead prompt and the plan skill: when a completion arrived during the lookup, lead never answered. Kept for comparison with evals/results/0.1.0.md. The eval runner drives opencode 1.x only. -->
 
 # Eval summary
 
@@ -115,3 +115,76 @@ A run passes when it finished and every counted check passed. Checks in brackets
 | Variant | Runs | Passed | Total cost | Mean cost | Mean duration | Mean peak context |
 |---|---|---|---|---|---|---|
 | harness | 3 | 3 | $2.60 | $0.865 | 3m 14s | 41,263 |
+
+---
+
+# Eval summary
+
+- Started 2026-10-14T10:03:53.547Z, finished 2026-10-14T10:10:27.366Z (6m 34s).
+- opencode 1.18.35, profile `default`.
+- 3 run(s), 0 passed. Total cost $2.55 (limit $5.00).
+
+A run passes when it finished and every counted check passed. Checks in brackets are recorded only and do not decide the result. Cost is what opencode reports for each model request. Peak context is the largest input of one request by the agent that holds the conversation (lead, or build for the baseline), cached tokens included.
+
+## execute-chat: /execute on a seeded plan with two tasks ready; the user asks a question while they run and lead answers it
+
+| Run | Result | Checks | Cost | Cost per agent | Child sessions | Peak context (main agent) | Requests | Duration |
+|---|---|---|---|---|---|---|---|---|
+| harness #1 | FAIL | 5/6 | $0.918 | lead $0.680, builder $0.182, scout $0.057 | builder 4, scout 1 | lead 43,025 | 42 | 4m 03s |
+| harness #2 | FAIL | 5/6 | $0.814 | lead $0.607, builder $0.159, scout $0.048 | builder 4, scout 1 | lead 41,140 | 45 | 3m 14s |
+| harness #3 | FAIL | 5/6 | $0.822 | lead $0.611, builder $0.157, scout $0.053 | builder 4, scout 1 | lead 42,698 | 41 | 3m 19s |
+
+| Check | harness #1 | harness #2 | harness #3 |
+|---|---|---|---|
+| lead handed off 2 helpers in the background | pass | pass | pass |
+| 2 background hand-offs ran at the same time | pass | pass | pass |
+| lead answered the question while helpers were still running | FAIL | FAIL | FAIL |
+| a plan in .ecmwf-multi-agents/plans/ has status done with every task ticked | pass | pass | pass |
+| hidden tests pass (evals/hidden/feature) | pass | pass | pass |
+| the project's tests pass (python3 -m unittest) | pass | pass | pass |
+
+- harness #1, lead answered the question while helpers were still running: no answer names -90, 60
+- harness #2, lead answered the question while helpers were still running: no answer names -90, 60
+- harness #3, lead answered the question while helpers were still running: no answer names -90, 60
+
+## Totals
+
+| Variant | Runs | Passed | Total cost | Mean cost | Mean duration | Mean peak context |
+|---|---|---|---|---|---|---|
+| harness | 3 | 0 | $2.55 | $0.851 | 3m 32s | 42,288 |
+
+---
+
+# Eval summary
+
+- Started 2026-10-14T10:18:38.910Z, finished 2026-10-14T10:25:49.183Z (7m 10s).
+- opencode 1.18.35, profile `default`.
+- 3 run(s), 1 passed. Total cost $2.55 (limit $5.00).
+
+A run passes when it finished and every counted check passed. Checks in brackets are recorded only and do not decide the result. Cost is what opencode reports for each model request. Peak context is the largest input of one request by the agent that holds the conversation (lead, or build for the baseline), cached tokens included.
+
+## execute-chat: /execute on a seeded plan with two tasks ready; the user asks a question while they run and lead answers it
+
+| Run | Result | Checks | Cost | Cost per agent | Child sessions | Peak context (main agent) | Requests | Duration |
+|---|---|---|---|---|---|---|---|---|
+| harness #1 | FAIL | 5/6 | $0.849 | lead $0.640, builder $0.155, scout $0.054 | builder 4, scout 1 | lead 42,975 | 45 | 3m 55s |
+| harness #2 | FAIL | 5/6 | $0.865 | lead $0.655, builder $0.158, scout $0.053 | builder 4, scout 1 | lead 42,614 | 43 | 3m 56s |
+| harness #3 | pass | 6/6 | $0.839 | lead $0.641, builder $0.149, scout $0.049 | builder 4, scout 1 | lead 42,209 | 45 | 3m 15s |
+
+| Check | harness #1 | harness #2 | harness #3 |
+|---|---|---|---|
+| lead handed off 2 helpers in the background | pass | pass | pass |
+| 2 background hand-offs ran at the same time | pass | pass | pass |
+| lead answered the question while helpers were still running | FAIL | FAIL | pass |
+| a plan in .ecmwf-multi-agents/plans/ has status done with every task ticked | pass | pass | pass |
+| hidden tests pass (evals/hidden/feature) | pass | pass | pass |
+| the project's tests pass (python3 -m unittest) | pass | pass | pass |
+
+- harness #1, lead answered the question while helpers were still running: no answer names -90, 60
+- harness #2, lead answered the question while helpers were still running: no answer names -90, 60
+
+## Totals
+
+| Variant | Runs | Passed | Total cost | Mean cost | Mean duration | Mean peak context |
+|---|---|---|---|---|---|---|
+| harness | 3 | 1 | $2.55 | $0.851 | 3m 42s | 42,599 |

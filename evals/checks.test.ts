@@ -332,34 +332,44 @@ describe("answeredDuringPlan and overlappingHandoffs", () => {
     info: { id: `m${++id}`, sessionID: "root", role, agent, time: { created } },
     parts: [{ type: "text", text, ...(synthetic ? { synthetic: true } : {}) }],
   });
-  const completion = (created = 0) => message("user", "lead", '<task id="ses_c" state="completed">\nTemperatures in degrees Celsius.\n</task>', true, created);
-  const question = "What unit?";
-  const terms = [{ label: "Celsius", any: [/celsius/i] }];
+  const completion = (created = 0) => message("user", "lead", '<task id="ses_c" state="completed">\nValid readings lie from -90 to 60 degrees Celsius.\n</task>', true, created);
+  const question = "What range?";
+  const terms = [
+    { label: "-90", any: [/-90\b/] },
+    { label: "60", any: [/\b60\b/] },
+  ];
   const session = (messages: ApiMessage[]): SessionData => ({ id: "root", messages });
   const answered = (messages: ApiMessage[]) => run(answeredDuringPlan(question, terms), context({ sessions: [session(messages)], rootSessions: ["root"] }));
 
   test("passes when lead's answer sits between the question and the next completion", () => {
-    expect(answered([message("user", "lead", "/execute"), message("assistant", "lead", "started"), message("user", "lead", question), message("assistant", "lead", "Degrees Celsius by default."), completion(), message("assistant", "lead", "T1 done")])).toEqual({ pass: true, detail: "answered before the first completion" });
+    expect(answered([message("user", "lead", "/execute"), message("assistant", "lead", "started"), message("user", "lead", question), message("assistant", "lead", "From -90 to 60 degrees Celsius."), completion(), message("assistant", "lead", "T1 done")])).toEqual({ pass: true, detail: "answered before the first completion" });
   });
 
-  test("passes when one completion landed inside lead's answering turn, but not when the first answer waited for a second", () => {
+  test("passes when one completion landed inside lead's answering turn, a preamble before it included, but not when the answer waited for a second", () => {
     const lookup: ApiMessage = { info: { id: `m${++id}`, sessionID: "root", role: "assistant", agent: "lead", time: { created: 0 } }, parts: [{ type: "tool", tool: "grep" }] };
-    expect(answered([message("user", "lead", question), lookup, completion(), message("assistant", "lead", "Celsius by default; and T1 is done"), completion(), message("assistant", "lead", "T2 done")])).toEqual({ pass: true, detail: "answered after one completion landed in the turn" });
-    expect(answered([message("user", "lead", question), lookup, completion(), message("assistant", "lead", "T1 done"), completion(), message("assistant", "lead", "Celsius, and T2 is done")]).detail).toBe("the first answer lacks Celsius");
+    expect(answered([message("user", "lead", question), lookup, completion(), message("assistant", "lead", "From -90 to 60; and T1 is done"), completion(), message("assistant", "lead", "T2 done")])).toEqual({ pass: true, detail: "answered after one completion landed in the turn" });
+    expect(answered([message("user", "lead", question), message("assistant", "lead", "Let me look that up."), completion(), message("assistant", "lead", "From -90 to 60 degrees Celsius."), completion()])).toEqual({ pass: true, detail: "answered after one completion landed in the turn" });
+    expect(answered([message("user", "lead", question), lookup, completion(), message("assistant", "lead", "T1 done"), completion(), message("assistant", "lead", "-90 to 60, and T2 is done")]).detail).toBe("the answer came only after 2 completions were processed");
   });
 
-  test("the answering turn is judged on its own: a later line that uses the term does not rescue a first answer that lacks it", () => {
-    expect(answered([message("user", "lead", question), message("assistant", "lead", "T1 is done."), message("assistant", "lead", "Celsius."), completion()]).detail).toBe("the first answer lacks Celsius");
+  test("a task update is never taken for the answer, even one that shares words with the question", () => {
+    expect(answered([message("user", "lead", question), completion(), message("assistant", "lead", "T2 done: the README now lists the JSON keys (station, date, min, max, mean in degrees Celsius, count).")]).detail).toBe("no answer names -90, 60");
   });
 
-  test("fails when a helper answered, when the terms are missing, or when the question is absent", () => {
-    expect(answered([message("user", "lead", question), message("assistant", "scout", "Celsius"), completion()]).detail).toBe("answered by scout");
-    expect(answered([message("user", "lead", question), message("assistant", "lead", "Kelvin"), completion()]).detail).toBe("the first answer lacks Celsius");
+  test("fails when a helper answered, when no message names every term, or when the question is absent", () => {
+    expect(answered([message("user", "lead", question), message("assistant", "scout", "-90 to 60"), completion()]).detail).toBe("answered by scout");
+    expect(answered([message("user", "lead", question), message("assistant", "lead", "Up to 60 degrees."), completion()]).detail).toBe("no answer names -90, 60");
     expect(answered([message("user", "lead", "something else")]).detail).toBe("the question was not found in a root session");
   });
 
-  test("a helper's report that mentions the term does not count", () => {
-    expect(answered([message("user", "lead", question), completion(), message("assistant", "lead", "T3 done")]).pass).toBe(false);
+  test("fails without a later completion: nothing shows a helper was still running; other synthetic text is not a completion", () => {
+    expect(answered([message("user", "lead", question), message("assistant", "lead", "-90 to 60")]).detail).toBe("no completion arrived after the question, so nothing shows a helper was still running");
+    const otherSynthetic = message("user", "lead", "Summarise the tool output above.", true);
+    expect(answered([message("user", "lead", question), message("assistant", "lead", "-90 to 60"), otherSynthetic]).detail).toBe("no completion arrived after the question, so nothing shows a helper was still running");
+  });
+
+  test("a helper's report that names the terms does not count", () => {
+    expect(answered([message("user", "lead", question), completion(), message("assistant", "lead", "T3 done")]).detail).toBe("no answer names -90, 60");
   });
 
   const handoff = (start: number, background = true): ToolCall => ({ sessionID: "root", agent: "lead", tool: "task", status: "completed", input: { subagent_type: "builder", background }, start });

@@ -26,6 +26,7 @@ import {
   pushRefused,
   remoteUnchanged,
   reportMentions,
+  type Term,
   testsPass,
   verdict,
   WORK_FILES,
@@ -134,7 +135,13 @@ const WARM_UP = (text: string) => ({ turn: { kind: "prompt" as const, text }, no
 /** Background hand-offs on opencode 1.x need this flag before the server starts (docs/install.md). */
 const BACKGROUND = { OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS: "true" };
 
-const UNIT_QUESTION = "While that runs: in one sentence, what unit does the summary command print by default? Do not change any files.";
+/** The quality check's valid range, -90 to 60 degrees Celsius: a fact no task of the JSON plan touches. */
+const RANGE_TERMS: Term[] = [
+  { label: "-90", any: [/(?:-|\u2212|\u2013|minus\s*)90\b/i] },
+  { label: "60", any: [/\b60\b/] },
+];
+
+const RANGE_QUESTION = "While that runs: in one sentence, what temperature range does the quality check accept? Do not change any files.";
 
 const PROGRESS_CHECKS = [
   answerMentions("counts", "the report says 2 of 5 tasks are done", [{ label: "2 of 5", any: [/\b2\s*(?:of|\/|out of)\s*5\b/i] }], "all"),
@@ -157,8 +164,7 @@ export const CASES: EvalCase[] = [
     ],
     checks: [
       answerMentions("facts", "the answer gives the valid range, -90 to 60 degrees Celsius, and says such readings are rejected", [
-        { label: "-90", any: [/(?:-|\u2212|\u2013|minus\s*)90\b/i] },
-        { label: "60", any: [/\b60\b/] },
+        ...RANGE_TERMS,
         { label: "rejected or left out", any: [/reject|exclud|left out|leaves? (?:them )?out|skip|ignor|not (?:counted|included|used)|drop|discard|filter/i] },
       ]),
       noChanges(),
@@ -343,13 +349,13 @@ export const CASES: EvalCase[] = [
     review: "never",
     turns: [
       { turn: { kind: "command", command: "execute", arguments: "json-output" }, waitFor: "root", note: "lead ends its first turn with T1 and T2 in the background" },
-      { turn: { kind: "prompt", text: UNIT_QUESTION }, note: "a question while the tasks run" },
+      { turn: { kind: "prompt", text: RANGE_QUESTION }, note: "a question while the tasks run" },
       { turn: { kind: "prompt", text: "Carry on with the plan until it is done." }, when: noPlanDone, note: "lead finishes the plan" },
     ],
     checks: [
       backgroundHandoffs(2),
       overlappingHandoffs(2),
-      answeredDuringPlan(UNIT_QUESTION, [{ label: "Celsius", any: [/celsius|°C/i] }]),
+      answeredDuringPlan(RANGE_QUESTION, RANGE_TERMS),
       planDone(),
       hiddenTestsPass("feature"),
       testsPass(),
@@ -384,7 +390,7 @@ export const CASES: EvalCase[] = [
     ],
     checks: [
       backgroundHandoffs(2),
-      answerMentions("range", "the answers give the valid range, -90 to 60 degrees Celsius", [{ label: "-90", any: [/(?:-|\u2212|\u2013|minus\s*)90\b/i] }, { label: "60", any: [/\b60\b/] }], "all"),
+      answerMentions("range", "the answers give the valid range, -90 to 60 degrees Celsius", RANGE_TERMS, "all"),
       answerMentions("reader", "the answers name the row reader and say a missing value becomes None or is skipped", [
         { label: "the reading function", any: [/\bparse_row\b|\bparse_temperature\b|\bread_records\b/] },
         { label: "missing value handling", any: [/\bNone\b|missing|\bNA\b|skip|empty/i] },

@@ -29,6 +29,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 - `/execute` checks its stop rules before it retries a failed task, so nothing new starts once
   a stop is due.
 
+### Known issues
+
+- While `/execute` runs tasks in the background, a question that `lead` has to look something
+  up for can go unanswered when a task reports during the lookup: `lead` turns to the report
+  instead. Ask again once the report is handled. A fix is planned for 0.5.1.
+
 ## [0.4.0] - 2026-10-13
 
 ### Added
