@@ -11,6 +11,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-14
+
 ### Changed
 
 - `/go` is now `/execute`: the name says what the command does. Type `/execute` where you
@@ -143,7 +145,8 @@ helpers it hands work to.
 - Scenario evals (`make evals`) that compare the harness with plain opencode on a sample
   repository, using real models.
 
-[Unreleased]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.4.0...HEAD
+[Unreleased]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.5.0...HEAD
+[0.5.0]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.4.0...0.5.0
 [0.4.0]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.3.0...0.4.0
 [0.3.0]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.1.0...0.2.0
