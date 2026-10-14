@@ -233,7 +233,8 @@ Findings to act on for 0.2.0:
   model, opencode writes nothing into the checkout, and a project without the line sees none
   of it. opencode 2.0.16 ignores the line. ADR 0003
 - [x] Tiago: Release 0.4.0
-- [ ] npm package (plugin that also carries agents, commands and skills)
+- [~] Samet: npm package `@ecmwf/multi-agents` (plugin that also carries agents, commands and
+  skills), published by CI through npm trusted publishing on the release tag
 - [ ] Central install on opencode 2 (generated `opencode.json` through `OPENCODE_CONFIG`)
 - [ ] CI: `make check` plus the integration suites in containers per opencode version
 - [ ] README quickstart for scientists; `/guide` content final
