@@ -561,6 +561,7 @@ hand-off is recorded only, since a plan may have none. Measured on 1.18.35; the 
   whole-repository check waits for running builders is measured (`execute-chat` overlaps T1
   only with the README-only T2)
 - [x] Tiago: Release 0.5.0
+- [~] Tiago: Release 0.5.1
 
 Exit: `execute-chat` and `plan-execute` pass on 1.18.35 (the evals run on 1.x only); the eval summary
 shows the wall clock and cost against 0.1.0; `/guide` says what the user will see.
