@@ -1,0 +1,87 @@
+# SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+# SPDX-License-Identifier: Apache-2.0
+
+# Publishes @ecmwf/multi-agents to npm when a version tag is pushed, as `make release X.Y.Z`
+# does. npm trusted publishing exchanges this workflow's GitHub OIDC token for a short-lived npm
+# token, so the repository holds no npm secret, and the package gets provenance.
+#
+# Run by hand, the same job ends with `npm publish --dry-run`, to test the token exchange before
+# the first tag. npm logs a failed exchange only at verbose level and lets a dry run without
+# credentials pass, so the step looks for npm's own success line. `--force` skips npm's check
+# against versions already on the registry, which a dry run of a published VERSION would fail.
+
+name: release
+
+on:
+  push:
+    tags:
+      - "[0-9]*.[0-9]*.[0-9]*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Run npm publish --dry-run and check the token exchange (a real publish needs a tag)
+        type: boolean
+        default: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: A run by hand is a dry run
+        if: github.event_name == 'workflow_dispatch' && !inputs.dry_run
+        run: |
+          echo "::error::A real publish happens when a version tag is pushed (make release X.Y.Z)."
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: npm 11.5.1 or later, for trusted publishing
+        run: |
+          npm install -g npm@^11.5.1
+          npm --version
+
+      - name: reuse and shellcheck, for make check
+        run: |
+          pipx install reuse==6.2.0
+          command -v shellcheck >/dev/null || sudo apt-get install -y shellcheck
+          shellcheck --version
+
+      - run: make setup
+
+      - run: make check
+
+      - name: The tag is the version
+        if: github.event_name == 'push'
+        run: |
+          version=$(cat VERSION)
+          if [ "$GITHUB_REF_NAME" != "$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME is not the version in VERSION ($version)"
+            exit 1
+          fi
+
+      - name: Publish
+        if: github.event_name == 'push'
+        run: npm publish
+
+      - name: Publish, dry run
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          npm publish --dry-run --force --loglevel verbose 2>&1 | tee publish.log
+          if ! grep -q "Successfully retrieved and set token" publish.log; then
+            echo "::error::npm got no token for this workflow's OIDC token; check the trusted publisher on npmjs.com"
+            exit 1
+          fi

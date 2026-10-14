@@ -233,7 +233,21 @@ Findings to act on for 0.2.0:
   model, opencode writes nothing into the checkout, and a project without the line sees none
   of it. opencode 2.0.16 ignores the line. ADR 0003
 - [x] Tiago: Release 0.4.0
-- [~] Tiago: npm package (plugin that also carries agents, commands and skills)
+- [x] Tiago: npm package (plugin that also carries agents, commands and skills):
+  `@ecmwf/multi-agents`, public, with `dist/`, `install.sh` and `VERSION` (the installer
+  records the version from it). Its command `ecmwf-multi-agents` (`bin/ecmwf-multi-agents.js`)
+  runs `install.sh` from the package's real folder, since npm installs it as a symlink.
+  `.github/workflows/release.yml` publishes from each version tag through npm trusted
+  publishing (GitHub OIDC, no token, with provenance); run by hand it is a dry run that fails
+  unless npm got a token for the OIDC token
+- [ ] Tiago: on npmjs.com, once the pull request is merged: publish once by hand from `main`
+  (`npm publish --access public --provenance=false`; provenance needs CI), then add the
+  trusted publisher (GitHub Actions, `ecmwf/ecmwf-multi-agents`, `release.yml`, no
+  environment), then require two-factor authentication and disallow tokens
+- [ ] `install.sh` names itself `./install.sh` in its help and advice, also when run as the npm
+  command `ecmwf-multi-agents`; name the command it was run as
+- [ ] A project's plugin line naming the npm package (`"plugin": ["@ecmwf/multi-agents"]`) on
+  opencode 1.x: test that the plugin brings the agents, commands and skills from the package
 - [ ] Central install on opencode 2 (generated `opencode.json` through `OPENCODE_CONFIG`)
 - [x] Tiago: opencode 2.0.28 (on Tiago's machine since 2026-10-14, with no 1.x beside it): the
   pin moved from 2.0.16 to 2.0.28 (`V2_VERSION`, the installer's `V2_PINNED`, tests and docs;

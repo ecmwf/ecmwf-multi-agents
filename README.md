@@ -96,6 +96,17 @@ The installer finds your opencode version, links the agents, commands, skills an
 `git pull` and `./install.sh` again, then restart opencode. It never overwrites files it did
 not create.
 
+Or install it with npm, which needs Node.js:
+
+```sh
+npm install -g @ecmwf/multi-agents
+ecmwf-multi-agents
+```
+
+`ecmwf-multi-agents` runs the same installer from the package folder, with the same commands
+and options: where this README says `./install.sh`, type `ecmwf-multi-agents`. To update, run
+both commands again, then restart opencode.
+
 Other ways to install:
 
 - Switched on per project, without installing (opencode 1.x): keep the checkout, and add one

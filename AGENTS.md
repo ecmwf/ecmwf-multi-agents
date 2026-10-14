@@ -78,3 +78,6 @@ Tiago Quintino and Samet Demir develop this repository together, each with their
   `chore: release X.Y.Z`, pushes, tags and publishes the GitHub release. Asking for the release
   is the approval for its push. `DRY_RUN=1` previews; after a failure, fix the cause and run the
   same command again, and it continues where it stopped.
+- Pushing the tag also publishes the package to npm: `.github/workflows/release.yml` runs the
+  gate, checks the tag against `VERSION` and runs `npm publish` through npm trusted publishing,
+  with no token.
