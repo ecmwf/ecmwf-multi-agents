@@ -7,6 +7,21 @@ SPDX-License-Identifier: Apache-2.0
   <img src="docs/assets/logo.png" alt="ecmwf-multi-agents: lead and its three helpers" width="240">
 </p>
 
+<p align="center">
+  <a href="https://www.npmjs.com/package/@ecmwf.int/multi-agents">
+    <img src="https://img.shields.io/npm/v/@ecmwf.int/multi-agents.svg" alt="npm Badge">
+  </a>
+  <a href="https://github.com/ecmwf/codex/raw/refs/heads/main/ESEE">
+    <img src="https://github.com/ecmwf/codex/raw/refs/heads/main/ESEE/foundation_badge.svg" alt="Foundation Badge">
+  </a>
+  <a href="https://github.com/ecmwf/codex/raw/refs/heads/main/Project%20Maturity">
+    <img src="https://github.com/ecmwf/codex/raw/refs/heads/main/Project%20Maturity/emerging_badge.svg" alt="Maturity Badge">
+  </a>
+</p>
+
+> [!IMPORTANT]
+> This software is **Emerging** and subject to ECMWF's guidelines on [Software Maturity](https://github.com/ecmwf/codex/raw/refs/heads/main/Project%20Maturity).
+
 A multi-agent harness for [opencode](https://opencode.ai), made for ECMWF scientists, analysts
 and developers.
 
