@@ -62,24 +62,21 @@ denies `git push` globally gets an approval prompt in `lead` instead.
 | Delegate | the three helpers only | deny | deny | deny |
 | Ask the user | allow | deny | deny | deny |
 | Harness skills (`ecmwf-multi-agents-*`) | user policy | deny | deny | deny |
-| Todo list (opencode 1.x) | user policy | deny | platform default (denied) | deny |
-| Code Mode (opencode 2) | user policy | deny | user policy | deny |
+| Code Mode | user policy | deny | user policy | deny |
 | Helper tools (`helpers_status`, `helpers_steer`, `helpers_cancel`) | user policy | deny | deny | deny |
 
-Files outside the project follow each platform's default, since the harness sets no rule for
-them: opencode 1.x and 2.0.16 ask before an agent reads or edits one, and opencode 2.0.28 asks
-for no agent (`docs/research/opencode-v2.md`, Addendum: 2.0.28).
+Files outside the project follow opencode's default, since the harness sets no rule for them:
+opencode 2.0.16 asks before an agent reads or edits one, and opencode 2.0.28 asks for no agent
+(`docs/research/opencode-v2.md`, Addendum: 2.0.28).
 
 The helper tools come from the plugin (see Background helpers). A `tool` rule in the manifest
-names one tool id; the emitters write it as that id's own permission key, which on both
-platforms removes a denied tool from the agent's requests. The plugin also refuses, at
-execution time and independently of those rules, every call to these tools that does not
-come from `lead`: a helper's call, whatever was approved, as the shell guard does, and any
-other agent's call, because the platform's default rules would let such an agent reach a
-plugin tool. Without the plugin the tools do not exist and the rules are inert.
+names one tool id; the emitter writes it as that id's own permission key, which removes a
+denied tool from the agent's requests. The plugin also refuses, at execution time and
+independently of those rules, every call to these tools that does not come from `lead`: a
+helper's call, whatever was approved, and any other agent's call, because opencode's default
+rules would let such an agent reach a plugin tool. Without the plugin the tools do not exist and the rules are inert.
 
-opencode 1.x denies the todo list to every subagent by default, and opencode 2 has none.
-Code Mode is the opencode 2 `execute` tool through which MCP tools and a few others are
+Code Mode is the `execute` tool through which MCP tools and a few others are
 reached; denying it saves about 2,200 tokens per request for helpers that never need them.
 
 "Approval" means the rule is `ask`, so opencode prompts the user. `lead` asks before
@@ -94,16 +91,7 @@ Read-only commands for `scout`: `git log`, `git show`, `git diff`, `git blame`, 
 `git grep`, `git ls-files`, `git rev-parse`, `ls`, `wc`, `file`, `tree`.
 
 Permissions are a guard rail, not a sandbox. Shell patterns match command text, so wrappers
-can bypass them. The prompts state the same rules. Two platform caveats:
-
-- In opencode 1.x, "Allow always" on a prompt lasts for the whole opencode process and applies
-  to every agent, overriding other agents' `deny` rules. Approving `git push` always for `lead`
-  would let a builder push too. The plugin adds a guard (`tool.execute.before`) that applies
-  each helper's own shell rules again, whatever was approved. It finds a session's agent from
-  the `chat.message` and `chat.params` hooks, or asks the server for unseen sessions. Like
-  opencode, it matches command text: `sh -c`, `xargs` and scripts get past it.
-- Step limits are soft in opencode 1.x: after the limit the agent is told to stop, but tools
-  stay available. The prompts ask helpers to stop and report when told.
+can bypass them. The prompts state the same rules.
 
 ## Routing
 
@@ -138,14 +126,10 @@ independent. Builders in parallel only when their file sets do not overlap.
 
 ## Background helpers
 
-A hand-off normally blocks `lead` until the helper reports. Both platforms can also run a
-helper in the background: the delegation tool returns at once, `lead` goes on, and when the
-helper finishes the platform writes its final text into `lead`'s session as a user message
-(`<task ...>` on opencode 1.x, `<subagent ...>` on opencode 2) and gives `lead` a turn. On
-opencode 1.x this needs `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` in the environment
-before opencode starts; the installer and `doctor` cover it, and without it `lead` hands off
-in the foreground as before. The user can also move a blocking hand-off to the background
-with the TUI's `session.background` keybind (Ctrl+B by default). Evidence and limits:
+A hand-off normally blocks `lead` until the helper reports. opencode can also run a helper in
+the background: the delegation tool returns at once, `lead` goes on, and when the helper
+finishes opencode writes its final text into `lead`'s session as a user message
+(`<subagent ...>`) and gives `lead` a turn. Evidence and limits:
 `docs/research/background-helpers.md`; decisions: `docs/adr/0002-background-helpers-and-steering.md`.
 
 `lead` uses the background when it does not need the result before its next step and has
@@ -155,13 +139,11 @@ scouts cost one; `/onboard` stays in the foreground. A wake is read like any rep
 checks the DONE WHEN items and does not re-run the helper's checks twice.
 
 A completion that arrives while `lead` is still replying to the user, for example while it looks
-something up, would join that reply at its next step on both platforms, as the newest message
-`lead` sees, and the model then acts on the report and drops the question; neither a rule in the
-prompt nor a note after the report prevented that. So the plugin holds such a report back until
-`lead` has answered (`plugin/answer-first.ts`). On opencode 1.x the report waits in the
-`chat.message` hook until the session is idle, then arrives dated at delivery and starts a turn
-of its own. On opencode 2, which has no hook that can delay a message, the `context` session
-hook leaves the report out of `lead`'s requests while the reply runs, and a short message queued
+something up, would join that reply at its next step, as the newest message `lead` sees, and
+the model then acts on the report and drops the question; neither a rule in the prompt nor a
+note after the report prevented that. So the plugin holds such a report back until `lead` has
+answered (`plugin/answer-first.ts`). opencode has no hook that can delay a message, so the
+`context` session hook leaves the report out of `lead`'s requests while the reply runs, and a short message queued
 for after the turn wakes `lead` to act on it; if that message cannot be queued, the report stays
 in view. `lead` is replying when a message from the user to `lead` came after its last step that
 ended a turn; a report that arrives otherwise, also one that wakes `lead`, is delivered at once.
@@ -173,7 +155,7 @@ have them:
 |---|---|
 | `helpers_status` | The helpers of this session: agent, title, state, steps taken, elapsed time, last tool call. At most twelve lines |
 | `helpers_steer(id, text)` | Sends an amendment to a running helper. The text reaches it at its next step; its context and prompt cache stay. A finished helper is continued through the delegation tool's continuation parameter instead |
-| `helpers_cancel(id or all)` | Stops a helper and says so in the result (opencode 1.x does not wake `lead` for a cancel) |
+| `helpers_cancel(id or all)` | Stops a helper and says so in the result |
 
 A steer amends the brief (principle 3): the helper follows the latest message, keeps the
 earlier LIMITS unless the steer lifts them, and reports what changed in the section its
@@ -183,16 +165,9 @@ reading so far is still useful and the correction is small; it cancels and brief
 the direction was wrong. It steers reactively, when the user asks or when a status check it
 ran for a reason shows a helper off its brief; it never polls, because each status call and
 each steer is a turn of the most expensive agent. `lead` reaches a running helper only through
-`helpers_steer`, never through `task_id` or `sessionID` on the delegation tool. On opencode
-1.x a helper's step limit counts the whole run, steers included.
+`helpers_steer`, never through `sessionID` on the delegation tool.
 
-The user may also open a helper's session and type into it. On opencode 1.x a message sent
-to a running session carries an agent and a model, and the TUI sends the user's primary agent,
-`lead`; the plugin therefore pins every message that lands in a helper's child session to that
-helper's own agent, model and effort. It never pins the user's own session, where `/review`
-and `/progress` answer inline on 1.x. A completion that lands there always wakes `lead`, also
-right after an inline review; if a helper is answering inline at that moment, the completion
-waits for its report first (see below).
+The user may also open a helper's session and type into it.
 
 ## Hand-off brief
 
@@ -244,9 +219,8 @@ NOTES: at most three non-blocking suggestions.
 CHECKED: what was examined and which commands ran.
 ```
 
-A background helper's report arrives wrapped by the platform (`<task id="..."
-state="completed">` with the report inside on opencode 1.x, `<subagent ...>` on opencode 2;
-`state="error"` or `state="cancelled"` when it did not finish). `lead` reads the inside as the
+A background helper's report arrives wrapped by opencode (`<subagent ... state="completed">`
+with the report inside; `state="error"` or `state="cancelled"` when it did not finish). `lead` reads the inside as the
 helper's report.
 
 The reviewer rejects only for real problems: wrong behaviour, missing acceptance criteria,
@@ -255,36 +229,11 @@ notes, not blockers. A report may leave out NOTES when there is nothing to note,
 may ask for another format (as `/progress` does). When `/review` finds nothing to review, or
 cannot resolve its target, the reviewer says so in a line or two instead of giving a verdict.
 
-`/review` and `/progress` are the two commands the user sends straight to a helper. How they run
-differs by platform:
-
-- On opencode 1.x the helper answers in the user's own session, as the command's agent
-  (`subtask: false`). Its report appears in the conversation, and `lead` takes no turn after
-  it. The user stays with `lead`: the TUI offers only primary agents and keeps its selection,
-  so the next message goes to `lead`, which sees the report in the conversation. The plugin
-  drops the earlier conversation from the helper's model requests
-  (`experimental.chat.messages.transform`), so the helper works from the command alone, as in a
-  child session: the reviewer stays independent of `lead`'s reasoning, and a long session does
-  not make a review costly. The stored conversation is unchanged, compaction is never trimmed,
-  and without the plugin the helper sees the whole conversation.
-
-  The session loop always runs the agent of its newest message, so sharing the session needs
-  three rules, which the plugin applies in `chat.message` before opencode saves a message
-  (`plugin/inline.ts`). A helper command sent while another agent works (for example `/progress`
-  during a long `/execute`) runs in a child session instead, as every helper command did before 0.2.0:
-  the working agent finishes its step, the helper runs, and opencode tells that agent to go on
-  with the report in view. A background helper's completion is written as the session's current
-  agent, which after an inline command is the helper; the plugin gives it back to the session's
-  owner, the agent of the latest request that was not a helper's (normally `lead`), so the
-  completion wakes `lead`. A helper command or a completion that arrives while a helper answers
-  inline waits for its report (at most 30 minutes), so an answer is never cut short. When the
-  plugin cannot read the session's state, it leaves the message as opencode made it.
-- On opencode 2 a command for a helper runs in a child session. Running it in the user's
-  session would first switch the whole session to the helper, so the user's next message would
-  go to the helper. When the child finishes, opencode wakes `lead` with the report; `lead`
-  relays it briefly, without re-running its checks.
-
-Either way, `lead` acts on a REJECT or on a plan's state only when the user asks.
+`/review` and `/progress` are the two commands the user sends straight to a helper. They run
+in a child session: running one in the user's session would first switch the whole session to
+the helper, so the user's next message would go to the helper. When the child finishes,
+opencode wakes `lead` with the report; `lead` relays it briefly, without re-running its checks.
+`lead` acts on a REJECT or on a plan's state only when the user asks.
 
 ## Planning and execution
 
@@ -306,8 +255,7 @@ Either way, `lead` acts on a REJECT or on a plan's state only when the user asks
 2. Brief each taken task's agent (`builder` or `scout`) with the task's files, criteria and
    checks. When two or more are taken, or the user may want to keep talking, hand them off
    in the background; otherwise one task runs in the foreground, so its result comes back in
-   the same turn. Where the platform refuses a background hand-off (opencode 1.x without its
-   flag), the taken tasks run together in the foreground, as a wave.
+   the same turn.
 3. A question from the user is answered first, even if a completion arrives while `lead`
    looks up the answer; the plugin holds such a completion back until `lead` has answered (see
    Background helpers). Then, on each completion, check the report against the criteria and
@@ -386,8 +334,7 @@ and its findings are added to the existing sections.
 `ecmwf-multi-agents.jsonc`, read at startup from up to three places, each overriding the one
 before, with `agents` entries merged per agent and per field:
 
-1. `$OPENCODE_CONFIG_DIR/ecmwf-multi-agents.jsonc`, when the variable is set (site defaults of a
-   central install);
+1. `$OPENCODE_CONFIG_DIR/ecmwf-multi-agents.jsonc`, when the variable is set (site defaults);
 2. `${XDG_CONFIG_HOME:-$HOME/.config}/opencode/ecmwf-multi-agents.jsonc` (the user's own);
 3. `<project root>/.opencode/ecmwf-multi-agents.jsonc` (the project's).
 
@@ -411,9 +358,8 @@ entry names, or at the model's own default when it names none. An override `effo
 applies to the profile's model. `steps` replaces the agent's step limit.
 
 The generator writes a JSON Schema for this file; the plugin validates with the same patterns.
-A file with unknown keys or invalid values is ignored as a whole and reported: on opencode 1.x
-in the log and as a toast in the TUI; on opencode 2, whose plugin API offers neither, on
-standard error only. `install.sh doctor` checks the review and profile values. There is no
+A file with unknown keys or invalid values is ignored as a whole and reported on standard
+error, since opencode's plugin API offers no log and no toast. `install.sh doctor` checks the review and profile values. There is no
 setting that returns a single agent to the session model; the `inherit` profile does that for
 all agents.
 
@@ -443,27 +389,13 @@ while the agent has a model, from the profile or from the same settings entry, s
 
 The generator bakes the `default` profile into the agent files, so a fresh install works
 without the plugin. The plugin applies the chosen profile and the per-agent overrides at
-startup: in opencode 1.x through the `config` hook, which sees the Markdown agents; in
-opencode 2 through an agent transform registered after the plugin is active, because
-transforms registered during setup run before agent files load. The plugin registers that
+startup, through an agent transform registered after the plugin is active, because transforms
+registered during setup run before agent files load. The plugin registers that
 transform again on every `plugin.updated` event (with a timer as a fallback for a missed first
 event), so it stays last after reloads.
 
 The plugin also makes `lead` the default agent unless `default_agent` is false in the settings.
 Without the plugin, opencode starts on its own `build` agent and the user switches with Tab.
-
-On opencode 1.x the plugin can also stand in for an install. A project's config may name a
-harness checkout as a plugin, `"plugin": ["{env:HOME}/.local/share/ecmwf-multi-agents"]`:
-opencode loads a plugin folder through the `exports["./server"]` entry of its `package.json`,
-which in the checkout names the bundle. When `lead` is not defined, the files are not installed,
-so the plugin's `config` hook registers every agent and command that is not defined yet, as the
-same entries opencode makes of the generated files, and adds the `skills` folder next to its
-own folder to `skills.paths`; the settings then apply as to installed files. A definition that
-already exists, such as a project's own `scout` or `/onboard`, is kept and reported. The bundle
-carries those entries, prompts and templates included, and a test checks they equal what
-opencode reads from the generated files. Projects with the line follow the checkout: checking
-out a new version there changes them all at their next start. opencode 2 ignores the line. The
-decision is recorded in `docs/adr/0003-per-project-plugin-line.md`.
 
 ## Source and output
 
@@ -475,7 +407,6 @@ src/commands/*.md         command templates
 src/skills/<id>/SKILL.md  skill bodies
 src/profiles/*.jsonc      model profiles
 tools/                    generator (TypeScript on Bun)
-dist/opencode-v1/         output for opencode 1.x
 dist/opencode-v2/         output for opencode 2 (tested on 2.0.28)
 plugin/                   runtime plugin sources
 ```
@@ -483,23 +414,17 @@ plugin/                   runtime plugin sources
 The harness version comes from the root `VERSION` file: one line, `x.y.z`, without a `v`. The
 generator reads it from there.
 
-Source Markdown carries no frontmatter: the generator writes frontmatter from the manifest in
-each platform's format. Prompts are platform neutral; they never name tools by their
-platform-specific identifiers beyond what both platforms share.
+Source Markdown carries no frontmatter: the generator writes frontmatter from the manifest.
+Prompts never name tools by opencode's identifiers.
 
-An agent's prompt replaces opencode's own system prompt on both platforms. opencode still adds
+An agent's prompt replaces opencode's own system prompt. opencode still adds
 the model name, an environment block, `AGENTS.md` files and the skill list. Prompts must
 therefore carry the working rules they need (read before editing, follow project conventions,
 verify, report honestly) instead of relying on opencode's defaults.
 
 Command templates never use `` !`command` `` blocks, which run before any permission check,
-and never use `@name` mentions. Hidden skills are loaded by exact id: opencode 1.x hides a
-skill that has no description, opencode 2 one with `metadata.opencode/autoinvoke: false`.
-
-Each platform's files go in its own directory. opencode 1.x reads opencode 2 agent files
-without an error but ignores their permission rules, so the two formats must never share a
-config directory. opencode 2 reads 1.x files correctly, so on a machine with both versions the
-installer writes only the 1.x files.
+and never use `@name` mentions. Hidden skills are loaded by exact id: opencode hides a skill
+with `metadata.opencode/autoinvoke: false`.
 
 Prompt budgets, checked by the generator at about four characters per token:
 

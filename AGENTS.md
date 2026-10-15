@@ -19,7 +19,7 @@ symlink to this file.
 - `src/` is the only place to edit harness content: `manifest.jsonc` (agents, permissions,
   commands, skills, budgets), `agents/` (prompt bodies), `commands/`, `skills/`, `profiles/`.
 - `tools/` holds the TypeScript (Bun) generator and the version tool. `make build` writes
-  `dist/opencode-v1/` and `dist/opencode-v2/`.
+  `dist/opencode-v2/`.
 - `dist/` is generated and committed. Never edit it by hand.
 - `plugin/` is the optional runtime plugin. `install.sh` is the POSIX sh installer. `evals/`
   holds scenario evals that call real models.

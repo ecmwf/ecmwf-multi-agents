@@ -5,10 +5,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { checkShellCommand } from "../plugin/guard.ts";
 import { resolvedFixture } from "../plugin/testing.ts";
 import { HARNESS_CONSTANT, bundlePlugin, embedHarness, pluginMarker, runtimeImports } from "./bundle-plugin.ts";
-import { emitV1 } from "./emit-v1.ts";
 import { load } from "./load.ts";
 import { resolveHarness } from "./resolve.ts";
 
@@ -57,23 +55,16 @@ describe("bundlePlugin", () => {
     expect(first).not.toContain(HARNESS_CONSTANT);
   });
 
-  test("embeds the harness data, prompts and templates included, for registering it when not installed", () => {
+  test("embeds the profiles", () => {
     expect(first).toContain('"anthropic/claude-opus-5-5"');
-    expect(first).toContain('"git push *"');
-    expect(first).toContain("You are scout.");
-    expect(first).toContain("Review $ARGUMENTS");
   });
 
-  test("finds its skills folder at run time, next to the folder it is loaded from", () => {
-    expect(first).toContain("import.meta.url");
-  });
-
-  test("exports one default object with id, server and setup", async () => {
+  test("exports one default object with id and setup", async () => {
     const module = (await import(file)) as Record<string, unknown>;
     expect(Object.keys(module)).toEqual(["default"]);
-    const plugin = module.default as { id: unknown; server: unknown; setup: unknown };
+    const plugin = module.default as Record<string, unknown>;
+    expect(Object.keys(plugin)).toEqual(["id", "setup"]);
     expect(plugin.id).toBe("ecmwf-multi-agents");
-    expect(typeof plugin.server).toBe("function");
     expect(typeof plugin.setup).toBe("function");
   });
 
@@ -89,44 +80,57 @@ describe("bundlePlugin", () => {
     );
     const script = `
       const plugin = (await import(${JSON.stringify(file)})).default;
-      const hooks = await plugin.server({ directory: ${JSON.stringify(project)}, worktree: ${JSON.stringify(project)} });
-      const config = { agent: {
-        lead: { mode: "primary", prompt: "x\\nReview policy: auto\\ny" },
-        scout: { mode: "subagent", model: "anthropic/claude-sonnet-5-5", variant: "medium", steps: 15 },
-        reviewer: { mode: "subagent", model: "github-copilot/gpt-6.1-sol", variant: "medium" },
-      } };
-      await hooks.config(config);
+      const transforms = [];
+      const hooks = [];
+      const ctx = {
+        location: { directory: ${JSON.stringify(project)}, project: { directory: ${JSON.stringify(project)} } },
+        agent: { transform: async (callback) => { transforms.push(callback); return { dispose: async () => {} }; } },
+        event: { subscribe: async function* () { yield { type: "plugin.updated" }; } },
+        tool: { hook: async (_name, callback) => { hooks.push(callback); return { dispose: async () => {} }; } },
+      };
+      await plugin.setup(ctx);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const agents = new Map();
+      let selected;
+      const editor = {
+        list: () => [...agents.values()],
+        get: (id) => agents.get(id),
+        default: (id) => { selected = id; },
+        update: (id, change) => { const agent = agents.get(id) ?? { id }; agents.set(id, agent); change(agent); },
+      };
+      // The default agent transform comes first, then opencode's loader for the agent files, then the late transform.
+      transforms[0](editor);
+      editor.update("lead", (agent) => Object.assign(agent, { mode: "primary", system: "x\\nReview policy: auto\\ny" }));
+      editor.update("scout", (agent) => Object.assign(agent, { mode: "subagent", steps: 15, model: { id: "claude-sonnet-5-5", providerID: "anthropic", variant: "medium" } }));
+      editor.update("reviewer", (agent) => Object.assign(agent, { mode: "subagent", model: { id: "gpt-6.1-sol", providerID: "github-copilot", variant: "medium" } }));
+      for (const transform of transforms.slice(1)) transform(editor);
       let blocked = "";
-      await hooks["chat.message"]({ sessionID: "s" }, { message: { agent: "builder" } });
-      try { await hooks["tool.execute.before"]({ tool: "bash", sessionID: "s" }, { args: { command: "git push" } }); }
+      try { for (const hook of hooks) await hook({ tool: "helpers_status", sessionID: "s", agent: "builder" }); }
       catch (error) { blocked = error.message; }
-      console.log(JSON.stringify({ config, blocked }));
+      console.log(JSON.stringify({ selected, agents: Object.fromEntries(agents), blocked }));
     `;
     const result = Bun.spawnSync(["bun", "-e", script], {
       env: { PATH: process.env.PATH ?? "", HOME: home, XDG_CONFIG_HOME: path.join(home, ".config") },
       cwd: dir,
     });
     expect(result.stderr.toString()).toBe("");
-    const { config, blocked } = JSON.parse(result.stdout.toString()) as {
-      config: { default_agent?: string; agent: Record<string, Record<string, unknown>> };
+    const { selected, agents, blocked } = JSON.parse(result.stdout.toString()) as {
+      selected?: string;
+      agents: Record<string, Record<string, unknown>>;
       blocked: string;
     };
-    expect(config.default_agent).toBe("lead");
-    expect(config.agent.reviewer).toEqual({ mode: "subagent", model: "anthropic/claude-opus-5-5", variant: "high" });
-    expect(config.agent.scout).toEqual({ mode: "subagent", model: "anthropic/claude-sonnet-5-5", variant: "high", steps: 9 });
-    expect(config.agent.lead!.prompt).toBe("x\nReview policy: never\ny");
-    expect(blocked).toContain('helpers may not run "git push"');
+    expect(selected).toBe("lead");
+    expect(agents.reviewer).toEqual({ id: "reviewer", mode: "subagent", model: { id: "claude-opus-5-5", providerID: "anthropic", variant: "high" } });
+    expect(agents.scout).toEqual({ id: "scout", mode: "subagent", steps: 9, model: { id: "claude-sonnet-5-5", providerID: "anthropic", variant: "high" } });
+    expect(agents.lead!.system).toBe("x\nReview policy: never\ny");
+    expect(blocked).toContain("helpers may not use helpers_status");
   });
 });
 
 describe("embedHarness", () => {
-  test("keeps what the plugin needs: profiles, agents with mode and shell rules, commands", () => {
+  test("keeps what the plugin needs: profiles and agents with their mode", () => {
     const data = embedHarness(resolvedFixture());
-    expect(Object.keys(data)).toEqual(["name", "version", "defaultAgent", "defaultProfile", "profiles", "agents", "commands", "v1"]);
-    expect(data.commands).toEqual([
-      { id: "plan", agent: "lead", description: "Plan a piece of work with you" },
-      { id: "review", agent: "reviewer", description: "Independent review of your changes" },
-    ]);
+    expect(Object.keys(data)).toEqual(["name", "version", "defaultAgent", "defaultProfile", "profiles", "agents"]);
     expect(data.profiles.map((profile) => profile.id)).toEqual(["anthropic", "copilot", "default", "inherit"]);
     expect(data.profiles.find((profile) => profile.id === "default")!.agents).toEqual({
       lead: { model: "anthropic/claude-opus-5-5", effort: "xhigh" },
@@ -140,52 +144,16 @@ describe("embedHarness", () => {
       ["builder", "subagent"],
       ["reviewer", "subagent"],
     ]);
-    const builder = data.agents.find((agent) => agent.id === "builder")!;
-    expect(builder.mode).toBe("subagent");
-    expect(builder.shell.at(0)).toEqual({ resource: "git add *", effect: "deny" });
-    expect(builder.shell.at(-1)).toEqual({ resource: "gh *", effect: "deny" });
-    expect(data.agents.find((agent) => agent.id === "scout")!.shell.slice(0, 2)).toEqual([
-      { resource: "*", effect: "deny" },
-      { resource: "git log *", effect: "allow" },
-    ]);
   });
 
-  test("the opencode 1.x entries are what opencode makes of the generated files: frontmatter, name, and the body as prompt or template", async () => {
-    const harness = resolveHarness(await load(root));
-    const data = embedHarness(harness);
-    const files = new Map(emitV1(harness).map((file) => [file.path, file.content]));
-    /** Parse a generated file the way opencode 1.x does: YAML frontmatter, then the trimmed body. */
-    const parsed = (file: string) => {
-      const content = files.get(file)!;
-      const end = content.indexOf("\n---\n", 4);
-      return { data: Bun.YAML.parse(content.slice(4, end)) as Record<string, unknown>, body: content.slice(end + 5).trim() };
-    };
-    expect(Object.keys(data.v1.agents)).toEqual(harness.agents.map((agent) => agent.id));
-    for (const agent of harness.agents) {
-      const file = parsed(`agents/${agent.id}.md`);
-      expect(data.v1.agents[agent.id]).toEqual({ name: agent.id, ...file.data, prompt: file.body });
-    }
-    expect(Object.keys(data.v1.commands)).toEqual(harness.commands.map((command) => command.id));
-    for (const command of harness.commands) {
-      const file = parsed(`commands/${command.id}.md`);
-      expect(data.v1.commands[command.id]).toEqual({ name: command.id, ...file.data, template: file.body });
-    }
-    expect(data.v1.skills).toEqual(["ecmwf-multi-agents-plan", "ecmwf-multi-agents-guide"]);
-    // The review line the plugin rewrites from the settings is in lead's registered prompt.
-    expect(String(data.v1.agents.lead!.prompt)).toContain("\nReview policy: auto\n");
-    expect(data.v1.commands.review).toMatchObject({ agent: "reviewer", subtask: false });
-  });
-
-  test("from src/: lead and three helpers, and the shell guard checks each helper with its own rules", async () => {
+  test("from src/: lead and three helpers", async () => {
     const data = embedHarness(resolveHarness(await load(root)));
-    const helpers = data.agents.filter((agent) => agent.mode === "subagent").map((agent) => agent.id);
-    expect(data.agents.map((agent) => agent.id)).toEqual(["lead", ...helpers]);
-    expect(helpers).toEqual(["scout", "builder", "reviewer"]);
-    for (const helper of helpers) {
-      expect(checkShellCommand(data, helper, "git push origin main", "linux")?.part).toBe("git push origin main");
-    }
-    expect(checkShellCommand(data, "lead", "git push origin main", "linux")).toBeUndefined();
-    expect(checkShellCommand(data, "scout", "git log --oneline -5", "linux")).toBeUndefined();
+    expect(data.agents).toEqual([
+      { id: "lead", mode: "primary" },
+      { id: "scout", mode: "subagent" },
+      { id: "builder", mode: "subagent" },
+      { id: "reviewer", mode: "subagent" },
+    ]);
   });
 
   test("orders profile entries by agent, whatever the order in the profile file", () => {

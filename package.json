@@ -12,7 +12,7 @@
     "ecmwf-multi-agents": "bin/ecmwf-multi-agents.js"
   },
   "exports": {
-    "./server": "./dist/opencode-v1/plugins/ecmwf-multi-agents.js"
+    "./server": "./dist/opencode-v2/plugins/ecmwf-multi-agents.js"
   },
   "files": [
     "dist",

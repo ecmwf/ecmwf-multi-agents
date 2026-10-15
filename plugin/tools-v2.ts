@@ -184,7 +184,7 @@ export function v2Tools(deps: V2ToolDeps): V2ToolInfo[] {
   });
 
   return [
-    // The harness's helpers only, as on 1.x; a child the tracker knows no agent for is kept.
+    // The harness's helpers only; a child the tracker knows no agent for is kept.
     define(TOOL_SPECS.status, async (_args, context) =>
       formatStatus(tracker.children(context.sessionID).filter((child) => child.agent === undefined || helpers.has(child.agent)).map(view)),
     ),

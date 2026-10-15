@@ -13,7 +13,7 @@ BUN        ?= bun
 REUSE      ?= reuse
 SHELLCHECK ?= shellcheck
 
-INTEGRATION_TESTS := tools/emit-v1.integration.test.ts tools/emit-v2.integration.test.ts \
+INTEGRATION_TESTS := tools/emit-v2.integration.test.ts \
 	plugin/plugin.integration.test.ts plugin/background.integration.test.ts \
 	tests/install.integration.test.ts evals/run.integration.test.ts
 
@@ -62,10 +62,8 @@ test: ## Unit tests (the integration suites skip themselves)
 
 # ── Beyond the gate ──────────────────────────────────────────────────────────
 
-integration: ## Suites against real opencode binaries, no models: OPENCODE_V1_BINS="a b" OPENCODE_V2_BIN=c
+integration: ## Suites against a real opencode binary, no models: OPENCODE_V2_BIN=path
 	ECMWF_MULTI_AGENTS_INTEGRATION=1 \
-	$(if $(OPENCODE_V1_BINS),OPENCODE_V1_BINS="$(OPENCODE_V1_BINS)") \
-	$(if $(OPENCODE_V1_BIN),,$(if $(OPENCODE_V1_BINS),OPENCODE_V1_BIN="$(firstword $(OPENCODE_V1_BINS))")) \
 	$(if $(OPENCODE_V2_BIN),OPENCODE_V2_BIN="$(OPENCODE_V2_BIN)") \
 		$(BUN) test --timeout 600000 $(INTEGRATION_TESTS)
 

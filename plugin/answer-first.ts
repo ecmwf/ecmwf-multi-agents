@@ -3,29 +3,22 @@
 
 // Makes lead answer the user before it acts on a helper's report.
 //
-// A background helper's report reaches lead's session as a message of its own: `<task ...>` on
-// opencode 1.x (opencode/src/tool/task.ts:64-79 and :227-253 at v1.18.35), `<subagent ...>` on
-// opencode 2 (core/src/session/subagent-completion.ts:36-43 at v2.0.16). When lead is still
-// replying to the user, for example looking something up, the report joins the running turn at
-// its next step (1.x: session/prompt.ts:1092; 2: session/runner/llm.ts:165-177) as the newest
-// message the model sees, and lead acts on it and forgets the user's question. Neither a rule in
-// lead's prompt and the plan skill nor a note after the report changed that with a real model
-// (evals/results/go-background.md). So lead is not shown such a report until it has answered.
-//
-// opencode 1.x: the report waits in the `chat.message` hook, before opencode saves it, until the
-// session is idle, as inline.ts does for a helper answering inline; it is then dated at delivery,
-// so it is listed after lead's answer (session/message-v2.ts:452) and starts a turn of its own.
+// A background helper's report reaches lead's session as a message of its own, `<subagent ...>`
+// (core/src/session/subagent-completion.ts:36-43 at v2.0.16). When lead is still replying to the
+// user, for example looking something up, the report joins the running turn at its next step
+// (session/runner/llm.ts:165-177) as the newest message the model sees, and lead acts on it and
+// forgets the user's question. Neither a rule in lead's prompt and the plan skill nor a note after
+// the report changed that with a real model (evals/results/go-background.md). So lead is not
+// shown such a report until it has answered.
 //
 // opencode 2 has no hook that can delay a message, so the `context` session hook, which sees each
 // model request before it is sent (session/model-request.ts:378-385 at v2.0.16), leaves the report
 // out of lead's requests until the reply ends, and the plugin queues a short message, delivered
 // after the turn (`delivery: "queue"`, session/inbox.ts:43-48), that wakes lead to act on it.
 //
-// Both use one rule. lead is replying when, walking back from the end of the conversation, a
-// message from the user to lead comes before any step of lead's that ended a turn.
+// The rule: lead is replying when, walking back from the end of the conversation, a message from
+// the user to lead comes before any step of lead's that ended a turn.
 
-import { isCompletion, isSyntheticMessage } from "./inline.ts";
-import type { V1MessageWithParts } from "./isolate.ts";
 import type { V2ModelMessage } from "./types.ts";
 
 /**
@@ -75,29 +68,7 @@ function partsOf(parts: unknown): Part[] {
   return Array.isArray(parts) ? parts.filter((part): part is Part => part !== null && typeof part === "object") : [];
 }
 
-/** A step that ended a turn, as opencode's loop decides it (session/prompt.ts:1106-1115 at v1.18.35). */
-function endedTurnV1(message: V1MessageWithParts): boolean {
-  const { error, summary, finish } = message.info;
-  if (error || summary) return true;
-  if (typeof finish !== "string" || finish === "tool-calls" || finish === "unknown") return false;
-  return !partsOf(message.parts).some((part) => part.type === "tool" && (part.metadata as { providerExecuted?: unknown } | undefined)?.providerExecuted !== true);
-}
-
-/** opencode 1.x: what each stored message of a session is to the rule. */
-export function stepsV1(messages: readonly V1MessageWithParts[], lead: string): Step[] {
-  return messages.map((message) => {
-    const role = message?.info?.role;
-    if (role === "user") {
-      if (isCompletion(message.parts)) return "report";
-      if (isSyntheticMessage(message.parts)) return "other";
-      return message.info.agent === lead ? "request" : "boundary";
-    }
-    if (role === "assistant") return endedTurnV1(message) ? "ended" : "other";
-    return "other";
-  });
-}
-
-/** What wakes lead on opencode 2 once its reply has ended, when it was shown none of the reports. */
+/** What wakes lead once its reply has ended, when it was shown none of the reports. */
 export const WAKE_TEXT =
   "Reports from your helpers arrived while you were answering the user, so they were held back until you had answered. They are above: act on them now.";
 /** How a background helper's report starts on opencode 2 (core/src/session/subagent-completion.ts). */

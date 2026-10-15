@@ -30,26 +30,18 @@ import type {
 /** The opencode version this output is written and tested for. */
 export const V2_VERSION = "2.0.28";
 
-/**
- * Neutral action to opencode 2 permission action (the same names at 2.0.16 and 2.0.28). `null`
- * means opencode 2 has no such action, so rules for it are left out and recorded as a
- * frontmatter comment.
- */
-export const V2_ACTIONS: Readonly<Record<MappedAction, string | null>> = {
+/** Neutral action to opencode 2 permission action (the same names at 2.0.16 and 2.0.28). */
+export const V2_ACTIONS: Readonly<Record<MappedAction, string>> = {
   read: "read",
   edit: "edit", // also covers the write and patch tools
   glob: "glob",
   grep: "grep",
-  // No list tool: the read tool lists directories. Mapping list rules onto read would change
-  // which files can be read, so they are dropped instead.
-  list: null,
   shell: "shell",
   delegate: "subagent",
   skill: "skill",
   question: "question",
   webfetch: "webfetch",
   websearch: "websearch",
-  todo: null, // no todo tool
   external_directory: "external_directory",
   execute: "execute", // Code Mode: MCP tools, MCP resources, file-diff and opencode's own tools
 };
@@ -82,31 +74,17 @@ export function v2Model(owner: string, model?: string, variant?: string): string
   return `${model}#${variant}`;
 }
 
-export interface V2Permissions {
-  /** Ordered v2 rules, ready for the `permissions` frontmatter list. */
-  rules: { action: string; resource: string; effect: string }[];
-  /** Neutral rules with no 2.0.16 action, in their original order. */
-  dropped: Rule[];
-}
+/** A rule as the `permissions` frontmatter list takes it. */
+export type V2Rule = { action: string; resource: string; effect: string };
 
 /** Map neutral rules to v2 rules, keeping their order (the last matching rule wins in v2). */
-export function v2Permissions(rules: readonly Rule[]): V2Permissions {
-  const out: V2Permissions = { rules: [], dropped: [] };
-  for (const rule of rules) {
+export function v2Permissions(rules: readonly Rule[]): V2Rule[] {
+  return rules.map((rule) =>
     // A tool rule is keyed by the tool id, with the pattern "*" (the tool takes no resource).
-    if (rule.action === "tool") {
-      out.rules.push({ action: rule.resource, resource: "*", effect: rule.effect });
-      continue;
-    }
-    const action = V2_ACTIONS[rule.action];
-    if (action === null) out.dropped.push(rule);
-    else out.rules.push({ action, resource: rule.resource, effect: rule.effect });
-  }
-  return out;
-}
-
-function droppedComment(rule: Rule): string {
-  return `# no ${rule.action} action in opencode ${V2_VERSION}, rule left out: ${rule.action} ${JSON.stringify(rule.resource)} ${rule.effect}`;
+    rule.action === "tool"
+      ? { action: rule.resource, resource: "*", effect: rule.effect }
+      : { action: V2_ACTIONS[rule.action], resource: rule.resource, effect: rule.effect },
+  );
 }
 
 export function v2AgentFile(agent: ResolvedAgent, marker: string): OutputFile {
@@ -129,9 +107,8 @@ export function v2AgentFile(agent: ResolvedAgent, marker: string): OutputFile {
     data.color = agent.color;
   }
   const permissions = v2Permissions(agent.permissions);
-  if (permissions.rules.length > 0) data.permissions = permissions.rules;
-  const comments = [marker, ...permissions.dropped.map(droppedComment)];
-  return { path: `agents/${agent.id}.md`, content: withFrontmatter(data, agent.prompt, comments) };
+  if (permissions.length > 0) data.permissions = permissions;
+  return { path: `agents/${agent.id}.md`, content: withFrontmatter(data, agent.prompt, [marker]) };
 }
 
 export function v2CommandFile(command: ResolvedCommand, marker: string, modes: ReadonlyMap<string, AgentMode>): OutputFile {
