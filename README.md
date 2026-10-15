@@ -99,7 +99,7 @@ not create.
 Or install it with npm, which needs Node.js:
 
 ```sh
-npm install -g @ecmwf/multi-agents
+npm install -g @ecmwf.int/multi-agents
 ecmwf-multi-agents
 ```
 
@@ -195,7 +195,9 @@ make help       # every target
 
 `make integration` runs the suites against real opencode binaries without calling a model.
 `make evals` runs scenario evals with real models and uses your provider quota; see
-`evals/README.md`. `make release X.Y.Z` releases a version in one step (`DRY_RUN=1` previews).
+`evals/README.md`. `make release X.Y.Z` releases a version in one step (`DRY_RUN=1` previews)
+and needs npm, to check the package's files first (`make pack-check`); the tag it pushes
+publishes the npm package through GitHub Actions.
 
 ## Licence
 

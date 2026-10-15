@@ -29,7 +29,7 @@ cd ~/.local/share/ecmwf-multi-agents
 Or with npm, which needs Node.js:
 
 ```sh
-npm install -g @ecmwf/multi-agents
+npm install -g @ecmwf.int/multi-agents
 ecmwf-multi-agents
 ```
 
@@ -156,7 +156,7 @@ opencode to load them. Run `./install.sh` again when files were added or removed
 is safe: unchanged files stay as they are. Projects switched on by a plugin line need nothing:
 they follow the checkout, whatever files a version adds or removes.
 
-With npm, run `npm install -g @ecmwf/multi-agents`, then `ecmwf-multi-agents`.
+With npm, run `npm install -g @ecmwf.int/multi-agents`, then `ecmwf-multi-agents`.
 
 ## Checking an installation
 
