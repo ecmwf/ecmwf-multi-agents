@@ -263,31 +263,31 @@ describe.skipIf(!enabled)(`eval runner end to end (${name}, stand-in model)`, ()
     expect(record.changedFiles).toEqual([]);
   }, 400_000);
 
-  test("harness, review-reject: /review runs the reviewer as a background helper, and its completion wakes lead", async () => {
+  test("harness, review-reject: /review is answered by the reviewer in the user's session, with no child session", async () => {
     const record = keep(await runCase(byId("review-reject"), options("harness")));
     expect(record.error).toBeUndefined();
     expect(record.checks.map((check) => [check.id, check.pass])).toEqual([
       ["verdict-reject", true],
       ["no-changes", true],
     ]);
-    expect(record.metrics.childSessions).toEqual({ reviewer: 1 });
-    expect(Object.keys(record.metrics.agents).sort()).toEqual(["lead", "reviewer"]);
+    expect(record.metrics.childSessions).toEqual({});
+    expect(Object.keys(record.metrics.agents).sort()).toEqual(["reviewer"]);
     expect(record.metrics.agents.reviewer!.shellCommands).toEqual(["git diff HEAD"]);
-    expect(record.turns[0]!.answer).toBe("The reviewer rejected the change; see its blockers.");
+    expect(record.turns[0]!.answer).toStartWith("VERDICT: REJECT");
     expect(record.pass).toBe(true);
   }, 400_000);
 
-  test("harness, review-background: a background scout, then /review; both completions wake lead", async () => {
+  test("harness, review-background: a background scout, then /review in the session; the scout's completion wakes lead", async () => {
     const record = keep(await runCase(byId("review-background"), options("harness")));
     expect(record.error).toBeUndefined();
     expect(record.checks.map((check) => [check.id, check.pass])).toEqual([
       ["background-handoffs", true],
-      ["reviewer-sessions", true],
+      ["reviewer-inline", true],
       ["verdict-reject", true],
       ["completions-wake-lead", true],
       ["no-changes", true],
     ]);
-    expect(record.metrics.childSessions).toEqual({ reviewer: 1, scout: 1 });
+    expect(record.metrics.childSessions).toEqual({ scout: 1 });
     expect(record.pass).toBe(true);
   }, 400_000);
 

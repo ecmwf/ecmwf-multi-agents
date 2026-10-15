@@ -8,6 +8,7 @@
 import {
   answerMentions,
   answeredDuringPlan,
+  answersInline,
   backgroundHandoffs,
   committedLocally,
   completionsWakeLead,
@@ -488,7 +489,7 @@ export const CASES: EvalCase[] = [
   },
   {
     id: "review-background",
-    title: "/review while a background scout works: the reviewer runs as a second background helper, and both reports wake lead",
+    title: "/review while a background scout works: the reviewer answers in the session, and the scout's report wakes lead",
     setup: UNITS_BUG,
     turns: [
       {
@@ -500,11 +501,11 @@ export const CASES: EvalCase[] = [
         waitFor: "root",
         note: "lead ends its turn while the scout runs",
       },
-      { turn: { kind: "command", command: "review", arguments: "" }, note: "the review, while the scout runs; both completions arrive in the user's session" },
+      { turn: { kind: "command", command: "review", arguments: "" }, note: "the review, while the scout runs; the scout's completion arrives in the user's session" },
     ],
     checks: [
       backgroundHandoffs(1),
-      helperSessions("reviewer", 1),
+      answersInline("reviewer"),
       verdict("REJECT", ["units.py"]),
       completionsWakeLead(),
       noChanges(WORK_FILES, "the review and the scout changed no project file"),
