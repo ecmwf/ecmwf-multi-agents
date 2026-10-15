@@ -809,6 +809,7 @@ async function registerHarness(ctx, harness, options) {
           editor.update(embedded.id, (agent) => applyAgent(agent, embedded, options.home));
         if (options.defaultAgent)
           editor.default(harness.defaultAgent);
+        options.ruleOrder?.addProbe(editor);
       } catch (error) {
         reporter.internal("registering the agents", error);
       }
@@ -1400,6 +1401,76 @@ async function registerRpc(input) {
   return registration;
 }
 
+// plugin/rule-order.ts
+function sameRule(a, b) {
+  return a.action === b.action && a.resource === b.resource && a.effect === b.effect;
+}
+function findRun(rules, part) {
+  if (part.length === 0)
+    return -1;
+  for (let start = 0;start + part.length <= rules.length; start++) {
+    if (part.every((rule, index) => sameRule(rules[start + index], rule)))
+      return start;
+  }
+  return -1;
+}
+function ownRulesLast(rules, own, everyAgent) {
+  const start = findRun(rules, own);
+  if (start === -1)
+    return [...rules];
+  const end = start + own.length;
+  let shared = 0;
+  while (shared < everyAgent.length && end + shared < rules.length && sameRule(rules[end + shared], everyAgent[shared]))
+    shared++;
+  if (shared === 0)
+    return [...rules];
+  return [...rules.slice(0, start), ...rules.slice(end, end + shared), ...rules.slice(start, end), ...rules.slice(end + shared)];
+}
+
+class RuleOrder {
+  harness;
+  home;
+  active = false;
+  probe;
+  constructor(harness, home) {
+    this.harness = harness;
+    this.home = home;
+    this.probe = `${harness.name}-rule-probe`;
+  }
+  start() {
+    this.active = true;
+  }
+  addProbe(editor) {
+    if (!this.active || typeof editor.remove !== "function")
+      return;
+    editor.update(this.probe, (agent) => {
+      agent.mode = "subagent";
+      agent.hidden = true;
+      agent.permissions = [];
+    });
+  }
+  apply(editor) {
+    const probe = editor.get(this.probe);
+    if (probe === undefined)
+      return;
+    const everyAgent = [...probe.permissions ?? []];
+    editor.remove?.(this.probe);
+    if (everyAgent.length === 0)
+      return;
+    for (const embedded of this.harness.agents) {
+      if (embedded.permissions === undefined || embedded.permissions.length === 0)
+        continue;
+      const own = expandPermissions(embedded.permissions, this.home);
+      if (editor.get(embedded.id) === undefined)
+        continue;
+      editor.update(embedded.id, (agent) => {
+        if (Array.isArray(agent.permissions))
+          agent.permissions = ownRulesLast(agent.permissions, own, everyAgent);
+      });
+    }
+  }
+}
+
 // plugin/tools-v2.ts
 class SessionTracker {
   sessions = new Map;
@@ -1664,8 +1735,10 @@ function createSetup(harness, options = {}) {
         reporter.internal("reading the settings", error);
       }
       const settings = loaded.settings;
+      const ruleOrder = new RuleOrder(harness, environment?.home ?? "");
       await registerHarness(ctx, harness, {
         home: environment?.home ?? "",
+        ruleOrder,
         pluginDir: options.pluginDir ?? moduleDir(),
         defaultAgent: settings.defaultAgent,
         reporter
@@ -1745,12 +1818,20 @@ ${found.reply}`;
       }
       const late = new LateTransform(ctx, (editor) => {
         try {
+          ruleOrder.apply(editor);
+        } catch (error) {
+          reporter.internal("ordering the agents' rules", error);
+        }
+        try {
           reporter.report(applyToV2Agents(editor, harness, settings, plans));
         } catch (error) {
           reporter.internal("the agent transform", error);
         }
       }, reporter);
-      const stopWatching = watchEvents(ctx, () => void late.register(), (event) => tracker.observe(event), reporter, options.fallbackMs ?? FALLBACK_MS);
+      const stopWatching = watchEvents(ctx, () => {
+        ruleOrder.start();
+        late.register();
+      }, (event) => tracker.observe(event), reporter, options.fallbackMs ?? FALLBACK_MS);
       return async () => {
         stopWatching();
         late.stop();

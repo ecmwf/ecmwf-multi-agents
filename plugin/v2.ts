@@ -20,6 +20,9 @@
 // in between. Agent file and config changes rerun the transforms in place and keep the order
 // (core/src/config/plugin/agent.ts:55-58).
 //
+// The same late transform keeps each registered agent's own permission rules after the config's
+// top-level `permissions`, as they are with agent files (rule-order.ts).
+//
 // The default agent is the opposite case: it is set by the registration transform during setup,
 // so opencode's loader, which runs later, applies a `default_agent` from a config file over it.
 //
@@ -41,6 +44,7 @@ import { Activity, helperIds, toolCallBlock } from "./helpers.ts";
 import { registerHarness } from "./register.ts";
 import { v2Reporter, type Reporter } from "./report.ts";
 import { ProblemLog, registerRpc } from "./rpc.ts";
+import { RuleOrder } from "./rule-order.ts";
 import { loadSettings, mergeSettings, type LoadedSettings } from "./settings.ts";
 import { SessionTracker, v2Tools } from "./tools-v2.ts";
 import type { EmbeddedHarness, Environment, Settings, V2AgentEditor, V2Cleanup, V2Context, V2Event, V2Registration } from "./types.ts";
@@ -150,8 +154,10 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
       }
       const settings: Settings = loaded.settings;
 
+      const ruleOrder = new RuleOrder(harness, environment?.home ?? "");
       await registerHarness(ctx, harness, {
         home: environment?.home ?? "",
+        ruleOrder,
         pluginDir: options.pluginDir ?? moduleDir(),
         defaultAgent: settings.defaultAgent,
         reporter,
@@ -234,6 +240,11 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
         (editor) => {
           // Runs on every rebuild; opencode disables a plugin whose transform throws.
           try {
+            ruleOrder.apply(editor);
+          } catch (error) {
+            reporter.internal("ordering the agents' rules", error);
+          }
+          try {
             reporter.report(applyToV2Agents(editor, harness, settings, plans));
           } catch (error) {
             reporter.internal("the agent transform", error);
@@ -241,7 +252,16 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
         },
         reporter,
       );
-      const stopWatching = watchEvents(ctx, () => void late.register(), (event) => tracker.observe(event), reporter, options.fallbackMs ?? FALLBACK_MS);
+      const stopWatching = watchEvents(
+        ctx,
+        () => {
+          ruleOrder.start();
+          void late.register();
+        },
+        (event) => tracker.observe(event),
+        reporter,
+        options.fallbackMs ?? FALLBACK_MS,
+      );
       return async () => {
         stopWatching();
         late.stop();

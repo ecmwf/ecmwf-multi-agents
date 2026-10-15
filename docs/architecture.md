@@ -46,7 +46,8 @@ also gets a model and an effort from the active profile (see Profiles), and user
 ### Permissions
 
 Rules are ordered and the last matching rule wins. opencode places agent rules after the
-user's own rules, so an agent rule overrides the user's policy in both directions. The harness
+user's own rules, so an agent rule overrides the user's policy in both directions; the plugin
+keeps that order for the agents it registers (see [Registration](#registration)). The harness
 therefore adds mostly `deny` rules, and only these deliberate `allow` and `ask` rules: `lead`
 may ask questions and delegate to the three helpers; `lead` asks before publishing or
 destructive git commands; `scout` may run a short list of read-only inspection commands and
@@ -442,10 +443,21 @@ the harness also installed as files, the registration is harmless: same content,
 win. A test compares the agents, commands and skills the plugin registers with those opencode
 loads from the generated files.
 
-One difference remains: opencode adds a config's top-level `permissions` to every agent that
-exists when its loader runs, after the agent's own rules, while an agent file's own rules come
-after them. A user's global `permissions` therefore take precedence over a registered agent's
-rules, and not over an installed agent file's.
+Each agent's own permission rules win over the user's config either way. opencode's loader adds
+a config's top-level `permissions` to every agent that exists when it runs, and an agent file's
+own rules after them; a registered agent exists before the loader, so the config's rules would
+land after its own and win. The plugin restores the file order. Its registration transform also
+adds a hidden probe agent with no rules, which receives every rule later added to all agents: the
+config's, and those opencode adds after the config (opencode 2.0.29 denies `browser` to every
+agent). The settings transform, which runs after the loader, reads them from the probe, removes
+the probe, and moves each agent's own rules past them. Rules the user gives one agent
+(`agents.scout.permissions` in a config) stay after its own, as with files, and a user's rule
+that the agent's own rules do not match still applies: a global deny of a command `builder`
+sets no rule for stays a deny. The one order that differs from files: opencode's own
+after-config rules come before the agent's own instead of after, which changes nothing because
+the harness sets no rule for what they cover. An integration test runs `scout` and `builder`
+under a global config that allows every shell command and denies one, with the `plugins` line
+and with the files, and gets the same answers.
 
 The settings transform described under [Profiles](#profiles) runs later and applies to the
 registered agents too. A project's `plugins` line therefore brings the whole harness, with its

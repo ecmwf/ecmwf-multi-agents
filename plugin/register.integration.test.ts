@@ -4,20 +4,24 @@
 // Opt-in check, with a real opencode 2, that a project's `plugins` line brings the whole harness.
 // Runs only when ECMWF_MULTI_AGENTS_INTEGRATION=1. Binary: OPENCODE_V2_BIN (default "opencode2").
 //
-// One sandboxed `opencode serve` (tools/sandbox.sh) serves four projects: one whose config names
+// One sandboxed `opencode serve` (tools/sandbox.sh) serves these projects: one whose config names
 // a checkout-like folder in `plugins` (package.json, the root entries and dist/opencode-v2, all
 // generated from src/), one with the generated files copied into its .opencode/ and no plugin,
-// one with neither, and one with the line and a stand-in model that speaks the OpenAI
-// chat-completions protocol on 127.0.0.1. No hosted model is contacted.
+// one with both, one with neither, and two with a stand-in model that speaks the OpenAI
+// chat-completions protocol on 127.0.0.1: one with the line, one with the files. No hosted model
+// is contacted. The user's global config holds broad `permissions` (every shell command and edit
+// allowed) and one narrower deny.
 //
 // What is pinned here: the agents, commands and skills the plugin registers are the ones opencode
-// loads from the generated files; a project without the line has none of them; the RPC answers;
+// loads from the generated files, permission rules in the same order; the agents' own rules win
+// over the user's global ones, and the user's deny still applies where the agents set no rule,
+// whichever way the harness arrives; a project without the line has none of it; the RPC answers;
 // the plugin folder loads with its TUI entry; and `/review`, a subagent command the plugin
 // registers, runs the reviewer in a child session whose report wakes lead.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
-import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { embedHarness, pluginFiles } from "../tools/bundle-plugin.ts";
@@ -25,7 +29,7 @@ import { V2_VERSION, emitV2 } from "../tools/emit-v2.ts";
 import { load } from "../tools/load.ts";
 import { resolveHarness } from "../tools/resolve.ts";
 import type { OutputFile } from "../tools/types.ts";
-import type { EmbeddedHarness } from "./types.ts";
+import type { EmbeddedHarness, PermissionRule } from "./types.ts";
 
 const enabled = process.env.ECMWF_MULTI_AGENTS_INTEGRATION === "1";
 const v2Bin = process.env.OPENCODE_V2_BIN ?? "opencode2";
@@ -80,7 +84,17 @@ async function within<T>(ms: number, what: string, attempt: () => Promise<T | un
   throw new Error(`timed out waiting for ${what}${last instanceof Error ? `: ${last.message}` : ""}`);
 }
 
-/** A stand-in model: the reviewer approves, lead says it is done; every request is recorded. */
+/** The user's global rules: every shell command and edit allowed, one shell command denied. */
+const GLOBAL_PERMISSIONS = [
+  { action: "shell", resource: "*", effect: "allow" },
+  { action: "edit", resource: "*", effect: "allow" },
+  { action: "shell", resource: "touch user-denied*", effect: "deny" },
+];
+
+/**
+ * A stand-in model: the reviewer approves, lead says it is done, and an agent asked `TOUCH <name>`
+ * runs `touch <name>` in the shell once; every request is recorded.
+ */
 function standIn() {
   const seen: Array<{ agent: string; users: string[] }> = [];
   const textOf = (message: unknown): string => {
@@ -110,7 +124,16 @@ function standIn() {
       const system = messages.filter((message) => role(message) === "system" || role(message) === "developer").map(textOf).join("\n");
       const agent = system.includes("You are the reviewer") ? "reviewer" : system.includes("You are lead") ? "lead" : "other";
       const text = agent === "reviewer" ? "VERDICT: APPROVE\nCHECKED: the stand-in" : "lead done";
-      seen.push({ agent, users: messages.filter((message) => role(message) === "user").map(textOf) });
+      const users = messages.filter((message) => role(message) === "user").map(textOf);
+      seen.push({ agent, users });
+      const touch = /TOUCH (\S+)/.exec(users.at(-1) ?? "");
+      if (touch && body.stream && !messages.some((message) => role(message) === "tool")) {
+        const call = { name: "shell", arguments: JSON.stringify({ command: `touch ${touch[1]}`, description: "touch" }) };
+        return new Response(
+          `${chunk({ role: "assistant", content: null, tool_calls: [{ index: 0, id: "call_touch", type: "function", function: call }] }, null)}${chunk({}, "tool_calls")}data: [DONE]\n\n`,
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      }
       if (!body.stream) {
         return Response.json({
           id: "stand-in",
@@ -147,7 +170,7 @@ describe.skipIf(!v2Available)(`a project's plugins line in opencode ${V2_VERSION
   let stderr = "";
   let model: ReturnType<typeof standIn>;
   let embedded: EmbeddedHarness;
-  const projects = { line: "", files: "", both: "", none: "", run: "" };
+  const projects = { line: "", files: "", both: "", none: "", run: "", runFiles: "" };
 
   const call = async <T = unknown>(method: string, route: string, project: string, body?: unknown): Promise<{ status: number; data: T }> => {
     const target = new URL(route, url);
@@ -180,6 +203,19 @@ describe.skipIf(!v2Available)(`a project's plugins line in opencode ${V2_VERSION
       const list = await agents(project);
       return list.some((agent) => agent.id === "lead") ? list : undefined;
     });
+  /** Ask an agent, in a new session, to run `touch <name>`: how the call ended and whether the file exists. */
+  const touch = async (project: string, agent: string, name: string) => {
+    const session = (await call<{ id: string }>("POST", "/api/session", project, { agent, location: { directory: project } })).data;
+    const sent = await call("POST", `/api/session/${session.id}/prompt`, project, { text: `TOUCH ${name}` });
+    expect(sent.status).toBeLessThan(300);
+    type Content = { type: string; name?: string; state?: { status?: string } };
+    const result = await within(60_000, `${agent}'s shell call in ${path.basename(project)}`, async () =>
+      (await get<Array<{ content?: Content[] }>>(`/api/session/${session.id}/message`, project))
+        .flatMap((message) => message.content ?? [])
+        .find((item) => item.type === "tool" && item.name === "shell" && (item.state?.status === "completed" || item.state?.status === "error")),
+    );
+    return { status: result.state?.status, exists: existsSync(path.join(project, name)) };
+  };
   const pick = (agent: V2Agent | undefined) =>
     agent && {
       system: agent.system,
@@ -222,6 +258,14 @@ describe.skipIf(!v2Available)(`a project's plugins line in opencode ${V2_VERSION
     projects.run = gitProject(path.join(box, "run"), { plugins: [line], model: "mock/m1", provider: { mock: provider } });
     // Every agent on the stand-in's session model.
     writeAll(path.join(projects.run, ".opencode"), [{ path: `${NAME}.jsonc`, content: '{ "profile": "inherit" }\n' }]);
+    projects.runFiles = gitProject(path.join(box, "run-files"), { model: "mock/m1", provider: { mock: provider } });
+    writeAll(
+      path.join(projects.runFiles, ".opencode"),
+      generated.map((file) => (file.path.startsWith("agents/") ? { ...file, content: file.content.replace(/^model: .*$/m, 'model: "mock/m1"') } : file)),
+    );
+    const globalConfig = path.join(box, "home", ".config", "opencode");
+    mkdirSync(globalConfig, { recursive: true });
+    writeFileSync(path.join(globalConfig, "opencode.json"), `${JSON.stringify({ permissions: GLOBAL_PERMISSIONS }, null, 2)}\n`);
 
     const password = randomBytes(16).toString("hex");
     auth = `Basic ${btoa(`opencode:${password}`)}`;
@@ -270,9 +314,19 @@ describe.skipIf(!v2Available)(`a project's plugins line in opencode ${V2_VERSION
     const fromFiles = await withLead(projects.files);
     const fromPlugin = await agents(projects.line);
     for (const id of AGENTS) {
-      const want = pick(fromFiles.find((agent) => agent.id === id));
-      expect(want?.system).toBeString();
-      expect(pick(fromPlugin.find((agent) => agent.id === id))).toEqual(want);
+      const want = pick(fromFiles.find((agent) => agent.id === id))!;
+      expect(want.system).toBeString();
+      // The agent's own rules come after the user's global ones, as from the file. Rules opencode
+      // adds to every agent after the config (a `browser` deny) come before them instead of after:
+      // nothing in the agent's own rules matches them.
+      const own = embedded.agents.find((agent) => agent.id === id)!.permissions!;
+      const rules = want.permissions!;
+      const start = rules.findIndex((_, index) => JSON.stringify(rules.slice(index, index + own.length)) === JSON.stringify(own));
+      expect(JSON.stringify(rules.slice(start - GLOBAL_PERMISSIONS.length, start))).toBe(JSON.stringify(GLOBAL_PERMISSIONS));
+      const later = rules.slice(start + own.length);
+      expect(later.length).toBeLessThan(own.length);
+      for (const rule of later) expect(own.some((item) => item.action === (rule as PermissionRule).action)).toBe(false);
+      expect(pick(fromPlugin.find((agent) => agent.id === id))).toEqual({ ...want, permissions: [...rules.slice(0, start), ...later, ...own] });
     }
 
     const commands = async (project: string) => (await get<Array<{ name: string; description?: string }>>("/api/command", project)).filter((command) => !command.name.includes(":"));
@@ -313,6 +367,22 @@ describe.skipIf(!v2Available)(`a project's plugins line in opencode ${V2_VERSION
       expect({ ...got, permissions: undefined }).toEqual({ ...want, permissions: undefined });
     }
   }, 120_000);
+
+  test("the agents' own rules win over the user's global permissions, whichever way the harness arrives", async () => {
+    await active(projects.run);
+    await Bun.sleep(4_000);
+    await withLead(projects.runFiles);
+    for (const [project, where] of [
+      [projects.run, "line"],
+      [projects.runFiles, "files"],
+    ] as const) {
+      // scout's own rules deny every shell command but a few read-only ones; the user allows all.
+      expect(await touch(project, "scout", `scout-${where}`)).toEqual({ status: "error", exists: false });
+      // builder sets no rule for `touch`: the user's rules decide, the allow and the narrower deny.
+      expect(await touch(project, "builder", `builder-${where}`)).toEqual({ status: "completed", exists: true });
+      expect(await touch(project, "builder", `user-denied-${where}`)).toEqual({ status: "error", exists: false });
+    }
+  }, 300_000);
 
   test("a project without the line in the same service has none of it", async () => {
     await active(projects.line);

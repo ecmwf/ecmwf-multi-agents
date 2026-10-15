@@ -16,6 +16,7 @@
 
 import path from "node:path";
 import type { Reporter } from "./report.ts";
+import type { RuleOrder } from "./rule-order.ts";
 import type {
   EmbeddedAgent,
   EmbeddedCommand,
@@ -219,6 +220,8 @@ export interface RegisterOptions {
   /** Make lead the default agent. */
   defaultAgent: boolean;
   reporter: Reporter;
+  /** Adds the probe that keeps the agents' own rules after the config's (rule-order.ts). */
+  ruleOrder?: RuleOrder;
 }
 
 /** Register agents, the default agent, skills and commands. Each part fails on its own. */
@@ -230,6 +233,7 @@ export async function registerHarness(ctx: V2Context, harness: EmbeddedHarness, 
       try {
         for (const embedded of harness.agents) editor.update(embedded.id, (agent) => applyAgent(agent, embedded, options.home));
         if (options.defaultAgent) editor.default(harness.defaultAgent);
+        options.ruleOrder?.addProbe(editor);
       } catch (error) {
         reporter.internal("registering the agents", error);
       }
