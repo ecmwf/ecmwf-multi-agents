@@ -76,6 +76,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
   the npm package's command, instead of always `./install.sh`.
 - `doctor` reports `lead`'s review line as your settings make it: the plugin's RPC no longer
   answers before the settings reach the agents.
+- `npx @ecmwf.int/multi-agents` copies the files instead of linking them into npm's cache,
+  which npm may clear.
+- An empty `--project=` or `--central=` is refused instead of falling back to an install in
+  your own opencode config.
 
 ### Removed
 
