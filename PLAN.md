@@ -644,6 +644,12 @@ merges.
 - [~] Samet: Plugin registers agents, skills, commands and the default agent, so a project's
   `plugins` line or the npm package brings the harness; a test compares registered agents with
   agents loaded from files; `doctor` warns when a global install masks a project line
+- [~] Samet: Agents brought by a `plugins` line keep their own rules over the user's global
+  `permissions`: opencode appends a config's top-level `permissions` after a
+  plugin-registered agent's rules but before an agent file's, so a global "allow all shell"
+  would loosen `scout`'s read-only shell rules only when the harness comes from the line.
+  Candidate: the plugin's `permission` `evaluate` hook (it sees allow and ask decisions)
+  re-applies the agent's own rules; integration test with a global allow-all
 - [~] Samet: Inline `/review` and `/progress` owned by the plugin, with the `context` hook
   isolation and the switch back; integration tests on the stand-in (idle, busy, report during
   the review)
