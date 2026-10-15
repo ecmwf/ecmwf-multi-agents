@@ -28,7 +28,7 @@ import { V2_VERSION, emitV2 } from "../tools/emit-v2.ts";
 import type { OutputFile, ResolvedHarness } from "../tools/types.ts";
 import { INLINE_USER_AND_REPORTS_WAKE_TEXT, INLINE_USER_WAKE_TEXT, INLINE_WAKE_TEXT, WAKE_TEXT } from "./answer-first.ts";
 import { HELPER_TOOLS, STATUS_LINES } from "./helpers.ts";
-import { HELD_NOTE } from "./inline.ts";
+import { BEFORE_BRIEF_FOR_TESTS, HELD_NOTE } from "./inline.ts";
 import { resolvedFixture } from "./testing.ts";
 
 const enabled = process.env.ECMWF_MULTI_AGENTS_INTEGRATION === "1";
@@ -170,8 +170,10 @@ function standIn(script: Script) {
         else if (results < STEPS) tool = { name: script.shell, args: { command: `sleep ${STEP_SECONDS}`, description: "slow step" } };
         else text = "builder finished";
       } else if (agent === "reviewer") {
-        // A review answers at once, or after REVIEW_STEPS `sleep` steps when its request says SLOW_REVIEW.
-        if (users.some((user) => user.includes("SLOW_REVIEW")) && results < REVIEW_STEPS)
+        // A review answers at once, or after REVIEW_STEPS `sleep` steps when its request says SLOW_REVIEW;
+        // the plugin's note to end a turn is answered as it asks.
+        if (last === HELD_NOTE) text = "done";
+        else if (users.some((user) => user.includes("SLOW_REVIEW")) && results < REVIEW_STEPS)
           tool = { name: script.shell, args: { command: `sleep ${STEP_SECONDS}`, description: "slow review step" } };
         else text = "VERDICT: APPROVE";
       } else if (agent === "scout") {
@@ -295,6 +297,27 @@ async function startServer(box: Sandbox, bin: string, env: Record<string, string
     await stop();
     throw error;
   }
+}
+
+/**
+ * A plugin for these tests alone: it pauses an inline run whose brief says `PAUSE_BRIEF <tag>`
+ * between the switch to the helper and the brief, until the file `resume-<tag>` appears in `dir`.
+ */
+function pausePlugin(dir: string): string {
+  return `import { existsSync } from "node:fs";
+import path from "node:path";
+export default {
+  id: "inline-pause",
+  setup: async () => {
+    globalThis[Symbol.for(${JSON.stringify(BEFORE_BRIEF_FOR_TESTS.description)})] = async ({ brief }) => {
+      const tag = /PAUSE_BRIEF (\\S+)/.exec(brief)?.[1];
+      if (tag === undefined) return;
+      const deadline = Date.now() + 60000;
+      while (!existsSync(path.join(${JSON.stringify(dir)}, "resume-" + tag)) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
+    };
+  },
+};
+`;
 }
 
 let tags = 0;
@@ -486,13 +509,15 @@ describe.skipIf(!v2Available)(`background helpers in opencode ${V2_VERSION}`, ()
         mkdirSync(path.dirname(path.join(box.config, file.path)), { recursive: true });
         writeFileSync(path.join(box.config, file.path), file.content);
       }
+      writeFileSync(path.join(box.config, "plugins", "inline-pause.js"), pausePlugin(box.dir));
       writeFileSync(path.join(box.config, "ecmwf-multi-agents.jsonc"), '{ "profile": "inherit", "agents": { "reviewer": { "model": "mock/m2" } } }\n');
       const password = randomBytes(16).toString("hex");
       auth = `Basic ${btoa(`opencode:${password}`)}`;
       server = await startServer(box, v2Bin, { OPENCODE_PASSWORD: password });
-      await within(60_000, "the plugin to be active", async () => {
+      await within(60_000, "the plugins to be active", async () => {
         const plugins = await api<Array<{ id?: string; state?: { status?: string } }>>("GET", "/api/plugin");
-        return plugins.some((plugin) => plugin.id === "ecmwf-multi-agents" && plugin.state?.status === "active") ? true : undefined;
+        const active = (id: string) => plugins.some((plugin) => plugin.id === id && plugin.state?.status === "active");
+        return active("ecmwf-multi-agents") && active("inline-pause") ? true : undefined;
       });
       await Bun.sleep(1_000);
     }, 300_000);
@@ -684,6 +709,39 @@ describe.skipIf(!v2Available)(`background helpers in opencode ${V2_VERSION}`, ()
       const wakes = model.all(tag).filter((item) => [INLINE_WAKE_TEXT, INLINE_USER_WAKE_TEXT, INLINE_USER_AND_REPORTS_WAKE_TEXT, WAKE_TEXT].includes(item.users.at(-1) ?? ""));
       expect(wakes.map((item) => item.agent)).toEqual(["lead"]);
       expect(model.all(tag).filter((item) => item.agent === "reviewer" && item.users.some((user) => user.includes("QUESTION")))).toEqual([]);
+    }, 120_000);
+
+    test("a message sent between the switch to the reviewer and its brief: the reviewer only replies done, the review runs, lead answers after it", async () => {
+      const tag = nextTag();
+      const session = await start(`HELLO ${tag}`);
+      await within(20_000, "lead's turn to end", async () => model.lead(tag).find((item) => item.reply === "lead done"));
+      await command(session, "review", `PAUSE_BRIEF ${tag}`);
+      // The run pauses after the switch, so the session is idle and the reviewer's.
+      await within(20_000, "the switch to the reviewer", async () => ((await agentOf(session)) === "reviewer" ? true : undefined));
+      const sentAt = Date.now();
+      await api("POST", `/api/session/${session}/prompt`, { text: `QUESTION ${tag}`, delivery: "steer" });
+      const turn = await within(20_000, "the reviewer's turn", async () => model.seen.find((item) => item.agent === "reviewer" && item.at >= sentAt));
+      await Bun.sleep(1_000);
+      writeFileSync(path.join(box.dir, `resume-${tag}`), "");
+      // Only what opencode adds (a note that the tools changed) and the plugin's note to end the turn.
+      expect(turn.users.at(-1)).toBe(HELD_NOTE);
+      expect(turn.users.join("\n")).not.toContain(tag);
+      expect(turn.reply).toBe("done");
+      const verdict = await within(20_000, "the verdict", async () => reviews(tag).find((item) => item.reply === "VERDICT: APPROVE"));
+      expect(verdict.users).toEqual([`Review PAUSE_BRIEF ${tag}`]);
+      expect(verdict.model).toBe("m2");
+      const before = model.seen.filter((item) => item.agent === "reviewer" && item.at >= sentAt && item.at < verdict.at);
+      expect(before.map((item) => item.reply)).toEqual(["done"]);
+      const answer = await within(20_000, "lead's answer", async () => model.lead(tag).find((item) => item.reply === "lead answered the question"));
+      expect(answer.at).toBeGreaterThan(verdict.at);
+      expect(answer.model).toBe("m1");
+      expect(answer.users.at(-1)).toBe(INLINE_USER_WAKE_TEXT);
+      expect(answer.users).toContain(`QUESTION ${tag}`);
+      await backToLead(session);
+      await Bun.sleep(1_000);
+      const wakes = model.seen.filter((item) => item.at >= sentAt && [INLINE_WAKE_TEXT, INLINE_USER_WAKE_TEXT, INLINE_USER_AND_REPORTS_WAKE_TEXT, WAKE_TEXT].includes(item.users.at(-1) ?? ""));
+      expect(wakes.map((item) => item.agent)).toEqual(["lead"]);
+      expect(model.seen.filter((item) => item.agent === "reviewer" && item.users.some((user) => user.includes("QUESTION")))).toEqual([]);
     }, 120_000);
 
     test("a stray run of the helper after a review: the report is held back from it, lead gets the session back and is woken", async () => {

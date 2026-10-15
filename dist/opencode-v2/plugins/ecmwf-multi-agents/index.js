@@ -893,27 +893,43 @@ function briefIndex(messages, brief) {
   }
   return -1;
 }
-function isolateHelperRequest(messages, brief) {
+function isolateHelperRequest(messages, brief, known) {
   const start = briefIndex(messages, brief);
-  if (start > 0)
-    messages.splice(0, start);
-  const kinds = messages.map((message, index) => isReport(message) ? "reports" : start >= 0 && index > 0 && isUserMessage(message) ? "user" : undefined);
-  let tail = messages.length;
-  while (tail > 0 && kinds[tail - 1] !== undefined)
-    tail--;
-  const answeredBefore = tail < messages.length && messages[tail - 1]?.role === "assistant";
+  let marker = -1;
+  if (known !== undefined) {
+    for (let index = messages.length - 1;index >= 0 && marker < 0; index--) {
+      const id = messages[index]?.id;
+      if (typeof id === "string" && known.has(id))
+        marker = index;
+    }
+  }
+  const isNew = (index) => start >= 0 && index > start || known !== undefined && index > marker;
+  const kinds = messages.map((message, index) => {
+    if (index === start)
+      return;
+    if (isReport(message))
+      return isNew(index) || start < 0 && known === undefined ? "reports" : undefined;
+    return isNew(index) && isUserMessage(message) ? "user" : undefined;
+  });
+  const cut = start >= 0 ? start : known !== undefined ? marker + 1 : 0;
+  const leftOut = (index) => index < cut || kinds[index] !== undefined;
   const held = { reports: [], user: [] };
   for (let index = messages.length - 1;index >= 0; index--) {
     const kind = kinds[index];
-    if (kind === undefined)
-      continue;
-    held[kind].unshift(messageKey(messages[index]));
-    messages.splice(index, 1);
+    if (kind !== undefined)
+      held[kind].unshift(messageKey(messages[index]));
   }
-  if (answeredBefore)
+  const endsLeftOut = messages.length > 0 && leftOut(messages.length - 1);
+  for (let index = messages.length - 1;index >= 0; index--)
+    if (leftOut(index))
+      messages.splice(index, 1);
+  const last = messages.at(-1);
+  const beforeBrief = start < 0 && known !== undefined && held.reports.length + held.user.length > 0;
+  if (beforeBrief || endsLeftOut && (last === undefined || last.role === "assistant"))
     messages.push({ role: "user", content: [{ type: "text", text: HELD_NOTE }] });
   return held;
 }
+var BEFORE_BRIEF_FOR_TESTS = Symbol.for("ecmwf-multi-agents.testing.beforeBrief");
 
 class InlineRuns {
   active = new Map;
@@ -1018,7 +1034,8 @@ class Inline {
     const ownerModel = onHelper ? before?.ownerModel : isModel(info?.model) ? info.model : undefined;
     const helperModel = (command.model === undefined ? undefined : parseModel(command.model)) ?? await this.modelOf(command.agent);
     const brief = fillTemplate(command.template, typeof invocation.prompt?.text === "string" ? invocation.prompt.text : "");
-    const run = { command: command.name, helper: command.agent, owner, ownerModel, switchedModel: false, brief, held: new Set, heldUser: new Set };
+    const known = await this.knownMessages(sessionID);
+    const run = { command: command.name, helper: command.agent, owner, ownerModel, switchedModel: false, brief, held: new Set, heldUser: new Set, ...known ? { known } : {} };
     this.runs.start(sessionID, run);
     try {
       await session.switchAgent({ sessionID, agent: command.agent });
@@ -1026,12 +1043,25 @@ class Inline {
         run.switchedModel = true;
         await session.switchModel({ sessionID, model: helperModel });
       }
+      const pause = globalThis[BEFORE_BRIEF_FOR_TESTS];
+      if (typeof pause === "function")
+        await pause({ sessionID, brief });
       await session.prompt({ ...invocation.prompt, sessionID, text: brief, metadata: { [INLINE_MARK]: command.name }, delivery: "steer" });
       await session.wait({ sessionID });
     } finally {
       this.runs.finish(sessionID);
       await this.restore(sessionID, run);
       await this.wake(sessionID, { reports: [...run.held], user: [...run.heldUser] });
+    }
+  }
+  async knownMessages(sessionID) {
+    try {
+      const messages = unwrap(await this.deps.ctx.session?.context?.({ sessionID }));
+      if (!Array.isArray(messages))
+        return;
+      return new Set(messages.flatMap((message) => typeof message?.id === "string" ? [message.id] : []));
+    } catch {
+      return;
     }
   }
   async restore(sessionID, run) {
@@ -1089,7 +1119,7 @@ class Inline {
     if (kind === "leave")
       return false;
     if (kind === "inline") {
-      const held = isolateHelperRequest(event.messages, run.brief);
+      const held = isolateHelperRequest(event.messages, run.brief, run.known);
       for (const key of held.reports)
         run.held.add(key);
       for (const key of held.user)

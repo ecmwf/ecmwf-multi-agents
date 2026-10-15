@@ -4,7 +4,7 @@
 import { describe, expect, test } from "bun:test";
 import { INLINE_USER_AND_REPORTS_WAKE_TEXT, INLINE_USER_WAKE_TEXT, INLINE_WAKE_TEXT, V2_CONTINUE_NOTES, WAKE_TEXT, heldReportsV2, stepsV2 } from "./answer-first.ts";
 import { helperIds } from "./helpers.ts";
-import { HELD_NOTE, INLINE_MARK, Inline, InlineRuns, briefIndex, classifyHelperRequest, inlineCommands, isUserMessage, isolateHelperRequest, type InlineRun } from "./inline.ts";
+import { BEFORE_BRIEF_FOR_TESTS, HELD_NOTE, INLINE_MARK, Inline, InlineRuns, briefIndex, classifyHelperRequest, inlineCommands, isUserMessage, isolateHelperRequest, type InlineRun } from "./inline.ts";
 import type { Reporter } from "./report.ts";
 import { embeddedFixture } from "./testing.ts";
 import { SessionTracker } from "./tools-v2.ts";
@@ -90,6 +90,49 @@ describe("isolateHelperRequest", () => {
     expect(messages).toHaveLength(3);
   });
 
+  describe("with the messages known before the switch", () => {
+    const known = new Set(["u0", "a0", "r0"]);
+    const lead = () => [typed("hello", "u0"), { ...said("hi"), id: "a0" }, report("r0")];
+
+    test("a message sent before the brief starts a turn of the helper's: held, the conversation before dropped, the helper asked to end", () => {
+      const messages = [...lead(), typed("Is main safe to merge?", "u1")];
+      expect(isolateHelperRequest(messages, "Review main", known)).toEqual({ reports: [], user: ["u1"] });
+      expect(messages.map(text)).toEqual([HELD_NOTE]);
+    });
+
+    test("before the brief the note comes last, after what opencode added, such as a note that the tools changed", () => {
+      const update: V2ModelMessage = { role: "system", content: [{ type: "text", text: "Code Mode tools are no longer available." }] };
+      const messages = [...lead(), typed("Is main safe to merge?", "u1"), update];
+      expect(isolateHelperRequest(messages, "Review main", known)).toEqual({ reports: [], user: ["u1"] });
+      expect(messages.map(text)).toEqual(["Code Mode tools are no longer available.", HELD_NOTE]);
+    });
+
+    test("a report sent before the brief is held with it; the report lead saw before stays out of the count", () => {
+      const messages = [...lead(), report("r1"), typed("And the tests?", "u1")];
+      expect(isolateHelperRequest(messages, "Review main", known)).toEqual({ reports: ["r1"], user: ["u1"] });
+      expect(messages.map(text)).toEqual([HELD_NOTE]);
+    });
+
+    test("once the brief is there, a message sent before it still counts as held, and so does one after it", () => {
+      const messages = [...lead(), typed("Is main safe to merge?", "u1"), { ...said("done"), id: "a1" }, brief(), ...step("c1"), typed("And the tests?", "u2"), ...step("c2")];
+      expect(isolateHelperRequest(messages, "Review main", known)).toEqual({ reports: [], user: ["u1", "u2"] });
+      expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "tool", "assistant", "tool"]);
+      expect(text(messages[0])).toBe(text(brief()));
+    });
+
+    test("messages before the switch are lead's: left alone and not counted", () => {
+      const messages = [...lead(), brief(), said("VERDICT: APPROVE")];
+      expect(isolateHelperRequest(messages, "Review main", known)).toEqual(none);
+      expect(messages.map(text)).toEqual([text(brief()), "VERDICT: APPROVE"]);
+    });
+
+    test("a note opencode adds before the brief is not the user's: it stays", () => {
+      const messages = [...lead(), user(V2_CONTINUE_NOTES[0]!, "n1", {})];
+      expect(isolateHelperRequest(messages, "Review main", known)).toEqual(none);
+      expect(messages.map(text)).toEqual([V2_CONTINUE_NOTES[0]]);
+    });
+  });
+
   test("no note when nothing was left out, or when a tool result comes last", () => {
     const answered = [brief(), said("VERDICT: APPROVE")];
     isolateHelperRequest(answered, undefined);
@@ -171,6 +214,8 @@ class FakeSessions {
   private waiting: Array<() => void> = [];
   autoRelease = true;
   agentModels: Record<string, V2ModelRef | undefined> = {};
+  /** The session's stored messages, as `context` returns them. */
+  stored: Array<{ id: string; type: string }> = [];
 
   release(): void {
     this.waiting.shift()?.();
@@ -205,6 +250,7 @@ class FakeSessions {
         this.prompts.push(input);
         return {};
       },
+      context: async () => ({ data: this.stored }),
       synthetic: async (input) => {
         this.calls.push("wake");
         this.synthetics.push(input);
@@ -365,6 +411,62 @@ describe("Inline", () => {
   test("a user's message and reports held in one run: one wake, to answer the user first", async () => {
     const { sessions } = await runWith([user("Review main", "msg_b"), ...step("c1"), report("r1"), typed("And the tests?", "u1"), ...step("c2")]);
     expect(sessions.synthetics.map((item) => item.text)).toEqual([INLINE_USER_AND_REPORTS_WAKE_TEXT]);
+  });
+
+  test("a message sent between the switch and the brief: the helper only ends its turn, and lead is woken once to answer it", async () => {
+    const sessions = new FakeSessions();
+    sessions.stored = [
+      { id: "u0", type: "user" },
+      { id: "a0", type: "assistant" },
+    ];
+    sessions.autoRelease = false;
+    const { inline, review } = makeInline(sessions);
+    const paused: Array<{ sessionID: string; brief: string }> = [];
+    let resume = () => {};
+    const global = globalThis as Record<symbol, unknown>;
+    global[BEFORE_BRIEF_FOR_TESTS] = (input: { sessionID: string; brief: string }) => {
+      paused.push(input);
+      return new Promise<void>((resolve) => (resume = resolve));
+    };
+    try {
+      await review.execute({ sessionID: "s", prompt: { text: "main" } });
+      sessions.release();
+      await settle();
+      expect(paused).toEqual([{ sessionID: "s", brief: "Review main" }]);
+      expect(sessions.calls).toEqual(["wait", "agent:reviewer"]);
+      const asked = typed("Is main safe to merge?", "u1");
+      const early = [typed("hello", "u0"), { ...said("hi"), id: "a0" }, asked];
+      expect(await inline.context({ sessionID: "s", agent: "reviewer", messages: early })).toBe(true);
+      expect(early.map(text)).toEqual([HELD_NOTE]);
+      resume();
+      await settle();
+      const later = [typed("hello", "u0"), { ...said("hi"), id: "a0" }, asked, { ...said("done"), id: "a1" }, brief("Review main"), said("VERDICT")];
+      expect(await inline.context({ sessionID: "s", agent: "reviewer", messages: later })).toBe(true);
+      expect(later.map(text)).toEqual(["Review main", "VERDICT"]);
+      sessions.release();
+      await settle();
+    } finally {
+      delete global[BEFORE_BRIEF_FOR_TESTS];
+    }
+    expect(sessions.calls).toEqual(["wait", "agent:reviewer", "prompt", "wait", "agent:lead", "wake"]);
+    expect(sessions.synthetics.map((item) => item.text)).toEqual([INLINE_USER_WAKE_TEXT]);
+    expect(inline.runs.last("s")?.heldUser).toEqual(new Set(["u1"]));
+  });
+
+  test("without the session's messages, a message before the brief is left alone as before", async () => {
+    const sessions = new FakeSessions();
+    delete (sessions.ctx.session as { context?: unknown }).context;
+    sessions.autoRelease = false;
+    const { inline, review } = makeInline(sessions);
+    await review.execute({ sessionID: "s", prompt: { text: "main" } });
+    sessions.release();
+    await settle();
+    const messages = [typed("hello", "u0"), said("hi"), typed("Is main safe to merge?", "u1")];
+    expect(await inline.context({ sessionID: "s", agent: "reviewer", messages })).toBe(true);
+    expect(messages).toHaveLength(3);
+    sessions.release();
+    await settle();
+    expect(sessions.synthetics).toEqual([]);
   });
 
   test("a stray request with the user's message: held back, the owner restored, lead woken to answer it once", async () => {

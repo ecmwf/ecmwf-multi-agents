@@ -24,7 +24,10 @@
 // TUI sends a message typed during a run with delivery `steer`, so it joins the helper's turn
 // (tui/src/component/prompt/index.tsx:1092 at v2.0.29), but it is meant for lead. They stay in
 // the session, and lead sees them on its next turn; when any were held, one queued message wakes
-// lead once the run has ended, to answer the user first.
+// lead once the run has ended, to answer the user first. A message sent between the switch and the
+// brief finds the session idle and starts a turn of the helper's: the run notes the session's
+// messages before the switch, so that turn too leaves out the user's message, and the earlier
+// conversation, and the helper only replies "done".
 //
 // Between the helper's end and the switch back (about 16 ms) a report or a message can start a run
 // that is still the helper's. Such a stray request is treated the same way, the owner is restored
@@ -100,27 +103,47 @@ export interface HeldMessages {
 
 /**
  * Keep a helper's request to its brief: drop the messages before it and leave out the reports
- * and, after the brief, the user's own messages. When those were the only thing after the
- * helper's own last answer, a short note asks it to end, so the request does not end with an
- * assistant message. Changes `messages` in place, because opencode sends that array, and returns
- * the keys of the messages left out. Without a brief the user's messages stay: nothing tells
- * which came after it.
+ * and the user's own messages that came after the run began. When those were the last thing in
+ * the request, after the helper's own answer or with nothing left, or came before the brief, a
+ * short note asks it to end, so the request does not end with an assistant message and the
+ * helper does not answer them. Changes `messages` in place, because
+ * opencode sends that array, and returns the keys of the messages left out.
+ *
+ * `known` holds the ids of the session's messages when the run began: everything after the last
+ * of them is new. A message the user sends after the switch to the helper but before the brief
+ * starts a turn of the helper's; its request keeps none of the earlier conversation, which is
+ * lead's. Without `known` only the messages after the brief count as new, and without a brief
+ * either the user's messages stay: nothing tells which came after the run began.
  */
-export function isolateHelperRequest(messages: V2ModelMessage[], brief: string | undefined): HeldMessages {
+export function isolateHelperRequest(messages: V2ModelMessage[], brief: string | undefined, known?: ReadonlySet<string>): HeldMessages {
   const start = briefIndex(messages, brief);
-  if (start > 0) messages.splice(0, start);
-  const kinds = messages.map((message, index) => (isReport(message) ? "reports" : start >= 0 && index > 0 && isUserMessage(message) ? "user" : undefined));
-  let tail = messages.length;
-  while (tail > 0 && kinds[tail - 1] !== undefined) tail--;
-  const answeredBefore = tail < messages.length && messages[tail - 1]?.role === "assistant";
+  let marker = -1;
+  if (known !== undefined) {
+    for (let index = messages.length - 1; index >= 0 && marker < 0; index--) {
+      const id = messages[index]?.id;
+      if (typeof id === "string" && known.has(id)) marker = index;
+    }
+  }
+  const isNew = (index: number) => (start >= 0 && index > start) || (known !== undefined && index > marker);
+  const kinds = messages.map((message, index) => {
+    if (index === start) return undefined;
+    if (isReport(message)) return isNew(index) || (start < 0 && known === undefined) ? "reports" : undefined;
+    return isNew(index) && isUserMessage(message) ? "user" : undefined;
+  });
+  const cut = start >= 0 ? start : known !== undefined ? marker + 1 : 0;
+  const leftOut = (index: number) => index < cut || kinds[index] !== undefined;
   const held: HeldMessages = { reports: [], user: [] };
   for (let index = messages.length - 1; index >= 0; index--) {
     const kind = kinds[index];
-    if (kind === undefined) continue;
-    held[kind].unshift(messageKey(messages[index]!));
-    messages.splice(index, 1);
+    if (kind !== undefined) held[kind].unshift(messageKey(messages[index]!));
   }
-  if (answeredBefore) messages.push({ role: "user", content: [{ type: "text", text: HELD_NOTE }] });
+  const endsLeftOut = messages.length > 0 && leftOut(messages.length - 1);
+  for (let index = messages.length - 1; index >= 0; index--) if (leftOut(index)) messages.splice(index, 1);
+  const last = messages.at(-1);
+  // Before the brief the helper has nothing to do: whatever opencode added (such as a note that its
+  // tools changed, a system message), it only ends its turn.
+  const beforeBrief = start < 0 && known !== undefined && held.reports.length + held.user.length > 0;
+  if (beforeBrief || (endsLeftOut && (last === undefined || last.role === "assistant"))) messages.push({ role: "user", content: [{ type: "text", text: HELD_NOTE }] });
   return held;
 }
 
@@ -137,7 +160,12 @@ export interface InlineRun {
   held: Set<string>;
   /** The user's messages held back from the helper. */
   heldUser: Set<string>;
+  /** The ids of the session's messages before the switch to the helper, when opencode gave them. */
+  known?: ReadonlySet<string>;
 }
+
+/** Tests only: a global that, when a function, runs between the switch to the helper and the brief. */
+export const BEFORE_BRIEF_FOR_TESTS = Symbol.for("ecmwf-multi-agents.testing.beforeBrief");
 
 /** What the plugin knows about inline runs, by session. */
 export class InlineRuns {
@@ -279,7 +307,8 @@ export class Inline {
     const ownerModel = onHelper ? before?.ownerModel : isModel(info?.model) ? info.model : undefined;
     const helperModel = (command.model === undefined ? undefined : parseModel(command.model)) ?? (await this.modelOf(command.agent));
     const brief = fillTemplate(command.template, typeof invocation.prompt?.text === "string" ? invocation.prompt.text : "");
-    const run: InlineRun = { command: command.name, helper: command.agent, owner, ownerModel, switchedModel: false, brief, held: new Set(), heldUser: new Set() };
+    const known = await this.knownMessages(sessionID);
+    const run: InlineRun = { command: command.name, helper: command.agent, owner, ownerModel, switchedModel: false, brief, held: new Set(), heldUser: new Set(), ...(known ? { known } : {}) };
     this.runs.start(sessionID, run);
     try {
       await session.switchAgent!({ sessionID, agent: command.agent });
@@ -287,12 +316,26 @@ export class Inline {
         run.switchedModel = true;
         await session.switchModel({ sessionID, model: helperModel });
       }
+      const pause = (globalThis as Record<symbol, unknown>)[BEFORE_BRIEF_FOR_TESTS];
+      if (typeof pause === "function") await pause({ sessionID, brief });
       await session.prompt!({ ...invocation.prompt, sessionID, text: brief, metadata: { [INLINE_MARK]: command.name }, delivery: "steer" });
       await session.wait!({ sessionID });
     } finally {
       this.runs.finish(sessionID);
       await this.restore(sessionID, run);
       await this.wake(sessionID, { reports: [...run.held], user: [...run.heldUser] });
+    }
+  }
+
+  /** The ids of the session's messages now, read before the switch: a message after them is new. */
+  private async knownMessages(sessionID: string): Promise<Set<string> | undefined> {
+    try {
+      const messages = unwrap<Array<{ id?: unknown }>>(await this.deps.ctx.session?.context?.({ sessionID }));
+      if (!Array.isArray(messages)) return undefined;
+      return new Set(messages.flatMap((message) => (typeof message?.id === "string" ? [message.id] : [])));
+    } catch {
+      // Without them only the messages after the brief count as new, as before.
+      return undefined;
     }
   }
 
@@ -350,7 +393,7 @@ export class Inline {
     const kind = classifyHelperRequest(agent, run, before !== undefined, await this.isRoot(sessionID), this.deps.helpers);
     if (kind === "leave") return false;
     if (kind === "inline") {
-      const held = isolateHelperRequest(event.messages, run!.brief);
+      const held = isolateHelperRequest(event.messages, run!.brief, run!.known);
       for (const key of held.reports) run!.held.add(key);
       for (const key of held.user) run!.heldUser.add(key);
       return true;
