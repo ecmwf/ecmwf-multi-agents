@@ -122,11 +122,129 @@ installed copy first and ignores the project's as a "Duplicate plugin ID", so th
 version has no effect. `doctor` warns about it. Files installed into the project with
 `--project` next to a line also work, and the files win.
 
+## Shared machines (central install)
+
+On a shared machine, such as an HPC login node, an administrator can install the harness once
+for everyone. Each user switches it on with one environment variable, usually from a module
+file, and keeps their own opencode config.
+
+```mermaid
+flowchart LR
+  A["install.sh --central DIR<br>(administrator)"] --> D["DIR/opencode.json<br>prompts, skills, plugin<br>(read-only)"]
+  M["module load<br>OPENCODE_CONFIG=DIR/opencode.json"] --> S["opencode service<br>(per user)"]
+  E["central-enable<br>(once per user)"] --> S
+  D --> S
+```
+
+### For the administrator
+
+```sh
+git clone <repository-url> /opt/ecmwf-multi-agents-src
+/opt/ecmwf-multi-agents-src/install.sh --central /opt/ecmwf-multi-agents --review ask
+```
+
+This writes a folder of copies, not links, and makes it read-only:
+
+- `opencode.json`: every agent and command of the harness, with their text in `prompts/`
+  (through `{file:}`), the `skills/` folder and the plugin folder, all with absolute paths;
+- `plugins/ecmwf-multi-agents/`, `skills/`, and `ecmwf-multi-agents/` with the profiles, the
+  settings schema and the install record;
+- `ecmwf-multi-agents.jsonc`, the site settings, only when you pass `--profile` or `--review`.
+
+The folder's path goes into the config as it is, so it may contain only letters, digits and
+`. _ / + @ -`. opencode writes nothing into the folder. The installer prints the module lines
+for the folder; for `/opt/ecmwf-multi-agents` they are:
+
+```lua
+-- Lmod: ecmwf-multi-agents.lua
+whatis("Multi-agent harness for opencode")
+setenv("OPENCODE_CONFIG", "/opt/ecmwf-multi-agents/opencode.json")
+if (mode() == "load") then
+  LmodMessage("ecmwf-multi-agents: opencode's background service reads OPENCODE_CONFIG only when it starts. Run once: opencode service set env OPENCODE_CONFIG /opt/ecmwf-multi-agents/opencode.json")
+end
+```
+
+```tcl
+#%Module1.0
+## Tcl: ecmwf-multi-agents
+module-whatis "Multi-agent harness for opencode"
+setenv OPENCODE_CONFIG /opt/ecmwf-multi-agents/opencode.json
+if { [module-info mode load] } {
+  puts stderr "ecmwf-multi-agents: opencode's background service reads OPENCODE_CONFIG only when it starts. Run once: opencode service set env OPENCODE_CONFIG /opt/ecmwf-multi-agents/opencode.json"
+}
+```
+
+To update, `git pull` in the source checkout and run the same `--central` command again: it
+makes the folder writable, replaces the harness files, removes those a release dropped, keeps
+the site settings and makes the folder read-only again. To change the site settings, make the
+file writable, edit it and make it read-only again. Check the folder with
+`./install.sh doctor --central /opt/ecmwf-multi-agents`. To remove it, delete the folder
+(`chmod -R u+w` first); `uninstall --central` only says so.
+
+### For each user
+
+Load the module, then once:
+
+```sh
+./install.sh central-enable /opt/ecmwf-multi-agents
+```
+
+`ecmwf-multi-agents central-enable` does the same from the npm package, and without the folder
+it takes the one `OPENCODE_CONFIG` names. It runs
+`opencode service set env OPENCODE_CONFIG /opt/ecmwf-multi-agents/opencode.json`, which works
+without the installer too. opencode 2 runs one background service per user, which the TUI and
+`opencode run` talk to, and that service reads environment variables only when it starts; the
+setting makes it start with the variable every time, wherever it is started from.
+`central-disable` (or `opencode service unset env OPENCODE_CONFIG`) undoes it.
+
+Your own `~/.config/opencode/ecmwf-multi-agents.jsonc` overrides the site settings, and a
+project's settings file overrides both. `./install.sh doctor` finds the central install through
+`OPENCODE_CONFIG`, or through the service when the shell lacks it, and checks the folder, the
+variable in your shell and in the service, the service's port, and what opencode loads from it.
+
+### What wins
+
+The central config sits above your global config folder and below the project:
+
+1. your `~/.config/opencode/` (config, agent and command files);
+2. the central `opencode.json`;
+3. the project's `opencode.json` and `.opencode/`.
+
+Agents merge field by field, so the central agents set every field the harness defines and
+replace those of an agent of the same name in your global folder, while a project's own agent
+file (`.opencode/agents/scout.md`) or command still wins over the central one. With opencode 1
+the central install won over projects too. A `default_agent` in any of your configs, or
+`"default_agent": false` in the settings, still chooses the default agent. Do not install the
+harness in `~/.config/opencode/` as well, nor name it in a project's `plugins` line: opencode
+loads its plugin only once, and `doctor` warns about both.
+
+### The shared port
+
+Every user's service listens on `127.0.0.1:49374`. On a shared login node the first user's
+service takes the port and the others' services cannot start. `doctor` and `central-enable`
+warn when another user's process holds your service's port (they ask `ss`, so this check needs
+Linux). Then either give your service a port of its own:
+
+```sh
+opencode service set port 50123
+```
+
+or turn the service off and run opencode with a private server each time:
+
+```sh
+opencode service set disabled true
+opencode --standalone
+```
+
+`OPENCODE_CONFIG` is read by opencode but not documented by it yet; the integration tests pin
+its behaviour on the tested version.
+
 ## Options
 
 | Option | Effect |
 |---|---|
 | `--project DIR` | Install into `DIR/.opencode` (files copied) |
+| `--central DIR` | A shared, read-only install in `DIR` (see "Shared machines") |
 | `--profile NAME` | Models: `default`, `anthropic`, `copilot` or `inherit` |
 | `--review WHEN` | When the reviewer checks work: `auto`, `ask`, `always` or `never` |
 | `--link`, `--copy` | Link files to the checkout, or copy them |
@@ -167,6 +285,9 @@ Each line starts with OK, WARN or FAIL:
 - whether the checkout has files that are not installed yet, or the other way round;
 - for a project switched on by a `plugins` line: the line, and for a checkout that it has the
   plugin folder; a WARN when an install in `~/.config/opencode/` masks the line;
+- for a central install: the folder, `OPENCODE_CONFIG` in your shell and in your opencode
+  service (a WARN naming `central-enable` when the service lacks it), and a WARN when another
+  user holds your service's port;
 - your settings files: the review value and the profile name;
 - whether the models of your profile are available (a WARN with the provider to connect);
 - what opencode itself loaded, asked through the plugin with
@@ -201,5 +322,8 @@ remove it too. Files you created yourself are never removed.
   `./install.sh doctor` lists it too.
 - **A project's `plugins` line has no effect.** The harness is also installed in
   `~/.config/opencode/`, whose copy wins: remove one of them. `doctor --project` says so.
+- **On a shared machine, opencode has no `lead` although the module is loaded.** The service
+  was started without `OPENCODE_CONFIG`: run `./install.sh central-enable DIR` once. If the
+  service does not start at all, another user holds its port: see "The shared port".
 - **Files were left alone.** They are not from the harness. Rename or move them and run
   `./install.sh` again.

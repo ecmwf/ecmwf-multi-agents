@@ -107,6 +107,11 @@ both commands again, then restart opencode.
 For one project only, `./install.sh --project /path/to/repo` copies the files into that
 project's `.opencode/` folder.
 
+On a shared machine such as an HPC login node, an administrator can install it once for
+everyone with `./install.sh --central DIR`; each user loads a module that sets
+`OPENCODE_CONFIG=DIR/opencode.json` and runs `./install.sh central-enable DIR` once. See
+"Shared machines" in `docs/install.md`.
+
 Check an installation with `./install.sh doctor`, and a project with
 `./install.sh doctor --project /path/to/repo`. Remove an installation with
 `./install.sh uninstall`. `docs/install.md` covers every option, updating and troubleshooting.
