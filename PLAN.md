@@ -243,7 +243,7 @@ Findings to act on for 0.2.0:
   (the files npm would pack against those git tracks, also run by `make release` before it
   pushes), and skips a version npm already has; run by hand it is a dry run that fails unless
   npm got a token for the OIDC token
-- [ ] Tiago: once #4 is merged, in a terminal on the server (npm prints each login and
+- [x] Tiago: once #4 is merged, in a terminal on the server (npm prints each login and
   approval link; open it in a browser elsewhere): `npm login --browser=false`; publish once by
   hand from a clean `main`, `npm publish --access public --provenance=false` (npm sets up
   trusted publishing only for a package that exists, and provenance needs CI); add the trusted
@@ -251,7 +251,10 @@ Findings to act on for 0.2.0:
   --allow-publish` (or on npmjs.com with "npm publish" ticked under "Allowed actions"); the
   first `make release` within 2 days, since a new trusted publisher expires unless it has
   published by then; then `npm access set mfa=publish` (require two-factor authentication,
-  disallow tokens) and `npm logout`
+  disallow tokens) and `npm logout`. npm refused the publish until the account `ecmwf` had
+  two-factor authentication, which npm now offers as a security key only; Tiago set one up on
+  npmjs.com. 0.5.2 was published by hand on 2026-10-15, and 0.5.3 validated the trusted
+  publisher. npm added a placeholder version `0.0.0-stage` itself, not tagged `latest`
 - [ ] `install.sh` names itself `./install.sh` in its help and advice, also when run as the npm
   command `ecmwf-multi-agents`; name the command it was run as
 - [ ] A project's plugin line naming the npm package (`"plugin": ["@ecmwf.int/multi-agents"]`)
@@ -270,7 +273,7 @@ Findings to act on for 0.2.0:
 - [x] Tiago: CI: `make check` and `make pack-check` on every push and pull request
   (`.github/workflows/ci.yml`); a pull request from a branch here is checked by the branch's
   push, so only one from a fork runs as a pull request
-- [~] Tiago: Release 0.5.3: the npm package and CI, while Phase 9 heads for 0.6.0. Its tag is
+- [x] Tiago: Release 0.5.3: the npm package and CI, while Phase 9 heads for 0.6.0. Its tag is
   the first publish from GitHub Actions, due before 2026-10-17, when the trusted publisher
   expires unless it has published
 - [ ] CI: the integration suites on the pinned opencode 2, once Phase 9 has removed 1.x
@@ -754,3 +757,10 @@ above works on the stand-in; the real-model evals pass on opencode 2.
   `make pack-check`, which `make release` runs too. Checked: gate 617 pass; `npm install -g`
   of the packed tarball with npm 11.21.0 installs 19 files and `doctor` finds no problems;
   integration on 1.18.35, 1.19.0 and 2.0.28: 120 pass.
+- 2026-10-15: 0.5.3 released with `make release 0.5.3` (gate passed twice, 617 tests each):
+  the npm package, and CI, which passed on `main` first. The tag's workflow published
+  `@ecmwf.int/multi-agents@0.5.3` through the trusted publisher, with provenance (SLSA v1,
+  in the Sigstore transparency log), which validated the trusted publisher. Checked from the
+  registry in a sandbox: `npm audit signatures` verifies the signature and the attestation,
+  and `npm install -g` then `ecmwf-multi-agents` installs 19 files on opencode 1.18.35,
+  records 0.5.3, and `doctor` finds no problems.
