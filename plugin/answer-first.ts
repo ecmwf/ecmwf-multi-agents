@@ -26,7 +26,7 @@ import type { V2ModelMessage } from "./types.ts";
  * - request: a message from the user to lead; a reply to it is open until a step ends the turn.
  * - report: a background helper's report.
  * - ended: a step of lead's that ended a turn.
- * - boundary: a message to another agent, a summary of earlier conversation, or the wake below;
+ * - boundary: a message to another agent, a summary of earlier conversation, or a wake below;
  *   no reply of lead's is open across it.
  * - other: anything else (a step that called tools, a note opencode wrote).
  */
@@ -71,6 +71,12 @@ function partsOf(parts: unknown): Part[] {
 /** What wakes lead once its reply has ended, when it was shown none of the reports. */
 export const WAKE_TEXT =
   "Reports from your helpers arrived while you were answering the user, so they were held back until you had answered. They are above: act on them now.";
+/**
+ * What wakes lead after a helper answered a command in lead's session, when reports arrived
+ * meanwhile and were held back from that helper (inline.ts). Like the wake above, it ends a reply.
+ */
+export const INLINE_WAKE_TEXT =
+  "Reports from your helpers arrived while a helper answered a command here, so they were held back until it had finished. They are above: act on them now.";
 /** How a background helper's report starts on opencode 2 (core/src/session/subagent-completion.ts). */
 export const V2_REPORT_PREFIX = "<subagent ";
 /** How opencode 2 starts the summary that replaces a compacted conversation. */
@@ -86,7 +92,7 @@ export const V2_CONTINUE_NOTES: readonly string[] = [
   "The server restarted while you were working. Continue from where you left off without repeating completed work.",
 ];
 
-function firstText(message: V2ModelMessage): string {
+export function firstText(message: V2ModelMessage): string {
   const text = partsOf(message?.content).find((part) => part.type === "text")?.text;
   return typeof text === "string" ? text : "";
 }
@@ -107,7 +113,7 @@ export function stepsV2(messages: readonly V2ModelMessage[]): Step[] {
       if (continueNote(message)) return "other";
       const text = firstText(message);
       if (text.startsWith(V2_REPORT_PREFIX)) return "report";
-      if (text.startsWith(V2_CHECKPOINT_PREFIX) || text.startsWith(WAKE_TEXT)) return "boundary";
+      if (text.startsWith(V2_CHECKPOINT_PREFIX) || text.startsWith(WAKE_TEXT) || text.startsWith(INLINE_WAKE_TEXT)) return "boundary";
       return "request";
     }
     if (message?.role === "assistant") {

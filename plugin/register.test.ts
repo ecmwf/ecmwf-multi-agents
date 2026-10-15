@@ -253,7 +253,7 @@ describe("registerHarness", () => {
     expect(host.agents.get("reviewer")).toMatchObject({ mode: "subagent", steps: 30, system: "You are reviewer.", model: { providerID: "github-copilot", id: "gpt-6.1-sol", variant: "medium" } });
     expect(host.selected()).toBe("lead");
     expect(host.skills.map((skill) => skill.path)).toEqual(["/p/skills/ecmwf-multi-agents-plan/SKILL.md"]);
-    expect(host.commands.map((command) => command.name)).toEqual(["plan", "review"]);
+    expect(host.commands.map((command) => command.name)).toEqual(["plan", "review", "progress"]);
   });
 
   test("default_agent false leaves the default alone", async () => {

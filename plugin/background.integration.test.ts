@@ -26,8 +26,9 @@ import path from "node:path";
 import { pluginFiles } from "../tools/bundle-plugin.ts";
 import { V2_VERSION, emitV2 } from "../tools/emit-v2.ts";
 import type { OutputFile, ResolvedHarness } from "../tools/types.ts";
-import { WAKE_TEXT } from "./answer-first.ts";
+import { INLINE_WAKE_TEXT, WAKE_TEXT } from "./answer-first.ts";
 import { HELPER_TOOLS, STATUS_LINES } from "./helpers.ts";
+import { HELD_NOTE } from "./inline.ts";
 import { resolvedFixture } from "./testing.ts";
 
 const enabled = process.env.ECMWF_MULTI_AGENTS_INTEGRATION === "1";
@@ -66,7 +67,7 @@ const ISOLATION = {
 /** One streamed request as the stand-in saw it. */
 interface Seen {
   /** lead, builder, reviewer, or other (opencode's own agents, or a child whose run switched agent). */
-  agent: "lead" | "builder" | "reviewer" | "other";
+  agent: "lead" | "builder" | "reviewer" | "scout" | "other";
   /** The text of every user message, in order. */
   users: string[];
   /** Tool results in the request: how many steps the agent had taken. */
@@ -74,6 +75,8 @@ interface Seen {
   at: number;
   /** What the stand-in answered: `tool:<name>` or the text. */
   reply: string;
+  /** The model the request named. */
+  model: string;
 }
 
 interface Script {
@@ -114,14 +117,22 @@ function standIn(script: Script) {
     async fetch(request) {
       const url = new URL(request.url);
       if (url.pathname.endsWith("/models")) return Response.json({ object: "list", data: [{ id: "m1", object: "model" }] });
-      const body = (await request.json().catch(() => ({}))) as { messages?: unknown[]; stream?: boolean };
+      const body = (await request.json().catch(() => ({}))) as { messages?: unknown[]; stream?: boolean; model?: string };
       const messages = Array.isArray(body.messages) ? body.messages : [];
       const role = (message: unknown) => (message as { role?: string } | undefined)?.role;
       const system = messages.filter((message) => role(message) === "system" || role(message) === "developer").map(textOf).join("\n");
       const users = messages.filter((message) => role(message) === "user").map(textOf);
       const last = users.at(-1) ?? "";
       const results = messages.filter((message) => role(message) === "tool").length;
-      const agent: Seen["agent"] = system.includes("You are lead") ? "lead" : system.includes("You are builder") ? "builder" : system.includes("You are reviewer") ? "reviewer" : "other";
+      const agent: Seen["agent"] = system.includes("You are lead")
+        ? "lead"
+        : system.includes("You are builder")
+          ? "builder"
+          : system.includes("You are reviewer")
+            ? "reviewer"
+            : system.includes("You are scout")
+              ? "scout"
+              : "other";
       let tool: { name: string; args: Record<string, unknown> } | undefined;
       let text = "ok";
       if (agent === "lead") {
@@ -161,9 +172,11 @@ function standIn(script: Script) {
         if (users.some((user) => user.includes("SLOW_REVIEW")) && results < REVIEW_STEPS)
           tool = { name: script.shell, args: { command: `sleep ${STEP_SECONDS}`, description: "slow review step" } };
         else text = "VERDICT: APPROVE";
+      } else if (agent === "scout") {
+        text = "Plan: none";
       }
       calls++;
-      seen.push({ agent, users, results, at: Date.now(), reply: tool ? `tool:${tool.name}` : text });
+      seen.push({ agent, users, results, at: Date.now(), reply: tool ? `tool:${tool.name}` : text, model: String(body.model ?? "") });
       if (!body.stream) {
         return Response.json({
           id: "stand-in",
@@ -330,6 +343,7 @@ describe.skipIf(!v2Available)(`background helpers in opencode ${V2_VERSION}`, ()
     await api("POST", `/api/session/${session.id}/prompt`, { text });
     return session.id;
   };
+  const command = (session: string, name: string, text: string) => api("POST", `/api/session/${session}/command`, { name, text });
   const builderHasSteps = (tag: string, steps: number) => within(20_000, `${steps} builder steps`, async () => (model.builder(tag).some((item) => item.results >= steps) ? true : undefined));
 
   beforeAll(async () => {
@@ -342,7 +356,10 @@ describe.skipIf(!v2Available)(`background helpers in opencode ${V2_VERSION}`, ()
       name: "Stand-in",
       npm: "@ai-sdk/openai-compatible",
       options: { baseURL: `http://127.0.0.1:${model.port}/v1`, apiKey: "placeholder" },
-      models: { m1: { name: "Stand-in", tool_call: true, temperature: true, limit: { context: 100000, output: 4096 } } },
+      models: {
+        m1: { name: "Stand-in", tool_call: true, temperature: true, limit: { context: 100000, output: 4096 } },
+        m2: { name: "Stand-in for the reviewer", tool_call: true, temperature: true, limit: { context: 100000, output: 4096 } },
+      },
     };
     writeFileSync(path.join(box.config, "opencode.json"), JSON.stringify({ model: "mock/m1", provider: { mock: provider } }, null, 2));
     const password = randomBytes(16).toString("hex");
@@ -420,6 +437,21 @@ describe.skipIf(!v2Available)(`background helpers in opencode ${V2_VERSION}`, ()
     expect(await wake(tag)).toContain("builder finished");
   }, 120_000);
 
+  // Without the plugin, a helper's command file runs in a child session and lead relays the report.
+  test("without the plugin, /review runs in a child session and its report reaches lead", async () => {
+    const tag = nextTag();
+    const session = await start(`HELLO ${tag}`);
+    await within(20_000, "lead's turn to end", async () => model.lead(tag).find((item) => item.reply === "lead done"));
+    await command(session, "review", tag);
+    const target = await child(session);
+    expect(target.agent).toBe("reviewer");
+    const review = await within(20_000, "the review", async () => model.seen.find((item) => item.agent === "reviewer" && item.users[0]?.endsWith(`Review ${tag}`)));
+    expect(review.users).toHaveLength(1);
+    expect(review.users[0]).toStartWith("You are a subagent spawned by another session.");
+    expect(await wake(tag)).toContain("VERDICT: APPROVE");
+    expect((await api<V2Session>("GET", `/api/session/${session}`)).agent).toBe("lead");
+  }, 120_000);
+
   describe("with the plugin", () => {
     interface V2Content {
       type: string;
@@ -452,7 +484,7 @@ describe.skipIf(!v2Available)(`background helpers in opencode ${V2_VERSION}`, ()
         mkdirSync(path.dirname(path.join(box.config, file.path)), { recursive: true });
         writeFileSync(path.join(box.config, file.path), file.content);
       }
-      writeFileSync(path.join(box.config, "ecmwf-multi-agents.jsonc"), '{ "profile": "inherit" }\n');
+      writeFileSync(path.join(box.config, "ecmwf-multi-agents.jsonc"), '{ "profile": "inherit", "agents": { "reviewer": { "model": "mock/m2" } } }\n');
       const password = randomBytes(16).toString("hex");
       auth = `Basic ${btoa(`opencode:${password}`)}`;
       server = await startServer(box, v2Bin, { OPENCODE_PASSWORD: password });
@@ -549,6 +581,103 @@ describe.skipIf(!v2Available)(`background helpers in opencode ${V2_VERSION}`, ()
       expect(woken.users.at(-1)).toContain("builder finished");
       expect(woken.users.at(-2)).toBe(`HELLO ${tag}`);
       expect(model.all(tag).flatMap((item) => item.users).filter((user) => user.includes(WAKE_TEXT))).toEqual([]);
+    }, 120_000);
+
+    // `/review` and `/progress` answered in the user's own session (inline.ts): the helper sees
+    // only its brief, the session goes back to lead, and reports that arrive meanwhile are held
+    // back from the helper and wake lead after it.
+    const agentOf = async (session: string) => (await api<V2Session>("GET", `/api/session/${session}`)).agent;
+    const children = async (session: string) => (await api<V2Session[]>("GET", "/api/session")).filter((item) => item.parentID === session);
+    const reviews = (tag: string) => model.seen.filter((item) => item.agent === "reviewer" && item.users[0]?.includes(`Review `) && item.users[0]?.endsWith(tag));
+    const backToLead = (session: string) => within(20_000, "the session to go back to lead", async () => ((await agentOf(session)) === "lead" ? true : undefined));
+    const fakeReport = (tag: string) => `<subagent sessionID="ses_fake" state="completed" description="fake">fake report ${tag}</subagent>`;
+
+    test("/review in an idle session: the reviewer answers there from its brief alone, on its own model; lead gets the session back", async () => {
+      const tag = nextTag();
+      const session = await start(`HELLO ${tag}`);
+      await within(20_000, "lead's turn to end", async () => model.lead(tag).find((item) => item.reply === "lead done"));
+      const sentAt = Date.now();
+      await command(session, "review", tag);
+      expect(Date.now() - sentAt).toBeLessThan(5_000);
+      const review = await within(20_000, "the review", async () => reviews(tag).find((item) => item.reply === "VERDICT: APPROVE"));
+      expect(review.users).toEqual([`Review ${tag}`]);
+      expect(review.model).toBe("m2");
+      await backToLead(session);
+      expect(await children(session)).toEqual([]);
+      // A report that arrives later wakes lead, on lead's model, with the verdict in its conversation.
+      await api("POST", `/api/session/${session}/synthetic`, { text: fakeReport(tag) });
+      const woken = await within(20_000, "lead to be woken", async () => model.lead(tag).find((item) => item.users.at(-1)?.includes(`fake report ${tag}`)));
+      expect(woken.model).toBe("m1");
+      expect(woken.users).toContain(`Review ${tag}`);
+      expect(model.all(tag).filter((item) => item.agent === "reviewer")).toHaveLength(1);
+    }, 120_000);
+
+    test("/progress answers in the session as the scout, from its brief alone", async () => {
+      const tag = nextTag();
+      const session = await start(`HELLO ${tag}`);
+      await within(20_000, "lead's turn to end", async () => model.lead(tag).find((item) => item.reply === "lead done"));
+      await command(session, "progress", tag);
+      const progress = await within(20_000, "the progress report", async () => model.seen.find((item) => item.agent === "scout" && item.users[0] === `Progress of ${tag}`));
+      expect(progress.users).toHaveLength(1);
+      expect(progress.model).toBe("m1");
+      await backToLead(session);
+      expect(await children(session)).toEqual([]);
+    }, 120_000);
+
+    test("/review while lead is answering: the command returns at once, lead answers first, then the review runs", async () => {
+      const tag = nextTag();
+      const session = await start(`ASK ${tag}`);
+      await within(20_000, "lead's lookup", async () => model.lead(tag).find((item) => item.reply.startsWith("tool:")));
+      const sentAt = Date.now();
+      await command(session, "review", tag);
+      expect(Date.now() - sentAt).toBeLessThan(LOOKUP_SECONDS * 1000);
+      const review = await within(LOOKUP_SECONDS * 1000 + 20_000, "the review", async () => reviews(tag).find((item) => item.reply === "VERDICT: APPROVE"));
+      const answer = model.lead(tag).find((item) => item.reply === "lead answered");
+      expect(answer).toBeDefined();
+      expect(answer!.at).toBeLessThan(review.at);
+      expect(review.users).toEqual([`Review ${tag}`]);
+      await backToLead(session);
+    }, 120_000);
+
+    test("a report that arrives during a review is held back from the reviewer and wakes lead after it", async () => {
+      const tag = nextTag();
+      const session = await start(`BG ${tag}`);
+      await within(20_000, "lead's turn to end", async () => model.lead(tag).find((item) => item.reply === "lead done"));
+      await stepsOf(tag, 1);
+      await command(session, "review", `SLOW_REVIEW ${tag}`);
+      const finished = await within(RUN_MS + 20_000, "the builder to finish", async () => model.builder(tag).find((item) => item.reply === "builder finished"));
+      const verdict = await within(REVIEW_STEPS * STEP_SECONDS * 1000 + 20_000, "the verdict", async () => reviews(tag).find((item) => item.reply === "VERDICT: APPROVE"));
+      expect(finished.at).toBeLessThan(verdict.at);
+      for (const item of reviews(tag)) {
+        expect(item.users[0]).toBe(`Review SLOW_REVIEW ${tag}`);
+        expect(item.users.join("\n")).not.toContain("<subagent ");
+      }
+      expect(verdict.results).toBe(REVIEW_STEPS);
+      const woken = await within(20_000, "lead to be woken", async () => model.lead(tag).find((item) => item.at > verdict.at && item.users.at(-1) === INLINE_WAKE_TEXT));
+      expect(woken.users.some((user) => user.startsWith("<subagent ") && user.includes("builder finished"))).toBe(true);
+      await backToLead(session);
+      await Bun.sleep(1_000);
+      const wakes = model.all(tag).filter((item) => item.users.at(-1) === INLINE_WAKE_TEXT || item.users.at(-1) === WAKE_TEXT);
+      expect(wakes.filter((item) => item.agent === "lead")).toHaveLength(1);
+    }, 120_000);
+
+    test("a stray run of the helper after a review: the report is held back from it, lead gets the session back and is woken", async () => {
+      const tag = nextTag();
+      const session = await start(`HELLO ${tag}`);
+      await within(20_000, "lead's turn to end", async () => model.lead(tag).find((item) => item.reply === "lead done"));
+      await command(session, "review", tag);
+      await within(20_000, "the review", async () => reviews(tag).find((item) => item.reply === "VERDICT: APPROVE"));
+      await backToLead(session);
+      // The state of the short window before the switch back: the session is still the reviewer's.
+      await api("POST", `/api/session/${session}/agent`, { agent: "reviewer" });
+      await api("POST", `/api/session/${session}/synthetic`, { text: fakeReport(tag) });
+      const stray = await within(20_000, "the stray request", async () => reviews(tag).find((item) => item.users.length > 1));
+      expect(stray.users[0]).toBe(`Review ${tag}`);
+      expect(stray.users.join("\n")).not.toContain("<subagent ");
+      expect(stray.users.at(-1)).toBe(HELD_NOTE);
+      const woken = await within(20_000, "lead to be woken", async () => model.lead(tag).find((item) => item.users.at(-1) === INLINE_WAKE_TEXT));
+      expect(woken.users.some((user) => user.includes(`fake report ${tag}`))).toBe(true);
+      await backToLead(session);
     }, 120_000);
   });
 });

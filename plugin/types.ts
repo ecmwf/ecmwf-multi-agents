@@ -260,7 +260,10 @@ export interface V2ToolCall {
 
 /** A message as a model request carries it (@opencode/ai Message: a role and content parts). */
 export interface V2ModelMessage {
+  /** The stored message's id, when the message comes from the session. */
+  id?: string;
   role?: string;
+  metadata?: Record<string, unknown>;
   content?: ReadonlyArray<{ type?: string; text?: string; [key: string]: unknown }>;
   [key: string]: unknown;
 }
@@ -273,10 +276,28 @@ export interface V2ContextEvent {
   [key: string]: unknown;
 }
 
+/** What a plugin command receives (@opencode/plugin promise/command.ts). */
+export interface V2CommandInvocation {
+  sessionID: string;
+  prompt: { text: string; [key: string]: unknown };
+  delivery?: "steer" | "queue";
+}
+
+export interface V2CommandDefinition {
+  name: string;
+  description?: string;
+  execute: (input: V2CommandInvocation) => Promise<void>;
+}
+
+export interface V2CommandEditor {
+  add(definition: V2CommandDefinition): void;
+}
+
 export interface V2Context {
   location?: { directory?: string; project?: { directory?: string } };
   agent: {
     transform: (callback: (editor: V2AgentEditor) => void) => Promise<V2Registration>;
+    /** The agent as opencode resolved it; some versions wrap the answer in `data`. */
     get?: (input: { agentID: string }) => Promise<unknown>;
     list?: () => Promise<unknown>;
   };
@@ -286,6 +307,8 @@ export interface V2Context {
     register?: (definition: V2RpcDefinition, handlers: Record<string, (input: unknown) => Promise<unknown>>) => Promise<V2RpcRegistration>;
   };
   plugin?: { list?: () => Promise<unknown> };
+  /** `default` is the model a session without a model of its own runs on. */
+  model?: { default?: () => Promise<unknown> };
   event?: { subscribe?: (options?: { signal?: AbortSignal }) => AsyncIterable<V2Event> };
   tool?: {
     transform?: (callback: (editor: V2ToolEditor) => void) => Promise<V2Registration>;
@@ -296,9 +319,10 @@ export interface V2Context {
     create?: (input: { parentID?: string; title?: string; agent?: string; model?: V2ModelRef }) => Promise<unknown>;
     switchAgent?: (input: { sessionID: string; agent: string }) => Promise<unknown>;
     switchModel?: (input: { sessionID: string; model: V2ModelRef }) => Promise<unknown>;
+    /** Resolves once the session has no run in progress, following runs that start meanwhile. */
     wait?: (input: { sessionID: string }) => Promise<unknown>;
     context?: (input: { sessionID: string }) => Promise<unknown>;
-    prompt?: (input: { sessionID: string; text: string; delivery?: "steer" | "queue"; [key: string]: unknown }) => Promise<unknown>;
+    prompt?: (input: { sessionID: string; text: string; delivery?: "steer" | "queue"; metadata?: Record<string, unknown>; [key: string]: unknown }) => Promise<unknown>;
     interrupt?: (input: { sessionID: string }) => Promise<unknown>;
     /** A message opencode writes as its own; `queue` delivers it once the running turn has ended. */
     synthetic?: (input: {
