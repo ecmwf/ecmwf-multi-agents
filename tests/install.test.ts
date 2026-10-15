@@ -27,7 +27,8 @@ const INSTALL = path.join(REPO, "install.sh");
 const NAME = "ecmwf-multi-agents";
 const MARKER_MD = `# managed by ${NAME}`;
 const MARKER_JS = `// managed by ${NAME}`;
-const V2_PINNED = "2.0.28";
+/** The opencode 2 version the installer is tested with, read from install.sh so the two never drift. */
+const V2_PINNED = /^V2_PINNED=(\S+)$/m.exec(readFileSync(INSTALL, "utf8"))![1]!;
 
 /**
  * The system's commands without any opencode, so a real opencode on the developer's machine,
