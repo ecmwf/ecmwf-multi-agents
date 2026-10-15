@@ -11,6 +11,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-15
+
 ### Upgrading from 0.5.x
 
 - This release needs opencode 2. To stay on opencode 1.x, keep 0.5.3: `git checkout 0.5.3` in
@@ -260,7 +262,8 @@ helpers it hands work to.
 - Scenario evals (`make evals`) that compare the harness with plain opencode on a sample
   repository, using real models.
 
-[Unreleased]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.5.3...HEAD
+[Unreleased]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.6.0...HEAD
+[0.6.0]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.5.3...0.6.0
 [0.5.3]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.5.2...0.5.3
 [0.5.2]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.5.1...0.5.2
 [0.5.1]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.5.0...0.5.1
