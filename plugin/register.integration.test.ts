@@ -460,11 +460,14 @@ describe.skipIf(!v2Available)(`a project's plugins line in opencode ${V2_VERSION
     expect(existsSync(path.join(projects.packed, "node_modules"))).toBe(false);
 
     await Bun.sleep(4_000);
-    const fromFiles = await withLead(projects.files);
+    // The package brings what a checkout's line brings, field for field and rule for rule; the
+    // test above compares a checkout's line with the generated files.
+    await active(projects.line);
+    const fromLine = await agents(projects.line);
     const fromPackage = await agents(projects.packed);
     expect(fromPackage[0]?.id).toBe("lead");
     for (const id of AGENTS) {
-      const want = pick(fromFiles.find((agent) => agent.id === id));
+      const want = pick(fromLine.find((agent) => agent.id === id));
       expect(want?.system).toBeString();
       expect(pick(fromPackage.find((agent) => agent.id === id))).toEqual(want);
     }

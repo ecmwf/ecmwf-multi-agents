@@ -663,9 +663,10 @@ merges.
 - [x] Samet: Plugin RPC `doctor` and `problems`, the TUI toast entry, the plugin as a folder;
   `install.sh doctor` through the RPC (with the registration task; the toast is unit-tested only,
   since it needs a terminal)
-- [~] Samet: The published package works as a `plugins` line: an integration test runs
+- [x] Samet: The published package works as a `plugins` line: an integration test runs
   `npm pack` on the branch and names the tarball in a project's `plugins`, so opencode's own
-  npm install path proves the `./server` and `./tui` entries before a release
+  npm install path proves the `./server` and `./tui` entries before a release; the package
+  brings exactly what a checkout's line brings (`plugin/register.integration.test.ts`)
 - [~] Samet: Central install on opencode 2 through `OPENCODE_CONFIG`, module file lines (Lmod,
   Tcl), the service step and the port check
 - [x] Samet: Answer-first ignores the 2.0.29 output-limit and incomplete-stream notes; pin
