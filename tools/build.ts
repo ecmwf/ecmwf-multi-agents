@@ -18,7 +18,6 @@ import { compareBytes, errorCode, GeneratorError, normalizeContent, own, unsafeP
 /** Support files for the installer and doctor live in this directory of each platform. */
 export const SUPPORT_DIR = "ecmwf-multi-agents";
 export const FILES_LIST = `${SUPPORT_DIR}/files.txt`;
-export const PLUGIN_FILE = "plugins/ecmwf-multi-agents.js";
 
 export interface BuildOptions {
   /** Repository root: the directory that holds src/ and dist/. */
@@ -327,11 +326,11 @@ async function main(args: readonly string[]): Promise<number> {
   const check = args.includes("--check");
   const root = path.resolve(import.meta.dir, "..");
   try {
-    const { bundlePlugin } = await import("./bundle-plugin.ts");
+    const { pluginFiles } = await import("./bundle-plugin.ts");
     await build({
       root,
       emitters: { "opencode-v2": emitV2 },
-      extras: async (harness) => [{ path: PLUGIN_FILE, content: await bundlePlugin(root, harness) }],
+      extras: (harness) => pluginFiles(root, harness),
       check,
     });
     return 0;

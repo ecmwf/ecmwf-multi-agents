@@ -15,7 +15,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { bundlePlugin } from "../tools/bundle-plugin.ts";
+import { PLUGIN_DIR, pluginFiles } from "../tools/bundle-plugin.ts";
 import { V2_VERSION, emitV2 } from "../tools/emit-v2.ts";
 import type { OutputFile } from "../tools/types.ts";
 import { resolvedFixture } from "./testing.ts";
@@ -25,8 +25,8 @@ const v2Bin = process.env.OPENCODE_V2_BIN ?? "opencode2";
 const root = path.resolve(import.meta.dir, "..");
 const sandboxScript = path.join(root, "tools", "sandbox.sh");
 const SETTINGS = "ecmwf-multi-agents.jsonc";
-const PLUGIN = path.join("plugins", "ecmwf-multi-agents.js");
-const PARKED = "ecmwf-multi-agents.js.off";
+const PLUGIN = PLUGIN_DIR;
+const PARKED = "ecmwf-multi-agents.off";
 
 const ISOLATION = {
   OPENCODE_DISABLE_PROJECT_CONFIG: "1",
@@ -45,7 +45,7 @@ interface Sandbox {
   config: string;
 }
 
-function makeSandbox(files: OutputFile[], plugin: string): Sandbox {
+function makeSandbox(files: OutputFile[], plugin: OutputFile[]): Sandbox {
   // opencode reports canonical paths, so resolve symbolic links in the temporary directory.
   const dir = realpathSync(mkdtempSync(path.join(tmpdir(), "plugin-")));
   const project = path.join(dir, "project");
@@ -54,7 +54,7 @@ function makeSandbox(files: OutputFile[], plugin: string): Sandbox {
   if (init.exitCode !== 0) throw new Error(`git init failed: ${init.stderr.toString()}`);
   const config = path.join(dir, "home", ".config", "opencode");
   writeAll(config, files);
-  writeAll(config, [{ path: PLUGIN, content: plugin }]);
+  writeAll(config, plugin);
   return { dir, project, config };
 }
 
@@ -196,7 +196,7 @@ describe.skipIf(!enabled)(`plugin in opencode ${V2_VERSION}`, () => {
 
   beforeAll(async () => {
     const harness = resolvedFixture();
-    box = makeSandbox(emitV2(harness), await bundlePlugin(root, harness));
+    box = makeSandbox(emitV2(harness), await pluginFiles(root, harness));
     const version = Bun.spawnSync([sandboxScript, box.dir, v2Bin, "--version"], { cwd: box.project });
     expect(version.stdout.toString()).toContain(V2_VERSION);
   }, 60_000);

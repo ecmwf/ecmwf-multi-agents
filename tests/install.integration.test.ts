@@ -6,7 +6,7 @@
 // opencode 2 version (default: "opencode2" on PATH; skipped if missing).
 
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -64,8 +64,8 @@ function inSandbox(box: Sandbox, argv: string[], cwd = box.project): { code: num
   return { code: result.exitCode, out: result.stdout.toString(), err: result.stderr.toString() };
 }
 
-function install(box: Sandbox, args: string[] = []): { code: number; out: string } {
-  const result = inSandbox(box, ["sh", INSTALL, ...args], REPO);
+function install(box: Sandbox, args: string[] = [], cwd = REPO): { code: number; out: string } {
+  const result = inSandbox(box, ["sh", INSTALL, ...args], cwd);
   return { code: result.code, out: result.out + result.err };
 }
 
@@ -96,10 +96,32 @@ run_("install.sh with real opencode", () => {
     const lead = readFileSync(path.join(box.config, "agents", "lead.md"), "utf8");
     expect(lead).toContain("permissions:");
     expect(lead).toContain('model: "anthropic/claude-opus-5-5#xhigh"');
-    const doctor = install(box, ["doctor"]);
+    expect(readlinkSync(path.join(box.config, "plugins", NAME))).toBe(path.join(REPO, "dist", "opencode-v2", "plugins", NAME));
+    const doctor = install(box, ["doctor"], box.project);
     expect(doctor.code).toBe(0);
-    expect(doctor.out).toContain("agents cannot be checked from the shell");
+    expect(doctor.out).toContain(`OK    lead is loaded from files (${path.join(box.config, "agents", "lead.md")}), with the plugin`);
+    expect(doctor.out).toContain("OK    lead's Review policy: auto");
+    expect(doctor.out).toContain("OK    lead is the default agent");
     expect(install(box, ["uninstall"]).code).toBe(0);
     expect(ourFiles(box.config)).toEqual([]);
+    expect(existsSync(path.join(REPO, "dist", "opencode-v2", "plugins", NAME, "index.js"))).toBe(true);
+  }, TIMEOUT);
+
+  (V2_BIN ? test : test.skip)("doctor --project for a project whose plugins line names this checkout", () => {
+    const box = sandbox(V2_BIN!);
+    writeFileSync(path.join(box.project, "opencode.json"), `${JSON.stringify({ plugins: [REPO] })}\n`);
+    const doctor = install(box, ["doctor", "--project", box.project], box.project);
+    expect(doctor.out).toContain(`OK    switched on by the plugins line in ${path.join(box.project, "opencode.json")}: ${REPO}`);
+    expect(doctor.out).toContain(`OK    the checkout ${REPO} has the plugin folder`);
+    expect(doctor.out).toContain("OK    lead is loaded from the plugin");
+    expect(doctor.out).toContain("OK    lead is the default agent");
+    expect(doctor.code).toBe(0);
+    // A project without the line: the plugin is not active there.
+    rmSync(path.join(box.project, "opencode.json"));
+    const off = install(box, ["doctor", "--project", box.project], box.project);
+    expect(off.code).toBe(1);
+    expect(off.out).toContain("is not switched on here");
+    const global = install(box, ["doctor"], box.project);
+    expect(global.out).toContain("is not installed here");
   }, TIMEOUT);
 });

@@ -359,7 +359,9 @@ applies to the profile's model. `steps` replaces the agent's step limit.
 
 The generator writes a JSON Schema for this file; the plugin validates with the same patterns.
 A file with unknown keys or invalid values is ignored as a whole and reported on standard
-error, since opencode's plugin API offers no log and no toast. `install.sh doctor` checks the review and profile values. There is no
+error and through the plugin's RPC, which the TUI entry shows as a warning toast (see
+[The plugin](#the-plugin)). `install.sh doctor` checks the review and profile values and lists
+the problems the plugin found. There is no
 setting that returns a single agent to the session model; the `inherit` profile does that for
 all agents.
 
@@ -396,6 +398,87 @@ event), so it stays last after reloads.
 
 The plugin also makes `lead` the default agent unless `default_agent` is false in the settings.
 Without the plugin, opencode starts on its own `build` agent and the user switches with Tab.
+
+## The plugin
+
+The plugin is the folder `plugins/ecmwf-multi-agents/` of `dist/opencode-v2/`, with two
+entries bundled from `plugin/`:
+
+```text
+plugins/ecmwf-multi-agents/index.js   server entry: registration, settings, helper tools, RPC
+plugins/ecmwf-multi-agents/tui.js     TUI entry: shows the plugin's problems as toasts
+```
+
+opencode finds them in three ways. An install puts the folder in a config folder's `plugins/`
+(linked as a whole, since opencode loads a folder plugin only when its entry's real path is
+inside it). The npm package exports them as `./server` and `./tui`, which opencode resolves for
+a `plugins` entry naming the package. A checkout carries `server.js` and `tui.js` at its root,
+which re-export the two entries, for a `plugins` entry naming the checkout.
+
+### Registration
+
+`index.js` embeds what the generated files define: each agent's frontmatter and body, each
+command's frontmatter and template, and each skill's frontmatter and text, taken from the same
+emitter that writes `dist/opencode-v2/`. During setup, before anything else, it registers:
+
+- every agent, with `agent.transform` and `update`, converted as opencode's loader converts an
+  agent file: the model `provider/model#variant` as a model reference, and `~` and `$HOME`
+  expanded in the resources of `read`, `edit` and `external_directory` rules;
+- `lead` as the default agent, unless the settings say `"default_agent": false`;
+- every skill, with `skill.transform` and `add`, at the path of the generated `SKILL.md` next
+  to the plugin folder (`../../skills/<id>/SKILL.md`);
+- every command, with `command.transform` and `add`. A plugin command is code: its `execute`
+  fills `$ARGUMENTS` and `$1`, `$2`, ... as opencode fills a file command's template, then
+  switches the session to the command's agent and model and sends the text. A command whose
+  file says `subagent: true` (`/review`, `/progress`) instead creates a child session with the
+  helper, sends it the text, waits for it in the background and reports to the parent as a
+  queued `<subagent ...>` message, the same form opencode uses when a subagent finishes, so
+  `lead` reads it like any helper's report.
+
+opencode's loaders for agent, command and skill files and for config are plugins that activate
+after user plugins, so files and config override what the plugin registers: agents merge field
+by field, commands and skills are replaced whole, and a `default_agent` in a config wins. With
+the harness also installed as files, the registration is harmless: same content, and the files
+win. A test compares the agents, commands and skills the plugin registers with those opencode
+loads from the generated files.
+
+One difference remains: opencode adds a config's top-level `permissions` to every agent that
+exists when its loader runs, after the agent's own rules, while an agent file's own rules come
+after them. A user's global `permissions` therefore take precedence over a registered agent's
+rules, and not over an installed agent file's.
+
+The settings transform described under [Profiles](#profiles) runs later and applies to the
+registered agents too. A project's `plugins` line therefore brings the whole harness, with its
+settings, to that project alone.
+
+### RPC and doctor
+
+The server entry registers an RPC with the id `ecmwf-multi-agents`, reachable at
+`POST /api/rpc/ecmwf-multi-agents/<method>` with the body `{"input":{}}`:
+
+| Method or event | Answer |
+|---|---|
+| `doctor` | The harness version, the default agent, whether `lead` is loaded and from where (the plugin, or agent files, which are listed), `lead`'s `Review policy:` line and model, the effective settings and the file each comes from, the problems found, and the state of the plugins other than opencode's own |
+| `problems` | The problems found since the plugin loaded, each with `notify` when it deserves a toast |
+| event `problem` | Published for each new problem |
+
+`tui.js` calls `problems` when the TUI starts, listens for `problem` events and shows each
+problem marked `notify` once as a warning toast.
+
+`install.sh doctor` asks the same RPC with `opencode api --standalone`, from the project
+folder: a private server whose RPC route waits for the plugins to activate, which the agent
+list of the shared service does not. An `rpc.unavailable` answer means the plugin is not
+active there. `doctor --project` also recognises a project switched on by a `plugins` line
+(the npm package, a checkout or the plugin folder), and `doctor` warns when an install in the
+user's config folder masks a project's line: the first plugin with an id wins, global sources
+load first, and opencode reports the project's copy as "Duplicate plugin ID".
+
+```mermaid
+flowchart LR
+  D[install.sh doctor] -->|opencode api --standalone| S[private server]
+  S -->|POST /api/rpc/ecmwf-multi-agents/doctor| P[plugin index.js]
+  T[TUI tui.js] -->|problems, problem events| P
+```
 
 ## Source and output
 
@@ -440,7 +523,7 @@ rounded up to the next 50, and the manifest records why; the evals then show wha
 change costs per request.
 
 Every generated agent, command and skill file carries the comment
-`# managed by ecmwf-multi-agents` in its frontmatter, and the bundled plugin starts with
+`# managed by ecmwf-multi-agents` in its frontmatter, and both plugin entries start with
 `// managed by ecmwf-multi-agents`. The installer only overwrites or removes files with this
 marker, links into a harness checkout, and files under `ecmwf-multi-agents/`.
 

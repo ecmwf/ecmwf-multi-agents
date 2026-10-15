@@ -14,6 +14,7 @@ ecmwf-multi-agents/profiles/copilot.json
 ecmwf-multi-agents/profiles/default.json
 ecmwf-multi-agents/profiles/inherit.json
 ecmwf-multi-agents/schema.json
-plugins/ecmwf-multi-agents.js
+plugins/ecmwf-multi-agents/index.js
+plugins/ecmwf-multi-agents/tui.js
 skills/ecmwf-multi-agents-guide/SKILL.md
 skills/ecmwf-multi-agents-plan/SKILL.md

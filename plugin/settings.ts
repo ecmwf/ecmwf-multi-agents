@@ -184,6 +184,23 @@ export interface LoadedSettings {
   problems: Problem[];
   /** Files that were read and applied, in order. */
   applied: string[];
+  /** The file each setting comes from, by name ("review", "agents.scout.steps"); unset ones use the default. */
+  sources: Record<string, string>;
+}
+
+/** The file that set each setting: the last applied file that names it. */
+export function settingSources(files: readonly SettingsFile[], applied: readonly string[]): Record<string, string> {
+  const sources: Record<string, string> = {};
+  files.forEach((file, index) => {
+    const from = applied[index]!;
+    if (file.review !== undefined) sources.review = from;
+    if (file.profile !== undefined) sources.profile = from;
+    if (file.default_agent !== undefined) sources.default_agent = from;
+    for (const [id, override] of Object.entries(file.agents ?? {})) {
+      for (const key of Object.keys(override)) sources[`agents.${id}.${key}`] = from;
+    }
+  });
+  return sources;
 }
 
 /** Read, check and merge every settings file. Missing files are skipped without a word. */
@@ -218,5 +235,5 @@ export function loadSettings(harness: EmbeddedHarness, environment: Environment,
     files.push(checked.settings);
     applied.push(file);
   }
-  return { settings: mergeSettings(files, harness), problems, applied };
+  return { settings: mergeSettings(files, harness), problems, applied, sources: settingSources(files, applied) };
 }

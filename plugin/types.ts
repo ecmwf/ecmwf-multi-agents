@@ -16,6 +16,8 @@ export interface EmbeddedHarness {
   defaultProfile: string;
   profiles: EmbeddedProfile[];
   agents: EmbeddedAgent[];
+  commands: EmbeddedCommand[];
+  skills: EmbeddedSkill[];
 }
 
 export interface EmbeddedProfile {
@@ -25,9 +27,44 @@ export interface EmbeddedProfile {
   agents: Record<string, { model?: string; effort?: string }>;
 }
 
+/** A permission rule as an agent file's `permissions` list holds it; the last match wins. */
+export interface PermissionRule {
+  action: string;
+  resource: string;
+  effect: string;
+}
+
+/** An agent as its generated file defines it: the frontmatter fields, and the body as `system`. */
 export interface EmbeddedAgent {
   id: string;
   mode: "primary" | "subagent";
+  description?: string;
+  /** `provider/model` or `provider/model#variant`, as in the file. */
+  model?: string;
+  steps?: number;
+  color?: string;
+  hidden?: boolean;
+  permissions?: PermissionRule[];
+  system?: string;
+}
+
+/** A command as its generated file defines it, with the body as `template`. */
+export interface EmbeddedCommand {
+  name: string;
+  description?: string;
+  agent?: string;
+  model?: string;
+  subagent?: boolean;
+  template: string;
+}
+
+/** A skill as opencode reads its generated SKILL.md; `content` is the text after the frontmatter. */
+export interface EmbeddedSkill {
+  id: string;
+  name: string;
+  description?: string;
+  autoinvoke?: boolean;
+  content: string;
 }
 
 export const REVIEW_POLICIES = ["auto", "ask", "always", "never"] as const;
@@ -99,9 +136,12 @@ export interface V2AgentInfo {
   id: string;
   model?: V2ModelRef;
   system?: string;
+  description?: string;
   mode?: string;
   hidden?: boolean;
+  color?: string;
   steps?: number;
+  permissions?: PermissionRule[];
   [key: string]: unknown;
 }
 
@@ -132,8 +172,69 @@ export interface V2SessionInfo {
   id: string;
   parentID?: string;
   agent?: string;
+  model?: V2ModelRef;
   title?: string;
   time?: { created?: number; updated?: number };
+}
+
+/** A stored message of a session, as `session.context` returns it (@opencode/schema SessionMessage). */
+export interface V2SessionMessage {
+  type?: string;
+  content?: ReadonlyArray<{ type?: string; text?: string; [key: string]: unknown }>;
+  error?: { type?: string; message?: string };
+  time?: { created?: unknown; completed?: unknown };
+  [key: string]: unknown;
+}
+
+/** What a command's `execute` receives (@opencode/plugin promise/command.ts). */
+export interface V2CommandInvocation {
+  sessionID: string;
+  prompt: { text: string; [key: string]: unknown };
+  delivery?: "steer" | "queue";
+}
+
+export interface V2CommandDefinition {
+  name: string;
+  description?: string;
+  execute: (input: V2CommandInvocation) => Promise<void>;
+}
+
+export interface V2CommandEditor {
+  add(definition: V2CommandDefinition): void;
+}
+
+/** A skill as `skill.transform` takes it (@opencode/schema Skill.Info). */
+export interface V2SkillInfo {
+  id: string;
+  name: string;
+  description?: string;
+  autoinvoke?: boolean;
+  path: string;
+  content: string;
+}
+
+export interface V2SkillEditor {
+  add(skill: V2SkillInfo): void;
+}
+
+/** A JSON Schema, as the portable RPC definition takes it. */
+export type V2JsonSchema = Record<string, unknown>;
+
+export interface V2RpcDefinition {
+  id: string;
+  methods: Record<string, { input: V2JsonSchema; output: V2JsonSchema }>;
+  events: Record<string, { schema: V2JsonSchema & { type: "object" } }>;
+}
+
+export interface V2RpcRegistration extends V2Registration {
+  events: { emit: (name: string, data: Record<string, unknown>) => Promise<void> };
+}
+
+/** A plugin as `plugin.list` describes it. */
+export interface V2PluginState {
+  id?: string;
+  state?: { status?: string; [key: string]: unknown };
+  [key: string]: unknown;
 }
 
 /** A tool as `editor.add` takes it (@opencode/plugin 2.0.16, promise/tool.ts:30). */
@@ -174,7 +275,17 @@ export interface V2ContextEvent {
 
 export interface V2Context {
   location?: { directory?: string; project?: { directory?: string } };
-  agent: { transform: (callback: (editor: V2AgentEditor) => void) => Promise<V2Registration> };
+  agent: {
+    transform: (callback: (editor: V2AgentEditor) => void) => Promise<V2Registration>;
+    get?: (input: { agentID: string }) => Promise<unknown>;
+    list?: () => Promise<unknown>;
+  };
+  command?: { transform?: (callback: (editor: V2CommandEditor) => void) => Promise<V2Registration> };
+  skill?: { transform?: (callback: (editor: V2SkillEditor) => void) => Promise<V2Registration> };
+  rpc?: {
+    register?: (definition: V2RpcDefinition, handlers: Record<string, (input: unknown) => Promise<unknown>>) => Promise<V2RpcRegistration>;
+  };
+  plugin?: { list?: () => Promise<unknown> };
   event?: { subscribe?: (options?: { signal?: AbortSignal }) => AsyncIterable<V2Event> };
   tool?: {
     transform?: (callback: (editor: V2ToolEditor) => void) => Promise<V2Registration>;
@@ -182,10 +293,21 @@ export interface V2Context {
   };
   session?: {
     get?: (input: { sessionID: string }) => Promise<V2SessionInfo | undefined>;
-    prompt?: (input: { sessionID: string; text: string; delivery?: "steer" | "queue" }) => Promise<unknown>;
+    create?: (input: { parentID?: string; title?: string; agent?: string; model?: V2ModelRef }) => Promise<unknown>;
+    switchAgent?: (input: { sessionID: string; agent: string }) => Promise<unknown>;
+    switchModel?: (input: { sessionID: string; model: V2ModelRef }) => Promise<unknown>;
+    wait?: (input: { sessionID: string }) => Promise<unknown>;
+    context?: (input: { sessionID: string }) => Promise<unknown>;
+    prompt?: (input: { sessionID: string; text: string; delivery?: "steer" | "queue"; [key: string]: unknown }) => Promise<unknown>;
     interrupt?: (input: { sessionID: string }) => Promise<unknown>;
     /** A message opencode writes as its own; `queue` delivers it once the running turn has ended. */
-    synthetic?: (input: { sessionID: string; text: string; description?: string; delivery?: "steer" | "queue" }) => Promise<unknown>;
+    synthetic?: (input: {
+      sessionID: string;
+      text: string;
+      description?: string;
+      metadata?: Record<string, unknown>;
+      delivery?: "steer" | "queue";
+    }) => Promise<unknown>;
     hook?: (name: "context", callback: (event: V2ContextEvent) => Promise<void> | void) => Promise<V2Registration>;
   };
 }
