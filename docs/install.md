@@ -297,8 +297,10 @@ Each line starts with OK, WARN or FAIL:
 - whether the models of your profile are available (a WARN with the provider to connect);
 - what opencode itself loaded, asked through the plugin with
   `opencode api --standalone` from the project folder (or the current folder without
-  `--project`): whether `lead` is loaded and from where, its `Review policy:` line, the
-  default agent, and every problem the plugin found, such as an ignored settings file. A FAIL
+  `--project`): whether `lead` is loaded and is the harness's own, its `Review policy:` line,
+  the default agent, and every problem the plugin found, such as an ignored settings file.
+  When `lead` differs from the harness's, a WARN names the fields that differ and the
+  `lead.md` files and opencode configs with an `agents.lead` entry it may come from. A FAIL
   saying the plugin is not active means opencode did not load it there: run `./install.sh`
   again or check the line, and look for errors with `opencode debug config` or
   `opencode --print-logs`.

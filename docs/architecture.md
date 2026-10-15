@@ -510,9 +510,20 @@ The server entry registers an RPC with the id `ecmwf-multi-agents`, reachable at
 
 | Method or event | Answer |
 |---|---|
-| `doctor` | The harness version, the default agent, whether `lead` is loaded and from where (the plugin, or agent files, which are listed), `lead`'s `Review policy:` line and model, the effective settings and the file each comes from, the problems found, and the state of the plugins other than opencode's own |
+| `doctor` | The harness version, the default agent, whether `lead` is loaded and whether it is the harness's own (`leadDefinition`, with the fields that differ in `leadChanged`), the `lead.md` files and opencode configs with a `lead` entry that could change it, `lead`'s `Review policy:` line and model, the effective settings and the file each comes from, the problems found, and the state of the plugins other than opencode's own |
 | `problems` | The problems found since the plugin loaded, each with `notify` when it deserves a toast |
 | event `problem` | Published for each new problem |
+
+opencode does not record where an agent came from, so `doctor` compares the `lead` opencode
+loaded with the harness's own, field by field: the prompt with the review line the settings
+write, the description, mode, `hidden`, color, and the harness's permission rules, which must
+all be there in order (rules before or after them come from the user's config and are
+expected). The model, effort and step limit are compared with what the settings choose. The
+`lead.md` files where opencode reads agent files (`leadCandidateFiles`) and the configs with an
+`agents.lead` or `agent.lead` entry (`leadConfigFiles`: the global folder, `OPENCODE_CONFIG`,
+the project's `opencode.json` and `.opencode/opencode.json`, and `OPENCODE_CONFIG_CONTENT`)
+are listed as places a change may come from; a file that repeats the harness's own definition
+changes nothing.
 
 `tui.js` calls `problems` when the TUI starts, listens for `problem` events and shows each
 problem marked `notify` once as a warning toast.
