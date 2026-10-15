@@ -694,6 +694,8 @@ merges.
   evals on opencode 2 (`plan-execute`, `execute-chat`, `review-background`, inline `/review`
   cost against the 1.x numbers)
 
+- [~] Samet: Release 0.6.0
+
 Exit: `make check` and the integration suites pass on 2.0.29 with no 1.x code left; every row
 above works on the stand-in; the real-model evals pass on opencode 2.
 
