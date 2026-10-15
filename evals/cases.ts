@@ -133,9 +133,6 @@ const SEEDED_PLANS: EvalCase["setup"] = [
 // A first turn that gives the session some history before a command, as in normal use.
 const WARM_UP = (text: string) => ({ turn: { kind: "prompt" as const, text }, note: "history before the command" });
 
-/** Background hand-offs on opencode 1.x need this flag before the server starts (docs/install.md). */
-const BACKGROUND = { OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS: "true" };
-
 /** The quality check's valid range, -90 to 60 degrees Celsius: a fact no task of the JSON plan touches. */
 const RANGE_TERMS: Term[] = [
   { label: "-90", any: [/(?:-|\u2212|\u2013|minus\s*)90\b/i] },
@@ -327,7 +324,6 @@ export const CASES: EvalCase[] = [
   },
   {
     id: "plan-execute",
-    env: BACKGROUND,
     title: "/plan, approval, then the plan carried out (with /execute in a new session if needed)",
     setup: [],
     review: "auto",
@@ -341,7 +337,6 @@ export const CASES: EvalCase[] = [
   },
   {
     id: "execute-chat",
-    env: BACKGROUND,
     title: "/execute on a seeded plan with two tasks ready; the user asks a question while they run and lead answers it",
     setup: [
       { kind: "exclude-workdir" },
@@ -374,7 +369,6 @@ export const CASES: EvalCase[] = [
   },
   {
     id: "background-scouts",
-    env: BACKGROUND,
     title: "Two independent questions answered through background scouts while the user keeps talking",
     setup: [],
     turns: [
@@ -403,7 +397,6 @@ export const CASES: EvalCase[] = [
   },
   {
     id: "steer",
-    env: BACKGROUND,
     title: "A running scout is redirected with helpers_steer instead of restarted",
     setup: [],
     turns: [
@@ -438,7 +431,6 @@ export const CASES: EvalCase[] = [
   },
   {
     id: "restart",
-    env: BACKGROUND,
     title: "The same change of scope as steer, done by cancelling and starting a new scout, for comparison",
     setup: [],
     turns: [
@@ -472,7 +464,6 @@ export const CASES: EvalCase[] = [
   },
   {
     id: "cancel",
-    env: BACKGROUND,
     title: "A running builder is stopped with helpers_cancel and not restarted",
     setup: [],
     review: "never",
@@ -497,8 +488,7 @@ export const CASES: EvalCase[] = [
   },
   {
     id: "review-background",
-    env: BACKGROUND,
-    title: "/review while a background scout works: the review answers inline, the scout's report still wakes lead",
+    title: "/review while a background scout works: the reviewer runs as a second background helper, and both reports wake lead",
     setup: UNITS_BUG,
     turns: [
       {
@@ -510,10 +500,11 @@ export const CASES: EvalCase[] = [
         waitFor: "root",
         note: "lead ends its turn while the scout runs",
       },
-      { turn: { kind: "command", command: "review", arguments: "" }, note: "the review, while the scout runs; its completion arrives during or after it" },
+      { turn: { kind: "command", command: "review", arguments: "" }, note: "the review, while the scout runs; both completions arrive in the user's session" },
     ],
     checks: [
       backgroundHandoffs(1),
+      helperSessions("reviewer", 1),
       verdict("REJECT", ["units.py"]),
       completionsWakeLead(),
       noChanges(WORK_FILES, "the review and the scout changed no project file"),

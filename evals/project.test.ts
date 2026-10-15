@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
 // SPDX-License-Identifier: Apache-2.0
 
-// Profiles, configuration, credentials handling, sandboxes and every case's setup on the
+// Profiles, configuration, the eval login's location, sandboxes and every case's setup on the
 // fixture. Uses git and python3; no network and no opencode.
 
 import { afterAll, describe, expect, test } from "bun:test";
@@ -9,22 +9,26 @@ import { existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, rmSync,
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { CASES } from "./cases.ts";
+import { checkEvalLogin, evalLoginDb } from "./login.ts";
 import {
   applySetup,
-  authTarget,
   changedBetween,
   createBox,
   exec,
   HIDDEN,
-  linkAuth,
+  linkOpencode,
   listProjectFiles,
+  loadProfile,
   loginPlugins,
   opencodeConfig,
   parseProfile,
+  parseVersion,
   profileProviders,
   projectDiff,
   readProjectFile,
   removeBox,
+  resolveBinary,
+  sandboxPath,
   snapshot,
 } from "./project.ts";
 import type { Box } from "./project.ts";
@@ -56,64 +60,89 @@ describe("profiles and configuration", () => {
     expect(parseProfile("inherit", { agents: {} })).toEqual({ name: "inherit", agents: {} });
   });
 
-  test("harness config: providers, lead's model as session model, sharing off", () => {
+  test("profiles come from the opencode 2 files", () => {
+    expect(loadProfile("default").agents.lead).toEqual({ model: "anthropic/claude-opus-5-5", variant: "xhigh" });
+    expect(() => loadProfile("../x")).toThrow("invalid profile name");
+  });
+
+  test("harness config, in opencode 2 keys: only the profile's providers, lead's model as session model, sharing and updates off", () => {
     expect(opencodeConfig("harness", profile)).toEqual({
-      $schema: "https://opencode.ai/config.json",
       share: "disabled",
-      autoupdate: false,
-      enabled_providers: ["anthropic", "github-copilot"],
+      update: "disable",
+      policies: [
+        { action: "provider.use", resource: "*", effect: "deny" },
+        { action: "provider.use", resource: "anthropic", effect: "allow" },
+        { action: "provider.use", resource: "github-copilot", effect: "allow" },
+      ],
       model: "anthropic/claude-opus-5-5",
     });
   });
 
-  test("login plugins from the environment go into the plugin list", () => {
+  test("extra plugins from the environment go into the plugins list", () => {
     expect(loginPlugins({ ECMWF_MULTI_AGENTS_EVAL_PLUGINS: " one@1.0, two  three " })).toEqual(["one@1.0", "two", "three"]);
     expect(loginPlugins({})).toEqual([]);
-    expect(opencodeConfig("harness", profile, {}, ["one@1.0"]).plugin).toEqual(["one@1.0"]);
-    expect(opencodeConfig("harness", profile).plugin).toBeUndefined();
+    expect(opencodeConfig("harness", profile, {}, ["one@1.0"]).plugins).toEqual(["one@1.0"]);
+    expect(opencodeConfig("harness", profile).plugins).toBeUndefined();
   });
 
   test("baseline config: the build agent on lead's model and effort", () => {
     expect(opencodeConfig("baseline", profile)).toMatchObject({
-      enabled_providers: ["anthropic", "github-copilot"],
       model: "anthropic/claude-opus-5-5",
-      agent: { build: { model: "anthropic/claude-opus-5-5", variant: "xhigh" } },
+      agents: { build: { model: "anthropic/claude-opus-5-5#xhigh" } },
     });
-    expect(opencodeConfig("baseline", parseProfile("inherit", {}), { model: "mock/m1" })).toMatchObject({ model: "mock/m1", agent: { build: {} } });
+    expect(opencodeConfig("baseline", parseProfile("inherit", {}), { model: "mock/m1" })).toMatchObject({ model: "mock/m1", agents: { build: {} } });
   });
 });
 
-describe("credentials", () => {
-  const dir = mkdtempSync(path.join(tmpdir(), "eval-auth-"));
+describe("opencode binary", () => {
+  test("versions in either output format", () => {
+    expect(parseVersion("opencode v2.0.28\n")).toBe("2.0.28");
+    expect(parseVersion("2.0.29")).toBe("2.0.29");
+    expect(parseVersion("1.18.35")).toBe("1.18.35");
+    expect(parseVersion("not a version")).toBe("");
+  });
+
+  test("a bare name is looked up on PATH, a path must exist", () => {
+    expect(resolveBinary("sh")).toMatch(/\/sh$/);
+    expect(resolveBinary("/nonexistent/opencode")).toBeUndefined();
+    expect(resolveBinary("no-such-binary-for-evals")).toBeUndefined();
+  });
+
+  test("the sandbox links the binary in as opencode, first on PATH; removing the sandbox keeps the binary", () => {
+    const made = box();
+    const target = path.join(made.dir, "..", `${path.basename(made.dir)}-opencode-2.0.28`);
+    writeFileSync(target, "#!/bin/sh\n", { mode: 0o755 });
+    try {
+      const link = linkOpencode(made, target);
+      expect(link).toBe(path.join(made.dir, "bin", "opencode"));
+      expect(lstatSync(link).isSymbolicLink()).toBe(true);
+      expect(readlinkSync(link)).toBe(target);
+      expect(sandboxPath(made).split(":")[0]).toBe(path.join(made.dir, "bin"));
+      removeBox(made);
+      expect(existsSync(target)).toBe(true);
+    } finally {
+      rmSync(target, { force: true });
+    }
+  });
+});
+
+describe("the eval login", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "eval-login-"));
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-  test("the variable wins; a missing file gives a message without the path", () => {
-    const file = path.join(dir, "auth.json");
-    writeFileSync(file, "{}");
-    expect(authTarget({ ECMWF_MULTI_AGENTS_EVAL_AUTH: file }, "/nonexistent-home")).toEqual({ ok: true, path: file });
-    const missing = authTarget({ ECMWF_MULTI_AGENTS_EVAL_AUTH: path.join(dir, "nope.json") }, "/nonexistent-home");
+  test("its own database in the data folder, never opencode's", () => {
+    expect(evalLoginDb({}, "/home/someone")).toBe("/home/someone/.local/share/ecmwf-multi-agents/eval-login.db");
+    expect(evalLoginDb({ XDG_DATA_HOME: "/data" }, "/home/someone")).toBe("/data/ecmwf-multi-agents/eval-login.db");
+    expect(evalLoginDb({ ECMWF_MULTI_AGENTS_EVAL_LOGIN_DB: "/elsewhere/login.db", XDG_DATA_HOME: "/data" }, "/home/someone")).toBe("/elsewhere/login.db");
+  });
+
+  test("a missing login says to run make eval-login", () => {
+    const missing = checkEvalLogin({ XDG_DATA_HOME: dir }, "/nonexistent-home");
     expect(missing.ok).toBe(false);
-    if (!missing.ok) expect(missing.message).not.toContain(dir);
-  });
-
-  test("the default is the opencode login file in the given home", () => {
-    const home = path.join(dir, "home");
-    const result = authTarget({}, home);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.message).toContain("<your home>/.local/share/opencode/auth.json");
-  });
-
-  test("the sandbox gets a symbolic link, and removing the sandbox keeps the target", () => {
-    const target = path.join(dir, "real-auth.json");
-    writeFileSync(target, "{}");
-    const made = box();
-    linkAuth(made, target);
-    const link = path.join(made.home, ".local", "share", "opencode", "auth.json");
-    expect(lstatSync(link).isSymbolicLink()).toBe(true);
-    expect(readlinkSync(link)).toBe(target);
-    removeBox(made);
-    expect(existsSync(made.dir)).toBe(false);
-    expect(existsSync(target)).toBe(true);
+    if (!missing.ok) expect(missing.message).toContain("make eval-login");
+    const db = path.join(dir, "login.db");
+    writeFileSync(db, "");
+    expect(checkEvalLogin({ ECMWF_MULTI_AGENTS_EVAL_LOGIN_DB: db }, "/nonexistent-home")).toEqual({ ok: true, path: db });
   });
 });
 

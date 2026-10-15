@@ -29,7 +29,7 @@ $(eval $(VERSION):;@:)
 endif
 endif
 
-.PHONY: help setup build dist-check lint test check all integration evals version version-check \
+.PHONY: help setup build dist-check lint test check all integration evals eval-login version version-check \
         pack-check release clean
 
 help: ## Show this help
@@ -72,7 +72,11 @@ integration: ## Suites against real opencode binaries, no models: OPENCODE_V1_BI
 evals: ## Scenario evals with REAL models (uses your provider quota): CASES="a b" REPEAT=1 VARIANT=both
 	$(BUN) evals/run.ts $(foreach c,$(CASES),--case $(c)) --repeat $(or $(REPEAT),1) \
 		--variant $(or $(VARIANT),both) $(if $(PROFILE),--profile $(PROFILE)) \
-		$(if $(JOBS),--jobs $(JOBS)) $(if $(MAX_COST),--max-cost $(MAX_COST))
+		$(if $(JOBS),--jobs $(JOBS)) $(if $(MAX_COST),--max-cost $(MAX_COST)) \
+		--opencode $(or $(OPENCODE_V2_BIN),opencode)
+
+eval-login: ## Log in for the evals, into an eval-only login (never your own): PROVIDER=name
+	$(BUN) evals/login.ts --opencode $(or $(OPENCODE_V2_BIN),opencode) $(PROVIDER)
 
 # ── Versioning and releases ──────────────────────────────────────────────────
 

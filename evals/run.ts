@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Scenario eval runner. Runs each case on the harness (lead and its helpers, installed with
-// install.sh) and on plain opencode with its build agent on lead's model, in fresh sandboxes,
-// and writes one JSON record per run and summary.md. Calls real models: see evals/README.md.
+// install.sh) and on plain opencode 2 with its build agent on lead's model, in fresh sandboxes,
+// and writes one JSON record per run and summary.md. Calls real models with the eval login
+// (make eval-login): see evals/README.md.
 //
 // Usage: bun evals/run.ts [--case ID]... [--repeat N] [--variant harness|baseline|both]
 //          [--profile NAME] [--jobs N] [--max-cost USD] [--timeout MIN] [--opencode BIN]
@@ -12,8 +13,9 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { CASES } from "./cases.ts";
+import { checkEvalLogin } from "./login.ts";
 import { killServers, UNAVAILABLE } from "./opencode.ts";
-import { authTarget, loadProfile, loginPlugins, opencodeVersion, type Profile, REPO, removeLiveBoxes } from "./project.ts";
+import { loadProfile, loginPlugins, opencodeVersion, type Profile, REPO, removeLiveBoxes, resolveBinary } from "./project.ts";
 import { runCase } from "./runner.ts";
 import { renderSummary } from "./summary.ts";
 import type { EvalCase, RunRecord, Variant } from "./types.ts";
@@ -42,12 +44,13 @@ Options:
   --jobs N         Runs at the same time (default 2).
   --max-cost USD   Start no new run once the total cost reaches this (default 40).
   --timeout MIN    Time limit for each turn, in minutes (default 20).
-  --opencode BIN   opencode 1.x binary (default "opencode").
+  --opencode BIN   opencode 2 binary (default "opencode").
   --out DIR        Output folder (default evals/runs/<UTC timestamp>/).
   --list           List the cases and exit.
   -h, --help       Show this help.
 
-The runs call real models and use your provider quota.`;
+The runs call real models and use your provider quota, through the eval login
+made with \`make eval-login\`.`;
 
 function positiveNumber(flag: string, value: string | undefined, integer: boolean): number {
   const parsed = Number(value);
@@ -195,9 +198,9 @@ async function main(argv: string[]): Promise<number> {
     return 2;
   }
 
-  const auth = authTarget();
-  if (!auth.ok) {
-    console.error(`Error: ${auth.message}`);
+  const login = checkEvalLogin();
+  if (!login.ok) {
+    console.error(`Error: ${login.message}`);
     return 1;
   }
   let profile: Profile;
@@ -207,11 +210,15 @@ async function main(argv: string[]): Promise<number> {
     console.error(`Error: ${(error as Error).message}`);
     return 1;
   }
-  // A path is resolved here, because opencode runs from each sandbox's project folder.
-  const opencode = options.opencode.includes("/") ? path.resolve(options.opencode) : options.opencode;
+  // A path, because each sandbox links it in as its `opencode`.
+  const opencode = resolveBinary(options.opencode);
+  if (!opencode) {
+    console.error(`Error: ${options.opencode} not found; name an opencode 2 binary with --opencode.`);
+    return 1;
+  }
   const version = opencodeVersion(opencode);
-  if (!/^1\./.test(version)) {
-    console.error(`Error: ${options.opencode} reports version "${version}"; the evals need opencode 1.x.`);
+  if (!/^2\./.test(version)) {
+    console.error(`Error: ${options.opencode} reports version "${version}"; the evals need opencode 2.`);
     return 1;
   }
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
@@ -250,13 +257,14 @@ async function main(argv: string[]): Promise<number> {
         opencode,
         opencodeVersion: version,
         timeoutMs: options.timeoutMin * 60_000,
-        auth: { kind: "link", target: auth.path },
+        auth: { kind: "login", db: login.path },
         plugins,
         log: (line) => console.log(`  [${label}] ${line}`),
       });
       // Every later run would fail the same way.
       if (record.error?.startsWith(UNAVAILABLE)) blocked = record.error;
-      total += record.metrics.cost;
+      // opencode's session totals also count title requests, which no message shows.
+      total += Math.max(record.metrics.cost, record.metrics.sessionCost);
       records.push(record);
       writeFileSync(path.join(out, `${label}.json`), `${JSON.stringify(record, null, 2)}\n`);
       const passed = record.checks.filter((check) => check.pass && !check.recordOnly).length;
