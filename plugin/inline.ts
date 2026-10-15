@@ -20,14 +20,17 @@
 //
 // The `context` session hook keeps the helper to its brief: it drops everything before the brief,
 // and leaves out the reports of background helpers (`<subagent ...>`) that arrive meanwhile, so
-// the helper does not act on them. They stay in the session, and lead sees them on its next turn;
-// when any were held, a queued message wakes lead once the run has ended.
+// the helper does not act on them. It leaves out the user's own messages after the brief too: the
+// TUI sends a message typed during a run with delivery `steer`, so it joins the helper's turn
+// (tui/src/component/prompt/index.tsx:1092 at v2.0.29), but it is meant for lead. They stay in
+// the session, and lead sees them on its next turn; when any were held, one queued message wakes
+// lead once the run has ended, to answer the user first.
 //
-// Between the helper's end and the switch back (about 16 ms) a report can start a run that is
-// still the helper's. Such a stray request is treated the same way, the owner is restored at once
-// and lead is woken.
+// Between the helper's end and the switch back (about 16 ms) a report or a message can start a run
+// that is still the helper's. Such a stray request is treated the same way, the owner is restored
+// at once and lead is woken.
 
-import { INLINE_WAKE_TEXT, V2_REPORT_PREFIX, firstText } from "./answer-first.ts";
+import { INLINE_USER_AND_REPORTS_WAKE_TEXT, INLINE_USER_WAKE_TEXT, INLINE_WAKE_TEXT, V2_REPORT_PREFIX, firstText, stepsV2 } from "./answer-first.ts";
 import { remember } from "./helpers.ts";
 import { fillTemplate, parseModel, unwrap } from "./register.ts";
 import type { Reporter } from "./report.ts";
@@ -53,13 +56,27 @@ export function inlineCommands(harness: EmbeddedHarness, helpers: ReadonlySet<st
 
 /** The metadata key that marks a helper's brief; its value is the command's name. */
 export const INLINE_MARK = "ecmwf-multi-agents.inline";
-/** What a helper reads when the only news in its request was a report held back from it. */
+/** What a helper reads when the only news in its request was a report or a message held back from it. */
 export const HELD_NOTE = "A message for lead arrived and was held back for it. Your answer above stands: reply only with the word done.";
 
 const isReport = (message: V2ModelMessage | undefined): boolean => message?.role === "user" && firstText(message).startsWith(V2_REPORT_PREFIX);
 
-/** How a held report is counted: by message id, so a report seen in several requests counts once. */
-export function reportKey(message: V2ModelMessage): string {
+const USER_WAKES = [INLINE_USER_WAKE_TEXT, INLINE_USER_AND_REPORTS_WAKE_TEXT];
+
+/**
+ * A message the user wrote: a request to lead in answer-first's terms, which opencode built from
+ * a user message, the only kind that carries metadata (core/src/session/runner/to-llm-message.ts
+ * at v2.0.29). Notes opencode or a plugin adds (synthetic messages) carry none: a continue note,
+ * a note that work moved to the background, a helper's own shell result.
+ */
+export function isUserMessage(message: V2ModelMessage | undefined): boolean {
+  if (message?.role !== "user" || message.metadata === null || typeof message.metadata !== "object") return false;
+  if (USER_WAKES.some((wake) => firstText(message).startsWith(wake))) return false;
+  return stepsV2([message])[0] === "request";
+}
+
+/** How a held message is counted: by message id, so a message seen in several requests counts once. */
+export function messageKey(message: V2ModelMessage): string {
   return typeof message.id === "string" && message.id !== "" ? message.id : `text:${firstText(message)}`;
 }
 
@@ -74,22 +91,33 @@ export function briefIndex(messages: readonly V2ModelMessage[], brief: string | 
   return -1;
 }
 
+/** The keys of the messages left out of a helper's request, for lead. */
+export interface HeldMessages {
+  reports: string[];
+  /** The user's own messages after the brief. */
+  user: string[];
+}
+
 /**
- * Keep a helper's request to its brief: drop the messages before it and leave out the reports.
- * When reports were the only thing after the helper's own last answer, a short note asks it to
- * end, so the request does not end with an assistant message. Changes `messages` in place,
- * because opencode sends that array, and returns the keys of the reports left out.
+ * Keep a helper's request to its brief: drop the messages before it and leave out the reports
+ * and, after the brief, the user's own messages. When those were the only thing after the
+ * helper's own last answer, a short note asks it to end, so the request does not end with an
+ * assistant message. Changes `messages` in place, because opencode sends that array, and returns
+ * the keys of the messages left out. Without a brief the user's messages stay: nothing tells
+ * which came after it.
  */
-export function isolateHelperRequest(messages: V2ModelMessage[], brief: string | undefined): string[] {
+export function isolateHelperRequest(messages: V2ModelMessage[], brief: string | undefined): HeldMessages {
   const start = briefIndex(messages, brief);
   if (start > 0) messages.splice(0, start);
+  const kinds = messages.map((message, index) => (isReport(message) ? "reports" : start >= 0 && index > 0 && isUserMessage(message) ? "user" : undefined));
   let tail = messages.length;
-  while (tail > 0 && isReport(messages[tail - 1])) tail--;
+  while (tail > 0 && kinds[tail - 1] !== undefined) tail--;
   const answeredBefore = tail < messages.length && messages[tail - 1]?.role === "assistant";
-  const held: string[] = [];
+  const held: HeldMessages = { reports: [], user: [] };
   for (let index = messages.length - 1; index >= 0; index--) {
-    if (!isReport(messages[index])) continue;
-    held.unshift(reportKey(messages[index]!));
+    const kind = kinds[index];
+    if (kind === undefined) continue;
+    held[kind].unshift(messageKey(messages[index]!));
     messages.splice(index, 1);
   }
   if (answeredBefore) messages.push({ role: "user", content: [{ type: "text", text: HELD_NOTE }] });
@@ -105,7 +133,10 @@ export interface InlineRun {
   /** True once the session was switched to the helper's own model. */
   switchedModel: boolean;
   brief: string;
+  /** The reports held back from the helper. */
   held: Set<string>;
+  /** The user's messages held back from the helper. */
+  heldUser: Set<string>;
 }
 
 /** What the plugin knows about inline runs, by session. */
@@ -113,7 +144,7 @@ export class InlineRuns {
   private readonly active = new Map<string, InlineRun>();
   /** Sessions that had a run: their owner and the last brief, for a stray request after it. */
   private readonly past = new Map<string, InlineRun>();
-  /** Reports a wake was queued for, by session. */
+  /** Messages a wake was queued for, by session. */
   private readonly woken = new Map<string, Set<string>>();
 
   start(session: string, run: InlineRun): void {
@@ -136,7 +167,7 @@ export class InlineRuns {
     return session === undefined ? undefined : this.past.get(session);
   }
 
-  /** The reports no wake was queued for yet, marked as woken now. */
+  /** The messages no wake was queued for yet, marked as woken now. */
   claim(session: string, keys: Iterable<string>): string[] {
     const woken = this.woken.get(session) ?? new Set<string>();
     const fresh = [...new Set(keys)].filter((key) => !woken.has(key));
@@ -248,7 +279,7 @@ export class Inline {
     const ownerModel = onHelper ? before?.ownerModel : isModel(info?.model) ? info.model : undefined;
     const helperModel = (command.model === undefined ? undefined : parseModel(command.model)) ?? (await this.modelOf(command.agent));
     const brief = fillTemplate(command.template, typeof invocation.prompt?.text === "string" ? invocation.prompt.text : "");
-    const run: InlineRun = { command: command.name, helper: command.agent, owner, ownerModel, switchedModel: false, brief, held: new Set() };
+    const run: InlineRun = { command: command.name, helper: command.agent, owner, ownerModel, switchedModel: false, brief, held: new Set(), heldUser: new Set() };
     this.runs.start(sessionID, run);
     try {
       await session.switchAgent!({ sessionID, agent: command.agent });
@@ -261,7 +292,7 @@ export class Inline {
     } finally {
       this.runs.finish(sessionID);
       await this.restore(sessionID, run);
-      await this.wake(sessionID, run.held);
+      await this.wake(sessionID, { reports: [...run.held], user: [...run.heldUser] });
     }
   }
 
@@ -279,10 +310,15 @@ export class Inline {
     }
   }
 
-  private async wake(sessionID: string, held: Iterable<string>): Promise<void> {
-    if (this.runs.claim(sessionID, held).length === 0) return;
+  /** One wake for what was held: to answer the user first when the user wrote, else to act on the reports. */
+  private async wake(sessionID: string, held: HeldMessages): Promise<void> {
+    const reports = this.runs.claim(sessionID, held.reports).length > 0;
+    const user = this.runs.claim(sessionID, held.user).length > 0;
+    if (!reports && !user) return;
+    const text = !user ? INLINE_WAKE_TEXT : reports ? INLINE_USER_AND_REPORTS_WAKE_TEXT : INLINE_USER_WAKE_TEXT;
+    const description = user ? "Message held while a helper answered" : "Reports held while a helper answered";
     try {
-      await this.deps.ctx.session?.synthetic?.({ sessionID, text: INLINE_WAKE_TEXT, description: "Reports held while a helper answered", delivery: "queue" });
+      await this.deps.ctx.session?.synthetic?.({ sessionID, text, description, delivery: "queue" });
     } catch (error) {
       this.deps.reporter.internal("waking lead after a command", error);
     }
@@ -314,7 +350,9 @@ export class Inline {
     const kind = classifyHelperRequest(agent, run, before !== undefined, await this.isRoot(sessionID), this.deps.helpers);
     if (kind === "leave") return false;
     if (kind === "inline") {
-      for (const key of isolateHelperRequest(event.messages, run!.brief)) run!.held.add(key);
+      const held = isolateHelperRequest(event.messages, run!.brief);
+      for (const key of held.reports) run!.held.add(key);
+      for (const key of held.user) run!.heldUser.add(key);
       return true;
     }
     const held = isolateHelperRequest(event.messages, (run ?? before)!.brief);

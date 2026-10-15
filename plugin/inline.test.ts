@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, test } from "bun:test";
-import { INLINE_WAKE_TEXT, WAKE_TEXT, stepsV2 } from "./answer-first.ts";
+import { INLINE_USER_AND_REPORTS_WAKE_TEXT, INLINE_USER_WAKE_TEXT, INLINE_WAKE_TEXT, V2_CONTINUE_NOTES, WAKE_TEXT, heldReportsV2, stepsV2 } from "./answer-first.ts";
 import { helperIds } from "./helpers.ts";
-import { HELD_NOTE, INLINE_MARK, Inline, InlineRuns, briefIndex, classifyHelperRequest, inlineCommands, isolateHelperRequest, type InlineRun } from "./inline.ts";
+import { HELD_NOTE, INLINE_MARK, Inline, InlineRuns, briefIndex, classifyHelperRequest, inlineCommands, isUserMessage, isolateHelperRequest, type InlineRun } from "./inline.ts";
 import type { Reporter } from "./report.ts";
 import { embeddedFixture } from "./testing.ts";
 import { SessionTracker } from "./tools-v2.ts";
@@ -26,6 +26,9 @@ const step = (id: string): V2ModelMessage[] => [
 ];
 const report = (id: string) => user(`<subagent sessionID="ses_${id}" state="completed">\nbuilder finished\n</subagent>`, id);
 const brief = (body = "Review the target below.\n\nTarget: main") => user(body, "msg_brief", { [INLINE_MARK]: "review" });
+/** A message the user typed: opencode gives every user message metadata, synthetic notes none. */
+const typed = (body: string, id: string) => user(body, id, {});
+const none = { reports: [], user: [] };
 
 test("the commands a helper answers are the harness's commands whose agent is a helper", () => {
   expect(inlineCommands(harness, helpers).map((command) => [command.name, command.agent])).toEqual([
@@ -37,7 +40,7 @@ test("the commands a helper answers are the harness's commands whose agent is a 
 describe("isolateHelperRequest", () => {
   test("drops everything before the brief, found by its mark", () => {
     const messages = [user("hello"), said("hi"), brief(), ...step("c1")];
-    expect(isolateHelperRequest(messages, undefined)).toEqual([]);
+    expect(isolateHelperRequest(messages, undefined)).toEqual(none);
     expect(messages.map(text)[0]).toStartWith("Review the target");
     expect(messages).toHaveLength(3);
   });
@@ -50,14 +53,41 @@ describe("isolateHelperRequest", () => {
 
   test("leaves out reports, by message id, and keeps the helper's steps", () => {
     const messages = [user("hello"), brief(), ...step("c1"), report("r1"), ...step("c2")];
-    expect(isolateHelperRequest(messages, undefined)).toEqual(["r1"]);
+    expect(isolateHelperRequest(messages, undefined)).toEqual({ reports: ["r1"], user: [] });
     expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "tool", "assistant", "tool"]);
   });
 
   test("a report after the helper's answer is replaced by a note, so the request ends with a user message", () => {
     const messages = [brief(), said("VERDICT: APPROVE"), report("r1"), report("r2")];
-    expect(isolateHelperRequest(messages, undefined)).toEqual(["r1", "r2"]);
+    expect(isolateHelperRequest(messages, undefined)).toEqual({ reports: ["r1", "r2"], user: [] });
     expect(messages.map(text)).toEqual([text(brief()), "VERDICT: APPROVE", HELD_NOTE]);
+  });
+
+  test("leaves out the user's messages after the brief, by message id, and keeps the helper's steps", () => {
+    const messages = [typed("hello", "u0"), said("hi"), brief(), ...step("c1"), typed("Is main safe to merge?", "u1"), ...step("c2")];
+    expect(isolateHelperRequest(messages, undefined)).toEqual({ reports: [], user: ["u1"] });
+    expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "tool", "assistant", "tool"]);
+    expect(messages.map(text)).not.toContain("Is main safe to merge?");
+  });
+
+  test("a user's message and reports after the helper's answer are replaced by one note", () => {
+    const messages = [brief(), said("VERDICT: APPROVE"), typed("And the tests?", "u1"), report("r1")];
+    expect(isolateHelperRequest(messages, undefined)).toEqual({ reports: ["r1"], user: ["u1"] });
+    expect(messages.map(text)).toEqual([text(brief()), "VERDICT: APPROVE", HELD_NOTE]);
+  });
+
+  test("notes opencode adds stay with the helper: synthetic notes, continue notes, checkpoints", () => {
+    const background = "User requested that active blocking work be moved to the background.";
+    const checkpoint = "<conversation-checkpoint>\nsummary\n</conversation-checkpoint>";
+    const messages = [brief(), said("partial"), user(V2_CONTINUE_NOTES[0]!, "n1", {}), ...step("c1"), user(background, "s1"), user(checkpoint, "k1", {})];
+    expect(isolateHelperRequest(messages, undefined)).toEqual(none);
+    expect(messages).toHaveLength(7);
+  });
+
+  test("without a brief the user's messages stay, since nothing tells which came after it", () => {
+    const messages = [typed("hello", "u0"), said("VERDICT"), typed("more", "u1")];
+    expect(isolateHelperRequest(messages, "Review X")).toEqual(none);
+    expect(messages).toHaveLength(3);
   });
 
   test("no note when nothing was left out, or when a tool result comes last", () => {
@@ -71,13 +101,23 @@ describe("isolateHelperRequest", () => {
 
   test("without a brief nothing is dropped, and reports are still left out", () => {
     const messages = [user("hello"), said("VERDICT"), report("r1")];
-    expect(isolateHelperRequest(messages, undefined)).toEqual(["r1"]);
+    expect(isolateHelperRequest(messages, undefined)).toEqual({ reports: ["r1"], user: [] });
     expect(messages.map(text)).toEqual(["hello", "VERDICT", HELD_NOTE]);
   });
 });
 
+test("a user's message is a request with metadata; reports, notes and the plugin's wakes are not", () => {
+  expect(isUserMessage(typed("Is it safe?", "u1"))).toBe(true);
+  expect(isUserMessage(user("Is it safe?", "s1"))).toBe(false);
+  expect(isUserMessage(user(report("r1").content![0]!.text!, "r1", {}))).toBe(false);
+  expect(isUserMessage(user(V2_CONTINUE_NOTES[1]!, "n1", {}))).toBe(false);
+  for (const wake of [WAKE_TEXT, INLINE_WAKE_TEXT, INLINE_USER_WAKE_TEXT, INLINE_USER_AND_REPORTS_WAKE_TEXT]) expect(isUserMessage(user(wake, "w", {}))).toBe(false);
+  expect(isUserMessage(said("hi"))).toBe(false);
+  expect(isUserMessage(undefined)).toBe(false);
+});
+
 describe("classifyHelperRequest", () => {
-  const run: InlineRun = { command: "review", helper: "reviewer", owner: "lead", switchedModel: false, brief: "b", held: new Set() };
+  const run: InlineRun = { command: "review", helper: "reviewer", owner: "lead", switchedModel: false, brief: "b", held: new Set(), heldUser: new Set() };
   test("inline for the running command's helper in the user's session; stray after a run; leave otherwise", () => {
     expect(classifyHelperRequest("reviewer", run, false, true, helpers)).toBe("inline");
     expect(classifyHelperRequest("scout", run, false, true, helpers)).toBe("leave");
@@ -92,7 +132,7 @@ describe("classifyHelperRequest", () => {
 describe("InlineRuns", () => {
   test("a finished run stays known for stray requests; each report is claimed for a wake once", () => {
     const runs = new InlineRuns();
-    runs.start("s", { command: "review", helper: "reviewer", owner: "lead", switchedModel: false, brief: "b", held: new Set(["r1"]) });
+    runs.start("s", { command: "review", helper: "reviewer", owner: "lead", switchedModel: false, brief: "b", held: new Set(["r1"]), heldUser: new Set() });
     expect(runs.get("s")?.helper).toBe("reviewer");
     expect(runs.last("s")).toBeUndefined();
     runs.finish("s");
@@ -106,6 +146,15 @@ describe("InlineRuns", () => {
 
 test("answer-first reads the inline wake as the end of a reply, like its own wake", () => {
   expect(stepsV2([user(WAKE_TEXT), user(INLINE_WAKE_TEXT), user("question")])).toEqual(["boundary", "boundary", "request"]);
+});
+
+test("answer-first reads a wake for the user's message as a request: a report that arrives while lead answers it is held", () => {
+  for (const wake of [INLINE_USER_WAKE_TEXT, INLINE_USER_AND_REPORTS_WAKE_TEXT]) {
+    const messages = [brief(), ...step("c1"), typed("Is main safe to merge?", "u1"), said("VERDICT: APPROVE"), report("r1"), user(wake, "w1"), ...step("c2"), report("r2")];
+    expect(stepsV2(messages).slice(5, 7)).toEqual(["report", "request"]);
+    // The report held with the user's message is in view; the one that arrives as lead answers waits.
+    expect(heldReportsV2(messages)).toEqual({ held: [9], reply: `6\n${wake}` });
+  }
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -287,6 +336,52 @@ describe("Inline", () => {
     await inline.context({ sessionID: "s", agent: "reviewer", messages: [user("Review x"), said("VERDICT"), report("r9")] });
     await settle();
     expect(sessions.calls).toEqual(["agent:lead", "wake", "agent:lead"]);
+  });
+
+  /** A run whose helper's requests are `requests`, made while the run is going on. */
+  async function runWith(...requests: V2ModelMessage[][]) {
+    const sessions = new FakeSessions();
+    sessions.autoRelease = false;
+    const { inline, review } = makeInline(sessions);
+    await review.execute({ sessionID: "s", prompt: { text: "main" } });
+    sessions.release();
+    await settle();
+    for (const messages of requests) expect(await inline.context({ sessionID: "s", agent: "reviewer", messages })).toBe(true);
+    sessions.release();
+    await settle();
+    return { sessions, inline };
+  }
+
+  test("a message the user typed during the run is held back from the helper; after the switch back, lead is woken to answer it", async () => {
+    const asked = typed("Is main safe to merge?", "u1");
+    const first = [user("hello"), user("Review main", "msg_b"), ...step("c1"), asked, ...step("c2")];
+    const { sessions, inline } = await runWith(first, [user("Review main", "msg_b"), ...step("c1"), asked, ...step("c2"), said("VERDICT")]);
+    expect(first.map(text)).not.toContain("Is main safe to merge?");
+    expect(sessions.calls.slice(-2)).toEqual(["agent:lead", "wake"]);
+    expect(sessions.synthetics).toEqual([{ sessionID: "s", text: INLINE_USER_WAKE_TEXT, description: "Message held while a helper answered", delivery: "queue" }]);
+    expect(inline.runs.last("s")?.heldUser).toEqual(new Set(["u1"]));
+  });
+
+  test("a user's message and reports held in one run: one wake, to answer the user first", async () => {
+    const { sessions } = await runWith([user("Review main", "msg_b"), ...step("c1"), report("r1"), typed("And the tests?", "u1"), ...step("c2")]);
+    expect(sessions.synthetics.map((item) => item.text)).toEqual([INLINE_USER_AND_REPORTS_WAKE_TEXT]);
+  });
+
+  test("a stray request with the user's message: held back, the owner restored, lead woken to answer it once", async () => {
+    const sessions = new FakeSessions();
+    const { inline, review } = makeInline(sessions);
+    await review.execute({ sessionID: "s", prompt: { text: "x" } });
+    await settle();
+    sessions.calls = [];
+    sessions.agent = "reviewer";
+    const messages = [user("Review x", "msg_b"), said("VERDICT"), typed("thanks, now fix it", "u9")];
+    expect(await inline.context({ sessionID: "s", agent: "reviewer", messages })).toBe(true);
+    expect(messages.map(text)).toEqual(["Review x", "VERDICT", HELD_NOTE]);
+    await settle();
+    await inline.context({ sessionID: "s", agent: "reviewer", messages: [user("Review x"), said("VERDICT"), typed("thanks, now fix it", "u9")] });
+    await settle();
+    expect(sessions.calls).toEqual(["agent:lead", "wake", "agent:lead"]);
+    expect(sessions.synthetics.map((item) => item.text)).toEqual([INLINE_USER_WAKE_TEXT]);
   });
 
   test("a helper in a child session, or in a session that never ran a command, is left alone", async () => {

@@ -77,6 +77,16 @@ export const WAKE_TEXT =
  */
 export const INLINE_WAKE_TEXT =
   "Reports from your helpers arrived while a helper answered a command here, so they were held back until it had finished. They are above: act on them now.";
+/**
+ * What wakes lead after a helper answered a command in lead's session, when the user wrote
+ * meanwhile and the message was held back from that helper (inline.ts). Unlike the wakes above it
+ * counts as a request: lead is answering the user from here on, so reports wait for its answer.
+ */
+export const INLINE_USER_WAKE_TEXT =
+  "The user wrote to you while a helper answered a command here, so the message was held back from the helper until it had finished; nothing after it answers it. It is above, after the command: answer it now.";
+/** The same, when reports from helpers were held back too: one wake for both. */
+export const INLINE_USER_AND_REPORTS_WAKE_TEXT =
+  "The user wrote to you, and reports from your helpers arrived, while a helper answered a command here, so they were held back from the helper until it had finished; nothing after the user's message answers it. They are above, after the command: answer the user first, then act on the reports.";
 /** How a background helper's report starts on opencode 2 (core/src/session/subagent-completion.ts). */
 export const V2_REPORT_PREFIX = "<subagent ";
 /** How opencode 2 starts the summary that replaces a compacted conversation. */

@@ -36,6 +36,8 @@ function partsOf(parts) {
 }
 var WAKE_TEXT = "Reports from your helpers arrived while you were answering the user, so they were held back until you had answered. They are above: act on them now.";
 var INLINE_WAKE_TEXT = "Reports from your helpers arrived while a helper answered a command here, so they were held back until it had finished. They are above: act on them now.";
+var INLINE_USER_WAKE_TEXT = "The user wrote to you while a helper answered a command here, so the message was held back from the helper until it had finished; nothing after it answers it. It is above, after the command: answer it now.";
+var INLINE_USER_AND_REPORTS_WAKE_TEXT = "The user wrote to you, and reports from your helpers arrived, while a helper answered a command here, so they were held back from the helper until it had finished; nothing after the user's message answers it. They are above, after the command: answer the user first, then act on the reports.";
 var V2_REPORT_PREFIX = "<subagent ";
 var V2_CHECKPOINT_PREFIX = "<conversation-checkpoint>";
 var V2_CONTINUE_NOTES = [
@@ -868,7 +870,15 @@ function inlineCommands(harness, helpers) {
 var INLINE_MARK = "ecmwf-multi-agents.inline";
 var HELD_NOTE = "A message for lead arrived and was held back for it. Your answer above stands: reply only with the word done.";
 var isReport = (message) => message?.role === "user" && firstText(message).startsWith(V2_REPORT_PREFIX);
-function reportKey(message) {
+var USER_WAKES = [INLINE_USER_WAKE_TEXT, INLINE_USER_AND_REPORTS_WAKE_TEXT];
+function isUserMessage(message) {
+  if (message?.role !== "user" || message.metadata === null || typeof message.metadata !== "object")
+    return false;
+  if (USER_WAKES.some((wake) => firstText(message).startsWith(wake)))
+    return false;
+  return stepsV2([message])[0] === "request";
+}
+function messageKey(message) {
   return typeof message.id === "string" && message.id !== "" ? message.id : `text:${firstText(message)}`;
 }
 function briefIndex(messages, brief) {
@@ -887,15 +897,17 @@ function isolateHelperRequest(messages, brief) {
   const start = briefIndex(messages, brief);
   if (start > 0)
     messages.splice(0, start);
+  const kinds = messages.map((message, index) => isReport(message) ? "reports" : start >= 0 && index > 0 && isUserMessage(message) ? "user" : undefined);
   let tail = messages.length;
-  while (tail > 0 && isReport(messages[tail - 1]))
+  while (tail > 0 && kinds[tail - 1] !== undefined)
     tail--;
   const answeredBefore = tail < messages.length && messages[tail - 1]?.role === "assistant";
-  const held = [];
+  const held = { reports: [], user: [] };
   for (let index = messages.length - 1;index >= 0; index--) {
-    if (!isReport(messages[index]))
+    const kind = kinds[index];
+    if (kind === undefined)
       continue;
-    held.unshift(reportKey(messages[index]));
+    held[kind].unshift(messageKey(messages[index]));
     messages.splice(index, 1);
   }
   if (answeredBefore)
@@ -1006,7 +1018,7 @@ class Inline {
     const ownerModel = onHelper ? before?.ownerModel : isModel(info?.model) ? info.model : undefined;
     const helperModel = (command.model === undefined ? undefined : parseModel(command.model)) ?? await this.modelOf(command.agent);
     const brief = fillTemplate(command.template, typeof invocation.prompt?.text === "string" ? invocation.prompt.text : "");
-    const run = { command: command.name, helper: command.agent, owner, ownerModel, switchedModel: false, brief, held: new Set };
+    const run = { command: command.name, helper: command.agent, owner, ownerModel, switchedModel: false, brief, held: new Set, heldUser: new Set };
     this.runs.start(sessionID, run);
     try {
       await session.switchAgent({ sessionID, agent: command.agent });
@@ -1019,7 +1031,7 @@ class Inline {
     } finally {
       this.runs.finish(sessionID);
       await this.restore(sessionID, run);
-      await this.wake(sessionID, run.held);
+      await this.wake(sessionID, { reports: [...run.held], user: [...run.heldUser] });
     }
   }
   async restore(sessionID, run) {
@@ -1038,10 +1050,14 @@ class Inline {
     }
   }
   async wake(sessionID, held) {
-    if (this.runs.claim(sessionID, held).length === 0)
+    const reports = this.runs.claim(sessionID, held.reports).length > 0;
+    const user = this.runs.claim(sessionID, held.user).length > 0;
+    if (!reports && !user)
       return;
+    const text = !user ? INLINE_WAKE_TEXT : reports ? INLINE_USER_AND_REPORTS_WAKE_TEXT : INLINE_USER_WAKE_TEXT;
+    const description = user ? "Message held while a helper answered" : "Reports held while a helper answered";
     try {
-      await this.deps.ctx.session?.synthetic?.({ sessionID, text: INLINE_WAKE_TEXT, description: "Reports held while a helper answered", delivery: "queue" });
+      await this.deps.ctx.session?.synthetic?.({ sessionID, text, description, delivery: "queue" });
     } catch (error) {
       this.deps.reporter.internal("waking lead after a command", error);
     }
@@ -1073,8 +1089,11 @@ class Inline {
     if (kind === "leave")
       return false;
     if (kind === "inline") {
-      for (const key of isolateHelperRequest(event.messages, run.brief))
+      const held = isolateHelperRequest(event.messages, run.brief);
+      for (const key of held.reports)
         run.held.add(key);
+      for (const key of held.user)
+        run.heldUser.add(key);
       return true;
     }
     const held = isolateHelperRequest(event.messages, (run ?? before).brief);

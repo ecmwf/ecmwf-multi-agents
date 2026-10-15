@@ -26,7 +26,7 @@ import path from "node:path";
 import { pluginFiles } from "../tools/bundle-plugin.ts";
 import { V2_VERSION, emitV2 } from "../tools/emit-v2.ts";
 import type { OutputFile, ResolvedHarness } from "../tools/types.ts";
-import { INLINE_WAKE_TEXT, WAKE_TEXT } from "./answer-first.ts";
+import { INLINE_USER_AND_REPORTS_WAKE_TEXT, INLINE_USER_WAKE_TEXT, INLINE_WAKE_TEXT, WAKE_TEXT } from "./answer-first.ts";
 import { HELPER_TOOLS, STATUS_LINES } from "./helpers.ts";
 import { HELD_NOTE } from "./inline.ts";
 import { resolvedFixture } from "./testing.ts";
@@ -96,6 +96,7 @@ const textOf = (message: unknown): string => {
  * The stand-in. lead: `BG <tag>` delegates `SLOW <tag>` to the builder in the background,
  * `FG <tag>` in the foreground;
  * `ASK <tag>` is answered once, after one slow lookup step, whatever report arrives meanwhile;
+ * a wake to answer the user after a command, with `QUESTION <tag>` above it, answers the question;
  * anything else ends the turn. builder: `sleep` steps until it has taken STEPS, or until a
  * later user message says STOP (then it reports how many steps it had taken) or MORE.
  */
@@ -157,6 +158,7 @@ function standIn(script: Script) {
           tool = { name: HELPER_TOOLS.cancel, args: { id: cancel[1] } };
         else if (ask && !looked) tool = { name: script.shell, args: { command: `sleep ${LOOKUP_SECONDS}`, description: "slow lookup" } };
         else if (ask && !answered) text = "lead answered";
+        else if (last === INLINE_USER_WAKE_TEXT && users.some((user) => user.startsWith("QUESTION "))) text = "lead answered the question";
         else text = "lead done";
       } else if (agent === "builder") {
         // A steer arrives as "lead amends your brief:\nSTOP ..."; on opencode 2 the first message starts
@@ -584,8 +586,8 @@ describe.skipIf(!v2Available)(`background helpers in opencode ${V2_VERSION}`, ()
     }, 120_000);
 
     // `/review` and `/progress` answered in the user's own session (inline.ts): the helper sees
-    // only its brief, the session goes back to lead, and reports that arrive meanwhile are held
-    // back from the helper and wake lead after it.
+    // only its brief, the session goes back to lead, and reports and messages from the user that
+    // arrive meanwhile are held back from the helper and wake lead after it.
     const agentOf = async (session: string) => (await api<V2Session>("GET", `/api/session/${session}`)).agent;
     const children = async (session: string) => (await api<V2Session[]>("GET", "/api/session")).filter((item) => item.parentID === session);
     const reviews = (tag: string) => model.seen.filter((item) => item.agent === "reviewer" && item.users[0]?.includes(`Review `) && item.users[0]?.endsWith(tag));
@@ -659,6 +661,29 @@ describe.skipIf(!v2Available)(`background helpers in opencode ${V2_VERSION}`, ()
       await Bun.sleep(1_000);
       const wakes = model.all(tag).filter((item) => item.users.at(-1) === INLINE_WAKE_TEXT || item.users.at(-1) === WAKE_TEXT);
       expect(wakes.filter((item) => item.agent === "lead")).toHaveLength(1);
+    }, 120_000);
+
+    test("a message the user sends during a review is held back from the reviewer; lead answers it after the review", async () => {
+      const tag = nextTag();
+      const session = await start(`HELLO ${tag}`);
+      await within(20_000, "lead's turn to end", async () => model.lead(tag).find((item) => item.reply === "lead done"));
+      await command(session, "review", `SLOW_REVIEW ${tag}`);
+      await within(20_000, "the review's second step", async () => reviews(tag).find((item) => item.results >= 1));
+      // What the TUI sends when the user types during a run.
+      await api("POST", `/api/session/${session}/prompt`, { text: `QUESTION ${tag}`, delivery: "steer" });
+      const verdict = await within(REVIEW_STEPS * STEP_SECONDS * 1000 + 20_000, "the verdict", async () => reviews(tag).find((item) => item.reply === "VERDICT: APPROVE"));
+      for (const item of reviews(tag)) expect(item.users).toEqual([`Review SLOW_REVIEW ${tag}`]);
+      expect(verdict.results).toBe(REVIEW_STEPS);
+      const answer = await within(20_000, "lead's answer", async () => model.lead(tag).find((item) => item.reply === "lead answered the question"));
+      expect(answer.at).toBeGreaterThan(verdict.at);
+      expect(answer.model).toBe("m1");
+      expect(answer.users.at(-1)).toBe(INLINE_USER_WAKE_TEXT);
+      expect(answer.users).toContain(`QUESTION ${tag}`);
+      await backToLead(session);
+      await Bun.sleep(1_000);
+      const wakes = model.all(tag).filter((item) => [INLINE_WAKE_TEXT, INLINE_USER_WAKE_TEXT, INLINE_USER_AND_REPORTS_WAKE_TEXT, WAKE_TEXT].includes(item.users.at(-1) ?? ""));
+      expect(wakes.map((item) => item.agent)).toEqual(["lead"]);
+      expect(model.all(tag).filter((item) => item.agent === "reviewer" && item.users.some((user) => user.includes("QUESTION")))).toEqual([]);
     }, 120_000);
 
     test("a stray run of the helper after a review: the report is held back from it, lead gets the session back and is woken", async () => {
