@@ -53,6 +53,17 @@ function continueNote(message) {
   const texts = partsOf(message.content).filter((part) => part.type === "text");
   return texts.length === 1 && V2_CONTINUE_NOTES.includes(String(texts[0].text).trim());
 }
+function continuedAfter(messages, index) {
+  for (let next = index + 1;next < messages.length; next += 1) {
+    const message = messages[next];
+    if (continueNote(message))
+      return true;
+    if (message?.role === "user" && firstText(message).startsWith(V2_REPORT_PREFIX))
+      continue;
+    return false;
+  }
+  return false;
+}
 function stepsV2(messages) {
   return messages.map((message, index) => {
     if (message?.role === "user") {
@@ -66,7 +77,7 @@ function stepsV2(messages) {
       return "request";
     }
     if (message?.role === "assistant") {
-      if (continueNote(messages[index + 1]))
+      if (continuedAfter(messages, index))
         return "other";
       return partsOf(message.content).some((part) => part.type === "tool-call") ? "other" : "ended";
     }
@@ -1109,7 +1120,7 @@ function v2Reporter(name, write = (line) => console.warn(line), listener) {
 }
 
 // plugin/rpc.ts
-import path3 from "path";
+import path2 from "path";
 
 // plugin/rpc-definition.ts
 function rpcDefinition(id) {
@@ -1123,8 +1134,188 @@ function rpcDefinition(id) {
   };
 }
 
+// plugin/rpc.ts
+class ProblemLog {
+  problems = [];
+  emit;
+  add(problem) {
+    if (this.problems.some((item) => item.message === problem.message))
+      return;
+    this.problems.push(problem);
+    this.emit?.(view(problem));
+  }
+  list() {
+    return this.problems.map(view);
+  }
+  onAdd(emit) {
+    this.emit = emit;
+  }
+}
+function view(problem) {
+  return { problem: problem.message, notify: problem.notify };
+}
+function globalConfigFolder(environment) {
+  const { env, home } = environment;
+  if (env.OPENCODE_CONFIG_DIR)
+    return path2.resolve(env.OPENCODE_CONFIG_DIR);
+  return path2.join(env.XDG_CONFIG_HOME ? env.XDG_CONFIG_HOME : path2.join(home, ".config"), "opencode");
+}
+function agentFiles(id, environment, directory, projectRoot) {
+  const folders = [globalConfigFolder(environment)];
+  if (directory !== undefined) {
+    const stop = projectRoot ?? directory;
+    for (let dir = path2.resolve(directory);; dir = path2.dirname(dir)) {
+      folders.push(path2.join(dir, ".opencode"));
+      if (dir === path2.resolve(stop) || dir === path2.dirname(dir))
+        break;
+    }
+  }
+  const found = [];
+  for (const folder of [...new Set(folders)]) {
+    for (const sub of ["agent", "agents", "mode", "modes"]) {
+      const file = path2.join(folder, sub, `${id}.md`);
+      try {
+        if (environment.readFile(file) !== undefined)
+          found.push(file);
+      } catch {}
+    }
+  }
+  return found;
+}
+function modelText(agent) {
+  const model = agent?.model;
+  if (model === undefined)
+    return null;
+  return `${model.providerID}/${model.id}${model.variant ? `#${model.variant}` : ""}`;
+}
+async function doctorReport(input) {
+  const { harness, ctx, loaded } = input;
+  await input.ready?.().catch(() => {
+    return;
+  });
+  const agents = await Promise.resolve(ctx.agent.list?.()).then((value) => unwrap(value), () => {
+    return;
+  }) ?? [];
+  const lead = agents.find((agent) => agent.id === harness.defaultAgent);
+  const files = agentFiles(harness.defaultAgent, input.environment, input.directory, input.projectRoot);
+  const plugins = await Promise.resolve(ctx.plugin?.list?.()).then((value) => unwrap(value), () => {
+    return;
+  }) ?? [];
+  const { settings } = loaded;
+  return {
+    name: harness.name,
+    version: harness.version,
+    defaultAgent: agents[0]?.id ?? null,
+    leadLoaded: lead !== undefined,
+    leadSource: lead === undefined ? null : files.length > 0 ? "files" : "plugin",
+    leadFiles: files,
+    reviewLine: (typeof lead?.system === "string" ? lead.system.split(`
+`).find((line) => line.startsWith("Review policy:")) : undefined) ?? null,
+    leadModel: modelText(lead),
+    settings: {
+      review: settings.review,
+      profile: settings.profile,
+      default_agent: settings.defaultAgent,
+      agents: settings.agents
+    },
+    settingsFiles: loaded.applied,
+    settingsSources: loaded.sources,
+    problems: input.problems.list(),
+    plugins: (Array.isArray(plugins) ? plugins : []).filter((plugin) => !plugin.id?.startsWith("opencode.") || plugin.state?.status !== "active").map((plugin) => ({
+      id: plugin.id ?? null,
+      status: plugin.state?.status ?? null,
+      ...typeof plugin.state?.error === "string" ? { error: plugin.state.error } : {}
+    }))
+  };
+}
+async function registerRpc(input) {
+  const register = input.ctx.rpc?.register;
+  if (typeof register !== "function")
+    return;
+  const registration = await register.call(input.ctx.rpc, rpcDefinition(input.harness.name), {
+    doctor: async () => doctorReport(input),
+    problems: async () => ({ problems: input.problems.list() })
+  });
+  input.problems.onAdd((problem) => {
+    Promise.resolve(registration.events.emit("problem", { ...problem })).catch(() => {
+      return;
+    });
+  });
+  return registration;
+}
+
+// plugin/rule-order.ts
+function sameRule(a, b) {
+  return a.action === b.action && a.resource === b.resource && a.effect === b.effect;
+}
+function findRun(rules, part) {
+  if (part.length === 0)
+    return -1;
+  for (let start = 0;start + part.length <= rules.length; start++) {
+    if (part.every((rule, index) => sameRule(rules[start + index], rule)))
+      return start;
+  }
+  return -1;
+}
+function ownRulesLast(rules, own, everyAgent) {
+  const start = findRun(rules, own);
+  if (start === -1)
+    return [...rules];
+  const end = start + own.length;
+  let shared = 0;
+  while (shared < everyAgent.length && end + shared < rules.length && sameRule(rules[end + shared], everyAgent[shared]))
+    shared++;
+  if (shared === 0)
+    return [...rules];
+  return [...rules.slice(0, start), ...rules.slice(end, end + shared), ...rules.slice(start, end), ...rules.slice(end + shared)];
+}
+
+class RuleOrder {
+  harness;
+  home;
+  active = false;
+  probe;
+  constructor(harness, home) {
+    this.harness = harness;
+    this.home = home;
+    this.probe = `${harness.name}-rule-probe`;
+  }
+  start() {
+    this.active = true;
+  }
+  addProbe(editor) {
+    if (!this.active || typeof editor.remove !== "function")
+      return;
+    editor.update(this.probe, (agent) => {
+      agent.mode = "subagent";
+      agent.hidden = true;
+      agent.permissions = [];
+    });
+  }
+  apply(editor) {
+    const probe = editor.get(this.probe);
+    if (probe === undefined)
+      return;
+    const everyAgent = [...probe.permissions ?? []];
+    editor.remove?.(this.probe);
+    if (everyAgent.length === 0)
+      return;
+    for (const embedded of this.harness.agents) {
+      if (embedded.permissions === undefined || embedded.permissions.length === 0)
+        continue;
+      const own = expandPermissions(embedded.permissions, this.home);
+      if (editor.get(embedded.id) === undefined)
+        continue;
+      editor.update(embedded.id, (agent) => {
+        if (Array.isArray(agent.permissions))
+          agent.permissions = ownRulesLast(agent.permissions, own, everyAgent);
+      });
+    }
+  }
+}
+
 // plugin/settings.ts
-import path2 from "path";
+import path3 from "path";
 
 // plugin/jsonc.ts
 class JsoncError extends Error {
@@ -1349,15 +1540,15 @@ function settingsPaths(environment, projectRoot, site) {
   };
   const add = (dir) => {
     if (dir)
-      addFile(path2.resolve(dir, SETTINGS_FILE));
+      addFile(path3.resolve(dir, SETTINGS_FILE));
   };
   if (site)
-    addFile(path2.resolve(site));
+    addFile(path3.resolve(site));
   add(env.OPENCODE_CONFIG_DIR);
   const xdg = env.XDG_CONFIG_HOME;
-  add(path2.join(xdg ? xdg : path2.join(home, ".config"), "opencode"));
+  add(path3.join(xdg ? xdg : path3.join(home, ".config"), "opencode"));
   if (projectRoot)
-    add(path2.join(projectRoot, ".opencode"));
+    add(path3.join(projectRoot, ".opencode"));
   return out;
 }
 function validateSettings(value, harness) {
@@ -1525,180 +1716,6 @@ function loadSettings(harness, environment, projectRoot, site) {
     applied.push(file);
   }
   return { settings: mergeSettings(files, harness), problems, applied, sources: settingSources(files, applied) };
-}
-
-// plugin/rpc.ts
-class ProblemLog {
-  problems = [];
-  emit;
-  add(problem) {
-    if (this.problems.some((item) => item.message === problem.message))
-      return;
-    this.problems.push(problem);
-    this.emit?.(view(problem));
-  }
-  list() {
-    return this.problems.map(view);
-  }
-  onAdd(emit) {
-    this.emit = emit;
-  }
-}
-function view(problem) {
-  return { problem: problem.message, notify: problem.notify };
-}
-function agentFiles(id, environment, directory, projectRoot) {
-  const folders = settingsPaths(environment, undefined).map((file) => path3.dirname(file));
-  if (directory !== undefined) {
-    const stop = projectRoot ?? directory;
-    for (let dir = path3.resolve(directory);; dir = path3.dirname(dir)) {
-      folders.push(path3.join(dir, ".opencode"));
-      if (dir === path3.resolve(stop) || dir === path3.dirname(dir))
-        break;
-    }
-  }
-  const found = [];
-  for (const folder of [...new Set(folders)]) {
-    for (const sub of ["agent", "agents", "mode", "modes"]) {
-      const file = path3.join(folder, sub, `${id}.md`);
-      try {
-        if (environment.readFile(file) !== undefined)
-          found.push(file);
-      } catch {}
-    }
-  }
-  return found;
-}
-function modelText(agent) {
-  const model = agent?.model;
-  if (model === undefined)
-    return null;
-  return `${model.providerID}/${model.id}${model.variant ? `#${model.variant}` : ""}`;
-}
-async function doctorReport(input) {
-  const { harness, ctx, loaded } = input;
-  await input.ready?.().catch(() => {
-    return;
-  });
-  const agents = await Promise.resolve(ctx.agent.list?.()).then((value) => unwrap(value), () => {
-    return;
-  }) ?? [];
-  const lead = agents.find((agent) => agent.id === harness.defaultAgent);
-  const files = agentFiles(harness.defaultAgent, input.environment, input.directory, input.projectRoot);
-  const plugins = await Promise.resolve(ctx.plugin?.list?.()).then((value) => unwrap(value), () => {
-    return;
-  }) ?? [];
-  const { settings } = loaded;
-  return {
-    name: harness.name,
-    version: harness.version,
-    defaultAgent: agents[0]?.id ?? null,
-    leadLoaded: lead !== undefined,
-    leadSource: lead === undefined ? null : files.length > 0 ? "files" : "plugin",
-    leadFiles: files,
-    reviewLine: (typeof lead?.system === "string" ? lead.system.split(`
-`).find((line) => line.startsWith("Review policy:")) : undefined) ?? null,
-    leadModel: modelText(lead),
-    settings: {
-      review: settings.review,
-      profile: settings.profile,
-      default_agent: settings.defaultAgent,
-      agents: settings.agents
-    },
-    settingsFiles: loaded.applied,
-    settingsSources: loaded.sources,
-    problems: input.problems.list(),
-    plugins: (Array.isArray(plugins) ? plugins : []).filter((plugin) => !plugin.id?.startsWith("opencode.") || plugin.state?.status !== "active").map((plugin) => ({
-      id: plugin.id ?? null,
-      status: plugin.state?.status ?? null,
-      ...typeof plugin.state?.error === "string" ? { error: plugin.state.error } : {}
-    }))
-  };
-}
-async function registerRpc(input) {
-  const register = input.ctx.rpc?.register;
-  if (typeof register !== "function")
-    return;
-  const registration = await register.call(input.ctx.rpc, rpcDefinition(input.harness.name), {
-    doctor: async () => doctorReport(input),
-    problems: async () => ({ problems: input.problems.list() })
-  });
-  input.problems.onAdd((problem) => {
-    Promise.resolve(registration.events.emit("problem", { ...problem })).catch(() => {
-      return;
-    });
-  });
-  return registration;
-}
-
-// plugin/rule-order.ts
-function sameRule(a, b) {
-  return a.action === b.action && a.resource === b.resource && a.effect === b.effect;
-}
-function findRun(rules, part) {
-  if (part.length === 0)
-    return -1;
-  for (let start = 0;start + part.length <= rules.length; start++) {
-    if (part.every((rule, index) => sameRule(rules[start + index], rule)))
-      return start;
-  }
-  return -1;
-}
-function ownRulesLast(rules, own, everyAgent) {
-  const start = findRun(rules, own);
-  if (start === -1)
-    return [...rules];
-  const end = start + own.length;
-  let shared = 0;
-  while (shared < everyAgent.length && end + shared < rules.length && sameRule(rules[end + shared], everyAgent[shared]))
-    shared++;
-  if (shared === 0)
-    return [...rules];
-  return [...rules.slice(0, start), ...rules.slice(end, end + shared), ...rules.slice(start, end), ...rules.slice(end + shared)];
-}
-
-class RuleOrder {
-  harness;
-  home;
-  active = false;
-  probe;
-  constructor(harness, home) {
-    this.harness = harness;
-    this.home = home;
-    this.probe = `${harness.name}-rule-probe`;
-  }
-  start() {
-    this.active = true;
-  }
-  addProbe(editor) {
-    if (!this.active || typeof editor.remove !== "function")
-      return;
-    editor.update(this.probe, (agent) => {
-      agent.mode = "subagent";
-      agent.hidden = true;
-      agent.permissions = [];
-    });
-  }
-  apply(editor) {
-    const probe = editor.get(this.probe);
-    if (probe === undefined)
-      return;
-    const everyAgent = [...probe.permissions ?? []];
-    editor.remove?.(this.probe);
-    if (everyAgent.length === 0)
-      return;
-    for (const embedded of this.harness.agents) {
-      if (embedded.permissions === undefined || embedded.permissions.length === 0)
-        continue;
-      const own = expandPermissions(embedded.permissions, this.home);
-      if (editor.get(embedded.id) === undefined)
-        continue;
-      editor.update(embedded.id, (agent) => {
-        if (Array.isArray(agent.permissions))
-          agent.permissions = ownRulesLast(agent.permissions, own, everyAgent);
-      });
-    }
-  }
 }
 
 // plugin/tools-v2.ts

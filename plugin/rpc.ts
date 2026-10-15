@@ -14,7 +14,7 @@
 
 import path from "node:path";
 import { rpcDefinition, type ProblemView } from "./rpc-definition.ts";
-import { settingsPaths, type LoadedSettings } from "./settings.ts";
+import type { LoadedSettings } from "./settings.ts";
 import { unwrap } from "./register.ts";
 import type { EmbeddedHarness, Environment, Problem, V2AgentInfo, V2Context, V2PluginState, V2RpcRegistration } from "./types.ts";
 
@@ -44,12 +44,23 @@ function view(problem: Problem): ProblemView {
 }
 
 /**
- * Agent files that define `id` in the folders opencode reads them from: the config folder named
- * by OPENCODE_CONFIG_DIR, the user's global one, and `.opencode` from the directory up to the
- * project root.
+ * The global config folder opencode reads agent files from: the one OPENCODE_CONFIG_DIR names,
+ * which replaces the user's own, or else the user's (`$XDG_CONFIG_HOME/opencode`, by default
+ * `~/.config/opencode`); util/src/global.ts:79 at v2.0.29. Our settings file is looked for in
+ * both (settingsPaths); agent files are not.
+ */
+export function globalConfigFolder(environment: Pick<Environment, "env" | "home">): string {
+  const { env, home } = environment;
+  if (env.OPENCODE_CONFIG_DIR) return path.resolve(env.OPENCODE_CONFIG_DIR);
+  return path.join(env.XDG_CONFIG_HOME ? env.XDG_CONFIG_HOME : path.join(home, ".config"), "opencode");
+}
+
+/**
+ * Agent files that define `id` in the folders opencode reads them from: the global config folder
+ * opencode uses, and `.opencode` from the directory up to the project root.
  */
 export function agentFiles(id: string, environment: Environment, directory: string | undefined, projectRoot: string | undefined): string[] {
-  const folders = settingsPaths(environment, undefined).map((file) => path.dirname(file));
+  const folders = [globalConfigFolder(environment)];
   if (directory !== undefined) {
     const stop = projectRoot ?? directory;
     for (let dir = path.resolve(directory); ; dir = path.dirname(dir)) {

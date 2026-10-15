@@ -85,6 +85,14 @@ describe("heldReportsV2", () => {
     expect(heldReportsV2([user("Write it all."), answer(), user(outputLimit), lookup(), result(), report()])).toEqual({ held: [5], reply: "0\nWrite it all." });
   });
 
+  test("a report that lands between a cut-off response and its note is held for the reply that goes on", () => {
+    expect(stepsV2([user("What range?"), answer(), report(), user(interrupted), lookup()])).toEqual(["request", "other", "report", "other", "other"]);
+    expect(heldReportsV2([user("What range?"), answer(), report(), user(interrupted), lookup(), result()])).toEqual({ held: [2], reply: "0\nWhat range?" });
+    // With no note after the reports, the answer before them ended the reply, so nothing is held.
+    expect(stepsV2([user("What range?"), answer(), report(), report()])).toEqual(["request", "ended", "report", "report"]);
+    expect(heldReportsV2([user("What range?"), answer(), report(), user("thanks")])).toBeUndefined();
+  });
+
   test("a user who writes the text of a note among other text is still a request", () => {
     expect(stepsV2([answer(), user(`${outputLimit} Also, what range?`), { role: "user", content: [{ type: "text", text: interrupted }, { type: "text", text: "and this" }] }])).toEqual([
       "ended",

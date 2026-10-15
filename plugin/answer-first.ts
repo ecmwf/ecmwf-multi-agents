@@ -104,8 +104,24 @@ function continueNote(message: V2ModelMessage | undefined): boolean {
 }
 
 /**
+ * Whether opencode continues the reply that the assistant message at `index` cut off: a continue
+ * note follows it, possibly after reports that arrived in between (a report can land while the
+ * response is being cut off, before opencode adds its note).
+ */
+function continuedAfter(messages: readonly V2ModelMessage[], index: number): boolean {
+  for (let next = index + 1; next < messages.length; next += 1) {
+    const message = messages[next];
+    if (continueNote(message)) return true;
+    if (message?.role === "user" && firstText(message).startsWith(V2_REPORT_PREFIX)) continue;
+    return false;
+  }
+  return false;
+}
+
+/**
  * opencode 2: what each message of a model request is to the rule. A note opencode adds to
- * continue a cut-off reply is no request, and the cut-off step before it ended no turn.
+ * continue a cut-off reply is no request, and the cut-off step before it ended no turn, even when
+ * reports arrived between the two.
  */
 export function stepsV2(messages: readonly V2ModelMessage[]): Step[] {
   return messages.map((message, index) => {
@@ -117,7 +133,7 @@ export function stepsV2(messages: readonly V2ModelMessage[]): Step[] {
       return "request";
     }
     if (message?.role === "assistant") {
-      if (continueNote(messages[index + 1])) return "other";
+      if (continuedAfter(messages, index)) return "other";
       return partsOf(message.content).some((part) => part.type === "tool-call") ? "other" : "ended";
     }
     return "other";

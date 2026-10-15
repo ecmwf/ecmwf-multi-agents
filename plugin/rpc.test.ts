@@ -11,8 +11,8 @@ import { createTui, type TuiContext } from "./tui.ts";
 const harness = embeddedFixture();
 const GLOBAL = "/home/user/.config/opencode";
 
-function input(files: Record<string, string>, agents: unknown, plugins: unknown = []): DoctorInput {
-  const environment = fakeEnvironment(files);
+function input(files: Record<string, string>, agents: unknown, plugins: unknown = [], env: Record<string, string> = {}): DoctorInput {
+  const environment = fakeEnvironment(files, env);
   const ctx = {
     agent: { transform: async () => ({ dispose: async () => {} }), list: async () => agents },
     plugin: { list: async () => plugins },
@@ -75,9 +75,17 @@ describe("doctor", () => {
     expect(await doctorReport(input({}, [{ id: "build" }]))).toMatchObject({ defaultAgent: "build", leadLoaded: false, leadSource: null });
   });
 
-  test("agent files are looked for in the site and global folders and in .opencode up to the project root", () => {
-    const environment = fakeEnvironment({ "/site/agents/lead.md": "x", "/repo/sub/.opencode/modes/lead.md": "x", "/.opencode/agents/lead.md": "x" }, { OPENCODE_CONFIG_DIR: "/site" });
-    expect(agentFiles("lead", environment, "/repo/sub", "/repo")).toEqual(["/site/agents/lead.md", "/repo/sub/.opencode/modes/lead.md"]);
+  test("agent files are looked for in the global folder opencode uses and in .opencode up to the project root", () => {
+    const files = { "/site/agents/lead.md": "x", [`${GLOBAL}/agents/lead.md`]: "x", "/repo/sub/.opencode/modes/lead.md": "x", "/.opencode/agents/lead.md": "x" };
+    // OPENCODE_CONFIG_DIR replaces the user's global folder, so a lead.md left there is not loaded.
+    const replaced = fakeEnvironment(files, { OPENCODE_CONFIG_DIR: "/site" });
+    expect(agentFiles("lead", replaced, "/repo/sub", "/repo")).toEqual(["/site/agents/lead.md", "/repo/sub/.opencode/modes/lead.md"]);
+    expect(agentFiles("lead", fakeEnvironment(files), "/repo/sub", "/repo")).toEqual([`${GLOBAL}/agents/lead.md`, "/repo/sub/.opencode/modes/lead.md"]);
+  });
+
+  test("lead registered by the plugin is not reported as from files because of a lead.md opencode ignores", async () => {
+    const ignored = await doctorReport(input({ [`${GLOBAL}/agents/lead.md`]: "x" }, [{ id: "lead", system: "x" }], [], { OPENCODE_CONFIG_DIR: "/site" }));
+    expect(ignored).toMatchObject({ leadLoaded: true, leadSource: "plugin", leadFiles: [] });
   });
 });
 
