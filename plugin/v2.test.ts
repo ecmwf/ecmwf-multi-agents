@@ -134,6 +134,7 @@ class FakeHost {
         state.agents.set(id, agent);
         update(agent);
       },
+      remove: (id) => void state.agents.delete(id),
     };
     for (const transform of this.transforms) transform(editor);
     return state;
@@ -228,6 +229,22 @@ describe("v2 setup", () => {
     expect("model" in host.build().agents.get("lead")!).toBe(false);
   });
 
+  test("each agent's own permission rules follow the config's, as with agent files, and the probe never shows", async () => {
+    const { host } = await start({});
+    const config = [{ action: "shell", resource: "*", effect: "allow" }];
+    host.transforms.push((editor) => {
+      for (const agent of editor.list()) (agent.permissions ??= []).push(...config);
+    });
+    const own = harness.agents.find((agent) => agent.id === "scout")!.permissions!;
+    expect(host.build().agents.get("scout")!.permissions).toEqual([...own, ...config]);
+
+    host.emit("plugin.updated");
+    await settle();
+    const state = host.build();
+    expect(state.agents.get("scout")!.permissions).toEqual([...config, ...own]);
+    expect([...state.agents.keys()].filter((id) => id.endsWith("-rule-probe"))).toEqual([]);
+  });
+
   test("other events do not register anything", async () => {
     const { host } = await start({});
     host.emit("agent.updated");
@@ -295,7 +312,10 @@ describe("v2 setup", () => {
     host.emit("plugin.updated");
     await settle();
     expect(() => host.build()).not.toThrow();
-    expect(write).toEqual(["ecmwf-multi-agents: internal error in the agent transform, settings left unchanged: boom"]);
+    expect(write).toEqual([
+      "ecmwf-multi-agents: internal error in ordering the agents' rules, settings left unchanged: boom",
+      "ecmwf-multi-agents: internal error in the agent transform, settings left unchanged: boom",
+    ]);
   });
 
   test("fail safe: setup never throws, even when opencode's API does", async () => {

@@ -150,6 +150,7 @@ export interface V2AgentEditor {
   get(id: string): V2AgentInfo | undefined;
   default(id: string | undefined): void;
   update(id: string, update: (agent: V2AgentInfo) => void): void;
+  remove?(id: string): void;
 }
 
 export interface V2Registration {
