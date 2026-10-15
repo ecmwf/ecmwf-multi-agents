@@ -28,7 +28,9 @@ symlink to this file.
 
 - `make check` must pass before every commit. Fix causes; never suppress lints, skip tests or
   weaken assertions to get green. After changing `src/`, `tools/` or `plugin/`, run
-  `make build` and commit the regenerated `dist/` with the change.
+  `make build` and commit the regenerated `dist/` with the change. CI
+  (`.github/workflows/ci.yml`) runs `make check` and `make pack-check` on every push and pull
+  request.
 - Prompts stay within the budgets in `src/manifest.jsonc`, use plain language, and work on any
   capable model. Do not use weather terms (analysis, model, observation, ensemble, suite) as
   role or command names.

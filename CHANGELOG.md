@@ -17,6 +17,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
   `ecmwf-multi-agents`, which runs the installer from the package with the same commands and
   options. Each release is published to npm from its tag by GitHub Actions, through npm
   trusted publishing and with provenance.
+- Every push and pull request runs `make check` and `make pack-check` on GitHub Actions.
 
 ## [0.5.2] - 2026-10-14
 

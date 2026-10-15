@@ -267,8 +267,9 @@ Findings to act on for 0.2.0:
   agent, and Tiago chose to keep that default (no rule added). Integration on 1.18.35, 1.19.0
   and 2.0.28: 120 pass. `docs/research/opencode-v2.md`, Addendum: 2.0.28
 - [x] Tiago: Release 0.5.2
-- [~] Tiago: CI: `make check` and `make pack-check` on every push and pull request
-  (`.github/workflows/ci.yml`)
+- [x] Tiago: CI: `make check` and `make pack-check` on every push and pull request
+  (`.github/workflows/ci.yml`); a pull request from a branch here is checked by the branch's
+  push, so only one from a fork runs as a pull request
 - [~] Tiago: Release 0.5.3: the npm package and CI, while Phase 9 heads for 0.6.0. Its tag is
   the first publish from GitHub Actions, due before 2026-10-17, when the trusted publisher
   expires unless it has published

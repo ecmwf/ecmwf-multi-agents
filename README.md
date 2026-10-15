@@ -197,7 +197,8 @@ make help       # every target
 `make evals` runs scenario evals with real models and uses your provider quota; see
 `evals/README.md`. `make release X.Y.Z` releases a version in one step (`DRY_RUN=1` previews)
 and needs npm, to check the package's files first (`make pack-check`); the tag it pushes
-publishes the npm package through GitHub Actions.
+publishes the npm package through GitHub Actions. GitHub Actions also runs `make check` and
+`make pack-check` on every push and pull request.
 
 ## Licence
 

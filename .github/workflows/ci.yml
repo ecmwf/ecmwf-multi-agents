@@ -1,0 +1,51 @@
+# SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+# SPDX-License-Identifier: Apache-2.0
+
+# Runs the gate (`make check`) and the package check (`make pack-check`) on every push to a
+# branch and on every pull request. A pull request from a branch of this repository is checked
+# by that branch's push, so only a pull request from a fork, which pushes nothing here, runs
+# as a pull request. Version tags run release.yml instead, which makes the same checks before
+# it publishes. The tools here are release.yml's; change both files together.
+
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: npm 11, as release.yml publishes with
+        run: |
+          npm install -g npm@^11.5.1
+          npm --version
+
+      - name: reuse and shellcheck, for make check
+        run: |
+          pipx install reuse==6.2.0
+          command -v shellcheck >/dev/null || sudo apt-get install -y shellcheck
+          shellcheck --version
+
+      - run: make setup
+
+      - run: make check
+
+      - name: The package holds the files git tracks for it
+        run: make pack-check
