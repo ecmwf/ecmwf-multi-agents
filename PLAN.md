@@ -693,8 +693,16 @@ merges.
 - [ ] Samet, after 0.6.0 (released without them, on the owners' decision): real-model
   evals on opencode 2 (`plan-execute`, `execute-chat`, `review-background`, inline `/review`
   cost against the 1.x numbers)
-
-- [~] Samet: Release 0.6.0
+- [x] Samet: Release 0.6.0. #5 merged on Tiago's verbal approval after his review of b708cf7
+  was addressed; `make release 0.6.0` on 2026-10-15 (the tag push bypassed the repository's
+  rule restricting tag creation, as an admin). The tag's workflow published
+  `@ecmwf.int/multi-agents@0.6.0` through the trusted publisher, with provenance (in the
+  Sigstore transparency log). Checked from the registry in a sandbox: `npm audit signatures`
+  verifies the signature and the attestation; `npm install -g` then `ecmwf-multi-agents`
+  installs 20 files on opencode 2.0.29 and records 0.6.0, and `doctor` finds no problems
+  (`lead` is the harness's, the plugin 0.6.0 active); a project with only
+  `"plugins": ["@ecmwf.int/multi-agents@0.6.0"]` gets the whole harness from npm, by the same
+  `doctor --project` check
 
 Exit: `make check` and the integration suites pass on 2.0.29 with no 1.x code left; every row
 above works on the stand-in; the real-model evals pass on opencode 2.
