@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Requirements
 
-- opencode 2, tested on 2.0.28 (another 2.x version works with a warning). The installer finds
+- opencode 2, tested on 2.0.29 (another 2.x version works with a warning). The installer finds
   it as `opencode` or `opencode2`. With only opencode 1 it stops: upgrade first with
   `opencode upgrade --major`.
 - A POSIX shell and standard tools (`sed`, `grep`, `cmp`, `readlink`). `jq` makes `doctor`

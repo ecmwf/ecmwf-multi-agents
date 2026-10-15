@@ -75,22 +75,45 @@ export const WAKE_TEXT =
 export const V2_REPORT_PREFIX = "<subagent ";
 /** How opencode 2 starts the summary that replaces a compacted conversation. */
 const V2_CHECKPOINT_PREFIX = "<conversation-checkpoint>";
+/**
+ * The notes opencode 2 adds as a user message when it continues a reply that was cut off: an
+ * interrupted response (session/runner/llm.ts:35-36 at v2.0.28 and v2.0.29), one that hit the
+ * output limit (llm.ts:38-39 at v2.0.29), and a server restart (session/execution/restart.ts:15-16).
+ */
+export const V2_CONTINUE_NOTES: readonly string[] = [
+  "The previous response was interrupted. Continue from where you left off without repeating completed content.",
+  "Your last response hit the output token limit (stop reason: length). Do not apologize, recap, or repeat yourself. Break the remaining work into smaller pieces.",
+  "The server restarted while you were working. Continue from where you left off without repeating completed work.",
+];
 
 function firstText(message: V2ModelMessage): string {
   const text = partsOf(message?.content).find((part) => part.type === "text")?.text;
   return typeof text === "string" ? text : "";
 }
 
-/** opencode 2: what each message of a model request is to the rule. */
+function continueNote(message: V2ModelMessage | undefined): boolean {
+  if (message?.role !== "user") return false;
+  const texts = partsOf(message.content).filter((part) => part.type === "text");
+  return texts.length === 1 && V2_CONTINUE_NOTES.includes(String(texts[0]!.text).trim());
+}
+
+/**
+ * opencode 2: what each message of a model request is to the rule. A note opencode adds to
+ * continue a cut-off reply is no request, and the cut-off step before it ended no turn.
+ */
 export function stepsV2(messages: readonly V2ModelMessage[]): Step[] {
-  return messages.map((message) => {
+  return messages.map((message, index) => {
     if (message?.role === "user") {
+      if (continueNote(message)) return "other";
       const text = firstText(message);
       if (text.startsWith(V2_REPORT_PREFIX)) return "report";
       if (text.startsWith(V2_CHECKPOINT_PREFIX) || text.startsWith(WAKE_TEXT)) return "boundary";
       return "request";
     }
-    if (message?.role === "assistant") return partsOf(message.content).some((part) => part.type === "tool-call") ? "other" : "ended";
+    if (message?.role === "assistant") {
+      if (continueNote(messages[index + 1])) return "other";
+      return partsOf(message.content).some((part) => part.type === "tool-call") ? "other" : "ended";
+    }
     return "other";
   });
 }

@@ -69,7 +69,7 @@ instead of starting over. You can also open the helper's session and type to it.
 
 ## Requirements
 
-- opencode 2, tested on 2.0.28 (another 2.x version works with a warning). With opencode 1,
+- opencode 2, tested on 2.0.29 (another 2.x version works with a warning). With opencode 1,
   upgrade first with `opencode upgrade --major`.
 - Access to the models in your chosen profile. The default profile needs Anthropic and GitHub
   Copilot, connected with `opencode auth login`.

@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
 // SPDX-License-Identifier: Apache-2.0
 
-// Emitter for opencode 2, tested on 2.0.28 (written against 2.0.16, whose agent and model
-// schemas 2.0.28 keeps). Paths are relative to dist/opencode-v2/ and mirror a v2 config
+// Emitter for opencode 2, tested on 2.0.29 (written against 2.0.16, whose agent and model
+// schemas 2.0.29 keeps). Paths are relative to dist/opencode-v2/ and mirror a v2 config
 // directory (the global ~/.config/opencode/ or a project's .opencode/):
 //
 //   agents/<id>.md        native agent: frontmatter, then the prompt as the system prompt
@@ -28,9 +28,9 @@ import type {
 } from "./types.ts";
 
 /** The opencode version this output is written and tested for. */
-export const V2_VERSION = "2.0.28";
+export const V2_VERSION = "2.0.29";
 
-/** Neutral action to opencode 2 permission action (the same names at 2.0.16 and 2.0.28). */
+/** Neutral action to opencode 2 permission action (the same names at 2.0.16 and 2.0.29). */
 export const V2_ACTIONS: Readonly<Record<MappedAction, string>> = {
   read: "read",
   edit: "edit", // also covers the write and patch tools

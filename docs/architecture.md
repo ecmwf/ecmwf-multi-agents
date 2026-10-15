@@ -407,7 +407,7 @@ src/commands/*.md         command templates
 src/skills/<id>/SKILL.md  skill bodies
 src/profiles/*.jsonc      model profiles
 tools/                    generator (TypeScript on Bun)
-dist/opencode-v2/         output for opencode 2 (tested on 2.0.28)
+dist/opencode-v2/         output for opencode 2 (tested on 2.0.29)
 plugin/                   runtime plugin sources
 ```
 

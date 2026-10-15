@@ -11,6 +11,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ## [Unreleased]
 
+### Changed
+
+- opencode 2 is tested on 2.0.29, the version in use now; 2.0.28 still works and now gets the
+  installer's warning for an untested version.
+
+### Fixed
+
+- On opencode 2, the note opencode adds to continue a response that was cut off (interrupted,
+  over the output limit, or stopped by a server restart) no longer counts as a new question
+  from you: a task report is held back only while `lead` is still answering your own question.
+
 ## [0.5.3] - 2026-10-15
 
 ### Added

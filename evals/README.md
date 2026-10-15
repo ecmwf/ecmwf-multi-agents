@@ -54,7 +54,7 @@ bun evals/run.ts --case feature --case bug-fix --repeat 3 --jobs 3 --opencode op
 | `--out DIR` | `evals/runs/<UTC timestamp>/` | Output folder (`evals/runs/` is ignored by git) |
 | `--list` | | List the cases and exit |
 
-Requirements: opencode 2 (tested with 2.0.28; the runner refuses other major versions), Bun,
+Requirements: opencode 2 (tested with 2.0.29; the runner refuses other major versions), Bun,
 git, `python3`, `bash`, a built `dist/` (`bun run build`), and an eval login (`make
 eval-login`, below). `make evals` and `make eval-login` use `OPENCODE_V2_BIN`, `opencode` by
 default.

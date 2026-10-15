@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, test } from "bun:test";
-import { earlyReports, heldReports, heldReportsV2, replyOpen, requestBefore, stepsV2, WAKE_TEXT } from "./answer-first.ts";
+import { earlyReports, heldReports, heldReportsV2, replyOpen, requestBefore, stepsV2, V2_CONTINUE_NOTES, WAKE_TEXT } from "./answer-first.ts";
 import type { V2ModelMessage } from "./types.ts";
 
 describe("the rule", () => {
@@ -63,5 +63,33 @@ describe("heldReportsV2", () => {
   test("each message of a request is classified as opencode sends it", () => {
     const checkpoint = user("<conversation-checkpoint>\nsummary\n</conversation-checkpoint>");
     expect(stepsV2([user("q"), lookup(), result(), report(), answer(), user(WAKE_TEXT), checkpoint])).toEqual(["request", "other", "other", "report", "ended", "boundary", "boundary"]);
+  });
+
+  const interrupted = "The previous response was interrupted. Continue from where you left off without repeating completed content.";
+  const outputLimit =
+    "Your last response hit the output token limit (stop reason: length). Do not apologize, recap, or repeat yourself. Break the remaining work into smaller pieces.";
+
+  test("the note after an interrupted response is no request, and the cut-off step before it ended no turn", () => {
+    expect(V2_CONTINUE_NOTES).toContain(interrupted);
+    expect(stepsV2([user("What range?"), answer(), user(interrupted), answer()])).toEqual(["request", "other", "other", "ended"]);
+    // The reply to the user goes on across the note, so a report during it is still held for that reply.
+    expect(heldReportsV2([user("What range?"), answer(), user(interrupted), lookup(), result(), report()])).toEqual({ held: [5], reply: "0\nWhat range?" });
+    // A report after an answer that ended is not held because of the note before it.
+    expect(heldReportsV2([user("What range?"), lookup(), user(interrupted), answer(), report()])).toBeUndefined();
+  });
+
+  test("the note after a response that hit the output limit is no request, and the cut-off step before it ended no turn", () => {
+    expect(V2_CONTINUE_NOTES).toContain(outputLimit);
+    expect(stepsV2([user("Write it all."), answer(), user(outputLimit), answer()])).toEqual(["request", "other", "other", "ended"]);
+    expect(heldReportsV2([user("Write it all."), answer(), user(outputLimit), answer(), report()])).toBeUndefined();
+    expect(heldReportsV2([user("Write it all."), answer(), user(outputLimit), lookup(), result(), report()])).toEqual({ held: [5], reply: "0\nWrite it all." });
+  });
+
+  test("a user who writes the text of a note among other text is still a request", () => {
+    expect(stepsV2([answer(), user(`${outputLimit} Also, what range?`), { role: "user", content: [{ type: "text", text: interrupted }, { type: "text", text: "and this" }] }])).toEqual([
+      "ended",
+      "request",
+      "request",
+    ]);
   });
 });

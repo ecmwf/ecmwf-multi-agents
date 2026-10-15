@@ -33,13 +33,26 @@ function partsOf(parts) {
 var WAKE_TEXT = "Reports from your helpers arrived while you were answering the user, so they were held back until you had answered. They are above: act on them now.";
 var V2_REPORT_PREFIX = "<subagent ";
 var V2_CHECKPOINT_PREFIX = "<conversation-checkpoint>";
+var V2_CONTINUE_NOTES = [
+  "The previous response was interrupted. Continue from where you left off without repeating completed content.",
+  "Your last response hit the output token limit (stop reason: length). Do not apologize, recap, or repeat yourself. Break the remaining work into smaller pieces.",
+  "The server restarted while you were working. Continue from where you left off without repeating completed work."
+];
 function firstText(message) {
   const text = partsOf(message?.content).find((part) => part.type === "text")?.text;
   return typeof text === "string" ? text : "";
 }
+function continueNote(message) {
+  if (message?.role !== "user")
+    return false;
+  const texts = partsOf(message.content).filter((part) => part.type === "text");
+  return texts.length === 1 && V2_CONTINUE_NOTES.includes(String(texts[0].text).trim());
+}
 function stepsV2(messages) {
-  return messages.map((message) => {
+  return messages.map((message, index) => {
     if (message?.role === "user") {
+      if (continueNote(message))
+        return "other";
       const text = firstText(message);
       if (text.startsWith(V2_REPORT_PREFIX))
         return "report";
@@ -47,8 +60,11 @@ function stepsV2(messages) {
         return "boundary";
       return "request";
     }
-    if (message?.role === "assistant")
+    if (message?.role === "assistant") {
+      if (continueNote(messages[index + 1]))
+        return "other";
       return partsOf(message.content).some((part) => part.type === "tool-call") ? "other" : "ended";
+    }
     return "other";
   });
 }
