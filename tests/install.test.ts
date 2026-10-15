@@ -5,7 +5,7 @@
 // `opencode2` commands in a temporary folder, points HOME and XDG_CONFIG_HOME there, and runs
 // the installer. No real opencode, user configuration or network is involved.
 
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import {
   chmodSync,
   existsSync,
@@ -16,6 +16,7 @@ import {
   readdirSync,
   readlinkSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -26,8 +27,28 @@ const INSTALL = path.join(REPO, "install.sh");
 const NAME = "ecmwf-multi-agents";
 const MARKER_MD = `# managed by ${NAME}`;
 const MARKER_JS = `// managed by ${NAME}`;
-// Only system folders, so the real opencode on the developer's PATH is never found.
-const SYSTEM_PATH = "/usr/local/bin:/usr/bin:/bin";
+const V2_PINNED = "2.0.28";
+
+/**
+ * The system's commands without any opencode, so a real opencode on the developer's machine,
+ * even one in /usr/bin, is never found: one folder of links to everything else in the system
+ * folders.
+ */
+const SYSTEM_BIN = (() => {
+  const dir = mkdtempSync(path.join(tmpdir(), "install-test-system-"));
+  const linked = new Set<string>();
+  for (const folder of ["/usr/local/bin", "/usr/bin", "/bin"]) {
+    if (!existsSync(folder)) continue;
+    for (const name of readdirSync(folder)) {
+      if (name.startsWith("opencode") || linked.has(name)) continue;
+      linked.add(name);
+      symlinkSync(path.join(folder, name), path.join(dir, name));
+    }
+  }
+  return dir;
+})();
+
+afterAll(() => rmSync(SYSTEM_BIN, { recursive: true, force: true }));
 
 const PROFILES: Record<string, Record<string, { model: string; effort: string }>> = {
   default: {
@@ -63,8 +84,6 @@ const boxes: string[] = [];
 
 afterEach(() => {
   for (const dir of boxes.splice(0)) {
-    // Read-only folders from the central tests must be writable again before removal.
-    Bun.spawnSync(["chmod", "-R", "u+w", dir]);
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -79,8 +98,11 @@ function profileJson(id: string): string {
   return `${JSON.stringify({ id, description: `The ${id} profile.`, agents }, null, 2)}\n`;
 }
 
-/** Write one platform folder of a fixture dist, with files.txt listing every file. */
-function writePlatform(dist: string, platform: "v1" | "v2", extra: string[] = []): void {
+/**
+ * Write the opencode-v2 folder of a fixture dist, with files.txt listing every file; "v1" writes
+ * the folder an install for opencode 1 linked to.
+ */
+function writePlatform(dist: string, platform: "v1" | "v2" = "v2", extra: string[] = []): void {
   const root = path.join(dist, `opencode-${platform}`);
   const files: string[] = [];
   const put = (rel: string, content: string) => {
@@ -97,7 +119,7 @@ function writePlatform(dist: string, platform: "v1" | "v2", extra: string[] = []
   write(path.join(root, NAME, "files.txt"), `${[...files].sort().join("\n")}\n`);
 }
 
-/** A fake opencode command: prints a version, a model list and canned debug output. */
+/** A fake opencode command: prints a version and a model list. */
 function fakeOpencode(file: string, version: string): void {
   write(
     file,
@@ -105,18 +127,13 @@ function fakeOpencode(file: string, version: string): void {
 case "$1" in
   --version) printf '%s\\n' '${version}' ;;
   models) printf '%s\\n' anthropic/claude-opus-5-5 anthropic/claude-sonnet-5-5 ;;
-  debug)
-    case "$2" in
-      agent) printf '%s\\n' '{"name":"lead","model":{"providerID":"anthropic","modelID":"claude-opus-5-5"},"prompt":"You are lead.\\nReview policy: auto\\n"}' ;;
-      config) printf '%s\\n' '{"default_agent":"lead"}' ;;
-    esac ;;
 esac
 `,
   );
   chmodSync(file, 0o755);
 }
 
-function makeBox(versions: { opencode?: string; opencode2?: string } = { opencode: "1.18.35" }): Box {
+function makeBox(versions: { opencode?: string; opencode2?: string } = { opencode: `opencode v${V2_PINNED}`, opencode2: `opencode v${V2_PINNED}` }): Box {
   const dir = mkdtempSync(path.join(tmpdir(), "install-test-"));
   boxes.push(dir);
   const box: Box = {
@@ -128,8 +145,7 @@ function makeBox(versions: { opencode?: string; opencode2?: string } = { opencod
   };
   mkdirSync(box.home, { recursive: true });
   mkdirSync(box.bin, { recursive: true });
-  writePlatform(box.dist, "v1");
-  writePlatform(box.dist, "v2");
+  writePlatform(box.dist);
   if (versions.opencode) fakeOpencode(path.join(box.bin, "opencode"), versions.opencode);
   if (versions.opencode2) fakeOpencode(path.join(box.bin, "opencode2"), versions.opencode2);
   return box;
@@ -139,7 +155,7 @@ function run(box: Box, args: string[], cwd = box.dir, extra: Record<string, stri
   const env: Record<string, string> = {
     HOME: box.home,
     XDG_CONFIG_HOME: path.join(box.home, ".config"),
-    PATH: `${box.bin}:${SYSTEM_PATH}`,
+    PATH: `${box.bin}:${SYSTEM_BIN}`,
     TMPDIR: box.dir,
     ECMWF_MULTI_AGENTS_DIST: box.dist,
     LC_ALL: "C",
@@ -169,8 +185,8 @@ function listing(root: string): string[] {
   return out;
 }
 
-function fileList(box: Box, platform: "v1" | "v2"): string[] {
-  return readFileSync(path.join(box.dist, `opencode-${platform}`, NAME, "files.txt"), "utf8").trim().split("\n");
+function fileList(box: Box): string[] {
+  return readFileSync(path.join(box.dist, "opencode-v2", NAME, "files.txt"), "utf8").trim().split("\n");
 }
 
 function settingsJson(file: string): Record<string, unknown> {
@@ -187,10 +203,10 @@ describe("install", () => {
     const { code, out } = run(box, []);
     expect(code).toBe(0);
     expect(out).toContain("Done: 11 added, 0 updated, 0 unchanged, 0 removed.");
-    for (const rel of fileList(box, "v1")) {
+    for (const rel of fileList(box)) {
       const target = path.join(box.config, rel);
       expect(lstatSync(target).isSymbolicLink()).toBe(true);
-      expect(readlinkSync(target)).toBe(path.join(box.dist, "opencode-v1", rel));
+      expect(readlinkSync(target)).toBe(path.join(box.dist, "opencode-v2", rel));
     }
     expect(settingsJson(path.join(box.config, `${NAME}.jsonc`))).toEqual({
       $schema: `./${NAME}/schema.json`,
@@ -198,7 +214,7 @@ describe("install", () => {
       profile: "default",
     });
     const record = readFileSync(path.join(box.config, NAME, "installed.txt"), "utf8");
-    expect(record).toContain("platform=v1\nmode=link\n");
+    expect(record).toContain("platform=v2\nmode=link\n");
     expect(record).toContain("file=agents/lead.md\n");
     expect(out).toContain("restart opencode");
   });
@@ -223,10 +239,10 @@ describe("install", () => {
     const box = makeBox();
     run(box, []);
     const dropped = `skills/${NAME}-plan/SKILL.md`;
-    const v1 = path.join(box.dist, "opencode-v1");
-    rmSync(path.join(v1, dropped));
-    const files = fileList(box, "v1").filter((rel) => rel !== dropped);
-    writeFileSync(path.join(v1, NAME, "files.txt"), `${files.join("\n")}\n`);
+    const v2 = path.join(box.dist, "opencode-v2");
+    rmSync(path.join(v2, dropped));
+    const files = fileList(box).filter((rel) => rel !== dropped);
+    writeFileSync(path.join(v2, NAME, "files.txt"), `${files.join("\n")}\n`);
     const { code, out } = run(box, []);
     expect(code).toBe(0);
     expect(out).toContain("1 removed.");
@@ -237,7 +253,7 @@ describe("install", () => {
   test("a new dist file is added on the next run", () => {
     const box = makeBox();
     run(box, []);
-    writePlatform(box.dist, "v1", ["agents/extra.md"]);
+    writePlatform(box.dist, "v2", ["agents/extra.md"]);
     const { code, out } = run(box, []);
     expect(code).toBe(0);
     expect(out).toContain("Done: 1 added, 0 updated, 11 unchanged, 0 removed.");
@@ -302,53 +318,95 @@ describe("install", () => {
   });
 });
 
-describe("platform", () => {
-  const linkedPlatform = (box: Box) => readlinkSync(path.join(box.config, "agents/lead.md")).includes("opencode-v2") ? "v2" : "v1";
-
-  test("opencode 1.x alone gets the v1 files", () => {
-    const box = makeBox({ opencode: "1.19.0" });
-    expect(run(box, []).code).toBe(0);
-    expect(linkedPlatform(box)).toBe("v1");
+describe("opencode versions", () => {
+  test("opencode 2 as opencode, or as opencode2 alone, gets the files without a warning", () => {
+    for (const versions of [{ opencode: `opencode v${V2_PINNED}` }, { opencode2: `opencode v${V2_PINNED}` }]) {
+      const box = makeBox(versions);
+      const { code, out } = run(box, []);
+      expect(code).toBe(0);
+      expect(out).toContain("for opencode 2");
+      expect(out).not.toContain("Warning");
+      expect(readlinkSync(path.join(box.config, "agents/lead.md"))).toContain("opencode-v2");
+    }
   });
 
-  test("opencode 1.x and 2 together get the v1 files, which opencode 2 also reads", () => {
-    const box = makeBox({ opencode: "1.18.35", opencode2: "opencode v2.0.28" });
-    expect(run(box, []).code).toBe(0);
-    expect(linkedPlatform(box)).toBe("v1");
-  });
-
-  test("opencode 2 alone gets the v2 files", () => {
-    const box = makeBox({ opencode: "opencode v2.0.28", opencode2: "opencode v2.0.28" });
+  test("an old opencode next to opencode2 is passed over", () => {
+    const box = makeBox({ opencode: "1.18.35", opencode2: `opencode v${V2_PINNED}` });
     const { code, out } = run(box, []);
     expect(code).toBe(0);
-    expect(linkedPlatform(box)).toBe("v2");
     expect(out).not.toContain("Warning");
+    expect(run(box, ["doctor"]).out).toContain(`OK    opencode ${V2_PINNED}`);
   });
 
   test("an untested opencode 2 version gets a warning", () => {
     const box = makeBox({ opencode2: "opencode v2.0.20" });
     const { code, out } = run(box, []);
     expect(code).toBe(0);
-    expect(out).toContain("tested with opencode 2.0.28");
+    expect(out).toContain(`tested with opencode ${V2_PINNED}`);
   });
 
   test("no opencode at all stops with advice", () => {
     const box = makeBox({});
     const { code, out } = run(box, []);
     expect(code).toBe(1);
-    expect(out).toContain("opencode was not found");
+    expect(out).toContain("opencode was not found. Install opencode 2 first");
+    expect(existsSync(box.config)).toBe(false);
   });
 
-  test("--platform v2 next to opencode 1.x warns about the missing safety rules", () => {
-    const box = makeBox({ opencode: "1.18.35" });
-    const { code, out } = run(box, ["--platform", "v2"]);
-    expect(code).toBe(0);
-    expect(out).toContain("without their safety rules");
-    expect(linkedPlatform(box)).toBe("v2");
+  test("only opencode 1 is refused with the upgrade command, and nothing is installed", () => {
+    const box = makeBox({ opencode: "1.19.0" });
+    const { code, out } = run(box, []);
+    expect(code).toBe(1);
+    expect(out).toContain('opencode 1.19.0 was found, but this harness needs opencode 2: upgrade with "opencode upgrade --major"');
+    expect(existsSync(box.config)).toBe(false);
+    expect(run(box, ["doctor"]).out).toContain('FAIL  opencode 1.19.0: this harness needs opencode 2: upgrade with "opencode upgrade --major"');
+  });
+
+  test("--platform is gone", () => {
+    const box = makeBox();
+    expect(run(box, ["--platform", "v1"]).out).toContain("unknown option: --platform");
+    expect(run(box, ["--central", box.dir]).out).toContain("unknown option: --central");
   });
 });
 
-describe("project and central installs", () => {
+describe("an install for opencode 1", () => {
+  /** What an install for opencode 1 left: links into dist/opencode-v1, one file only it had, and its record. */
+  function oldInstall(box: Box): void {
+    writePlatform(box.dist, "v1", ["commands/old.md"]);
+    const files = readFileSync(path.join(box.dist, "opencode-v1", NAME, "files.txt"), "utf8").trim().split("\n");
+    for (const rel of files) {
+      mkdirSync(path.dirname(path.join(box.config, rel)), { recursive: true });
+      symlinkSync(path.join(box.dist, "opencode-v1", rel), path.join(box.config, rel));
+    }
+    const record = ["# record", "platform=v1", "mode=link", `dist=${box.dist}`, ...files.map((rel) => `file=${rel}`)];
+    write(path.join(box.config, NAME, "installed.txt"), `${record.join("\n")}\n`);
+    // A checkout updated since has no opencode-v1 folder, so the old links are broken.
+    rmSync(path.join(box.dist, "opencode-v1"), { recursive: true });
+  }
+
+  test("doctor says it needs replacing", () => {
+    const box = makeBox();
+    oldInstall(box);
+    const { code, out } = run(box, ["doctor"]);
+    expect(code).toBe(1);
+    expect(out).toContain("FAIL  the files installed here are for opencode 1, which is no longer supported; run ./install.sh");
+  });
+
+  test("running the installer again replaces it with the opencode 2 files", () => {
+    const box = makeBox();
+    oldInstall(box);
+    const { code, out } = run(box, []);
+    expect(code).toBe(0);
+    expect(out).toContain("are for opencode 1, which is no longer supported; they are replaced");
+    expect(out).toContain("Done: 0 added, 11 updated, 0 unchanged, 1 removed.");
+    expect(existsSync(path.join(box.config, "commands/old.md"))).toBe(false);
+    for (const rel of fileList(box)) expect(readlinkSync(path.join(box.config, rel))).toBe(path.join(box.dist, "opencode-v2", rel));
+    expect(readFileSync(path.join(box.config, NAME, "installed.txt"), "utf8")).toContain("platform=v2\n");
+    expect(run(box, ["doctor"]).code).toBe(0);
+  });
+});
+
+describe("project installs", () => {
   test("a project install copies into .opencode, and writes settings only when asked", () => {
     const box = makeBox();
     const project = path.join(box.dir, "my project");
@@ -372,27 +430,10 @@ describe("project and central installs", () => {
     const project = path.join(box.dir, "proj");
     mkdirSync(project);
     run(box, ["--project", project]);
-    write(path.join(box.dist, "opencode-v1/agents/lead.md"), `---\n${MARKER_MD}\ndescription: newer\n---\n\nNew body.\n`);
+    write(path.join(box.dist, "opencode-v2/agents/lead.md"), `---\n${MARKER_MD}\ndescription: newer\n---\n\nNew body.\n`);
     const { out } = run(box, ["--project", project]);
     expect(out).toContain("0 added, 1 updated");
     expect(readFileSync(path.join(project, ".opencode/agents/lead.md"), "utf8")).toContain("New body.");
-  });
-
-  test("--central copies into the given folder and writes site settings only when asked", () => {
-    const box = makeBox();
-    const central = path.join(box.dir, "central");
-    const { code, out } = run(box, ["--central", central, "--review", "always"]);
-    expect(code).toBe(0);
-    expect(lstatSync(path.join(central, "agents/lead.md")).isFile()).toBe(true);
-    expect(settingsJson(path.join(central, `${NAME}.jsonc`))).toEqual({ $schema: `./${NAME}/schema.json`, review: "always" });
-    expect(out).toContain(`OPENCODE_CONFIG_DIR=${central}`);
-  });
-
-  test("--central needs opencode 1.x", () => {
-    const box = makeBox({ opencode2: "opencode v2.0.28" });
-    const { code, out } = run(box, ["--central", path.join(box.dir, "central")]);
-    expect(code).toBe(1);
-    expect(out).toContain("opencode 1.x only");
   });
 });
 
@@ -429,74 +470,22 @@ describe("uninstall", () => {
   });
 });
 
-describe("background helpers on opencode 1.x", () => {
-  const FLAG = "OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS";
-
-  test("an install for opencode 1.x says how to turn them on, unless they already are", () => {
-    const box = makeBox({ opencode: "1.18.35" });
-    const { code, out } = run(box, []);
-    expect(code).toBe(0);
-    expect(out).toContain(`  export ${FLAG}=true`);
-    expect(out).toContain("Without it, lead waits for every helper");
-    const again = run(box, [], box.dir, { [FLAG]: "true" });
-    expect(again.out).toContain(`Background helpers are on (${FLAG} is set)`);
-    expect(again.out).not.toContain(`export ${FLAG}`);
-  });
-
-  test("a central install gives the module file forms", () => {
-    const box = makeBox({ opencode: "1.18.35" });
-    const { out } = run(box, ["--central", path.join(box.dir, "shared")]);
-    expect(out).toContain(`Lmod:      setenv("${FLAG}", "true")`);
-    expect(out).toContain(`Tcl:       setenv ${FLAG} true`);
-  });
-
-  test("an install for opencode 2 says nothing about the flag", () => {
-    const box = makeBox({ opencode2: "opencode v2.0.28" });
-    const { out } = run(box, []);
-    expect(out).not.toContain(FLAG);
-  });
-
-  test("doctor warns when they are off and is satisfied by the flag or opencode's blanket experimental flag", () => {
-    const box = makeBox({ opencode: "1.18.35" });
-    run(box, []);
-    expect(run(box, ["doctor"]).out).toContain("WARN  background helpers are off: lead waits for every helper");
-    expect(run(box, ["doctor"], box.dir, { [FLAG]: "true" }).out).toContain(`OK    background helpers are on (${FLAG})`);
-    expect(run(box, ["doctor"], box.dir, { [FLAG]: "1" }).out).toContain("OK    background helpers are on");
-    expect(run(box, ["doctor"], box.dir, { OPENCODE_EXPERIMENTAL: "true" }).out).toContain("OK    background helpers are on (OPENCODE_EXPERIMENTAL)");
-    expect(run(box, ["doctor"], box.dir, { [FLAG]: "false" }).out).toContain("WARN  background helpers are off");
-    // An explicit value wins over the blanket flag, as it does in opencode.
-    expect(run(box, ["doctor"], box.dir, { [FLAG]: "false", OPENCODE_EXPERIMENTAL: "true" }).out).toContain("WARN  background helpers are off");
-    expect(run(box, ["doctor"], box.dir, { [FLAG]: "on" }).out).toContain("OK    background helpers are on");
-    // Set but empty is an explicit value too, and it is not true.
-    expect(run(box, ["doctor"], box.dir, { [FLAG]: "", OPENCODE_EXPERIMENTAL: "true" }).out).toContain("WARN  background helpers are off");
-  });
-});
-
 describe("doctor", () => {
   test("passes on a good install, with a warning for the model that is not available", () => {
     const box = makeBox();
     run(box, []);
     const { code, out } = run(box, ["doctor"]);
     expect(code).toBe(0);
-    expect(out).toContain("OK    opencode 1.18.35");
-    expect(out).toContain("OK    11 files installed for opencode v1 (link)");
+    expect(out).toContain(`OK    opencode ${V2_PINNED}`);
+    expect(out).toContain("OK    11 files installed (link)");
     expect(out).toContain("WARN  profile default: not available: github-copilot/gpt-6.1-sol");
-    expect(out).toContain("OK    opencode loads the lead agent");
-    expect(out).toContain("OK    opencode starts on lead");
-  });
-
-  test("reports that the plugin is not active when lead ignores the review setting", () => {
-    const box = makeBox();
-    run(box, ["--review", "always"]);
-    const { code, out } = run(box, ["doctor"]);
-    expect(code).toBe(0);
-    expect(out).toContain("the plugin is not active");
+    expect(out).toContain("agents cannot be checked from the shell");
   });
 
   test("fails on a broken link and on a missing file", () => {
     const box = makeBox();
     run(box, []);
-    rmSync(path.join(box.dist, "opencode-v1/agents/scout.md"));
+    rmSync(path.join(box.dist, "opencode-v2/agents/scout.md"));
     rmSync(path.join(box.config, "commands/plan.md"));
     const { code, out } = run(box, ["doctor"]);
     expect(code).toBe(1);
@@ -519,86 +508,8 @@ describe("doctor", () => {
     expect(code).toBe(1);
     expect(out).toContain("is not installed here");
   });
-
-  test("on opencode 2 says the agents cannot be checked from the shell", () => {
-    const box = makeBox({ opencode2: "opencode v2.0.28" });
-    run(box, []);
-    const { code, out } = run(box, ["doctor"]);
-    expect(code).toBe(0);
-    expect(out).toContain("agents cannot be checked from the shell");
-  });
 });
 
-describe("doctor for a project switched on by a plugin line", () => {
-  /** A checkout of the harness in the box's home: package.json, VERSION and the fixture's dist. */
-  function checkout(box: Box, rel = "checkouts/ecmwf-multi-agents"): string {
-    const dir = path.join(box.home, rel);
-    write(path.join(dir, "package.json"), '{ "name": "ecmwf-multi-agents", "exports": { "./server": "./dist/opencode-v1/plugins/ecmwf-multi-agents.js" } }\n');
-    write(path.join(dir, "VERSION"), "0.4.0\n");
-    Bun.spawnSync(["cp", "-R", box.dist, path.join(dir, "dist")]);
-    return dir;
-  }
-  function project(box: Box, file = "opencode.json", content = '{\n  "plugin": ["{env:HOME}/checkouts/ecmwf-multi-agents"]\n}\n'): string {
-    const dir = path.join(box.dir, "my project");
-    mkdirSync(dir, { recursive: true });
-    write(path.join(dir, file), content);
-    return dir;
-  }
-
-  test("finds the line, resolves {env:HOME} and checks the checkout, the models and opencode", () => {
-    const box = makeBox();
-    const dir = checkout(box);
-    const proj = project(box);
-    const { code, out } = run(box, ["doctor", "--project", proj]);
-    expect(out).toContain(`OK    switched on by the plugin line in ${path.join(proj, "opencode.json")}: ${dir} (version 0.4.0)`);
-    expect(out).toContain("WARN  profile default: not available: github-copilot/gpt-6.1-sol");
-    expect(out).toContain("OK    opencode loads the lead agent");
-    expect(out).not.toContain("files installed");
-    expect(code).toBe(0);
-  });
-
-  test("reads .opencode/opencode.jsonc, skips commented lines, and takes absolute and file:// paths", () => {
-    const box = makeBox();
-    const dir = checkout(box);
-    const commented = project(box, ".opencode/opencode.jsonc", `{\n  // "plugin": ["/nowhere/ecmwf-multi-agents"],\n  "plugin": ["file://${dir}"]\n}\n`);
-    const { code, out } = run(box, ["doctor", "--project", commented]);
-    expect(out).toContain(`switched on by the plugin line in ${path.join(commented, ".opencode/opencode.jsonc")}: ${dir} (version 0.4.0)`);
-    expect(code).toBe(0);
-  });
-
-  test("a line that names something other than a checkout fails", () => {
-    const box = makeBox();
-    const proj = project(box, "opencode.json", '{ "plugin": ["{env:HOME}/no/such/ecmwf-multi-agents"] }\n');
-    const { code, out } = run(box, ["doctor", "--project", proj]);
-    expect(code).toBe(1);
-    expect(out).toContain(`names ${path.join(box.home, "no/such/ecmwf-multi-agents")}, which is not a checkout of ecmwf-multi-agents`);
-  });
-
-  test("warns when the harness is also installed globally", () => {
-    const box = makeBox();
-    run(box, []);
-    checkout(box);
-    const { out } = run(box, ["doctor", "--project", project(box)]);
-    expect(out).toContain("is also installed in");
-    expect(out).toContain("opencode loads the plugin twice");
-  });
-
-  test("with only opencode 2 the line does nothing, and doctor says so", () => {
-    const box = makeBox({ opencode2: "opencode v2.0.28" });
-    checkout(box);
-    const { code, out } = run(box, ["doctor", "--project", project(box)]);
-    expect(code).toBe(1);
-    expect(out).toContain("the plugin line works with opencode 1.x only");
-  });
-
-  test("a project with neither an install nor a line is reported as not switched on", () => {
-    const box = makeBox();
-    const proj = project(box, "opencode.json", '{ "plugin": ["opencode-dir@1.0.10"] }\n');
-    const { code, out } = run(box, ["doctor", "--project", proj]);
-    expect(code).toBe(1);
-    expect(out).toContain("is not switched on here");
-  });
-});
 
 test("install.sh passes shellcheck", () => {
   const shellcheck = Bun.which("shellcheck");
