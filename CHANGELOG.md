@@ -31,10 +31,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
   options. Each release is published to npm from its tag by GitHub Actions, through npm
   trusted publishing and with provenance.
 - Every push and pull request runs `make check` and `make pack-check` on GitHub Actions.
+- Switch the harness on per project with one line in the project's `opencode.json`:
+  `"plugins": ["@ecmwf.int/multi-agents@X.Y.Z"]`, or the path of a checkout such as
+  `"{env:HOME}/.local/share/ecmwf-multi-agents"`. The plugin registers the agents, commands,
+  skills and `lead` as the default agent in that project only; your own files and config still
+  win.
+- Problems with the settings files show as a warning in the opencode TUI.
+- `install.sh doctor` asks opencode what it loaded: whether `lead` is there and from where,
+  its review line, the default agent and the plugin's problems. `doctor --project` checks a
+  project switched on by a `plugins` line, and `doctor` warns when an install in
+  `~/.config/opencode/` masks a project's line.
 
 ### Changed
 
-- The npm package's `./server` export names the opencode 2 plugin.
+- The npm package's `./server` export names the opencode 2 plugin, and `./tui` its TUI entry.
+- The plugin is a folder, `plugins/ecmwf-multi-agents/`, with `index.js` and `tui.js`; an
+  install links the folder as a whole and removes the single-file plugin of earlier releases.
 - The installer's unit tests no longer find an opencode installed in a system folder.
 
 ### Removed

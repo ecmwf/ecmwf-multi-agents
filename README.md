@@ -111,6 +111,36 @@ Check an installation with `./install.sh doctor`, and a project with
 `./install.sh doctor --project /path/to/repo`. Remove an installation with
 `./install.sh uninstall`. `docs/install.md` covers every option, updating and troubleshooting.
 
+## Switch it on per project
+
+A project can bring the harness without installing any file: one line in its `opencode.json`
+names the npm package with a pinned version, and opencode fetches it.
+
+```json
+{
+  "plugins": ["@ecmwf.int/multi-agents@0.6.0"]
+}
+```
+
+Or name a checkout of this repository instead (`{env:HOME}` is your home folder; `~` does not
+work here):
+
+```json
+{
+  "plugins": ["{env:HOME}/.local/share/ecmwf-multi-agents"]
+}
+```
+
+The plugin then brings the agents, commands and skills, and makes `lead` the default agent, in
+that project only. Your own agent files, commands, skills and `default_agent` still win. The
+settings files work as below. To update, change the version in the line (or `git pull` the
+checkout) and restart opencode; an entry without a version is updated only by
+`opencode plugin update`.
+
+If the harness is also installed in `~/.config/opencode/`, that copy wins and opencode ignores
+the project's line ("Duplicate plugin ID"): use one or the other. `./install.sh doctor
+--project /path/to/repo` checks a project switched on this way and warns about this case.
+
 ## Settings
 
 `~/.config/opencode/ecmwf-multi-agents.jsonc` holds your settings. A project can override them
@@ -150,8 +180,9 @@ caps how many turns an agent may take, which limits its cost.
 | `inherit` | Every agent uses the model you pick in the session |
 
 Settings are applied by a small plugin that ships with the harness, when opencode starts:
-restart opencode after a change. If the plugin cannot load, the agents still work with the
-default settings.
+restart opencode after a change. A settings file with a mistake is ignored, and opencode shows
+why in a warning. If the plugin cannot load, installed agents still work with the default
+settings.
 
 ## Safety
 
