@@ -33,9 +33,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 - On opencode 2, `/review` and `/progress` answer in your own session again: the reviewer or a
   scout replies there from the command's text alone, and the session goes back to `lead`, which
   no longer takes a turn to relay the report. Background reports that arrive meanwhile are held
-  back from the helper and wake `lead` after it. A command sent while `lead` is answering waits
-  until it has answered. With the harness installed as files but without the plugin, the
-  commands still run in a child session.
+  back from the helper and wake `lead` after it, and so does a message you send while the
+  command runs, even as it starts: the helper does not answer it, `lead` does, after the
+  command. A command sent while `lead` is answering waits until it has answered. With the
+  harness installed as files but without the plugin, the commands still run in a child
+  session.
 - Switch the harness on per project with one line in the project's `opencode.json`:
   `"plugins": ["@ecmwf.int/multi-agents@X.Y.Z"]`, or the path of a checkout such as
   `"{env:HOME}/.local/share/ecmwf-multi-agents"`. The plugin registers the agents, commands,
