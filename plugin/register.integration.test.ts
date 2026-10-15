@@ -464,9 +464,18 @@ describe.skipIf(!v2Available)(`a project's plugins line in opencode ${V2_VERSION
     const fromPackage = await agents(projects.packed);
     expect(fromPackage[0]?.id).toBe("lead");
     for (const id of AGENTS) {
-      const want = pick(fromFiles.find((agent) => agent.id === id));
-      expect(want?.system).toBeString();
-      expect(pick(fromPackage.find((agent) => agent.id === id))).toEqual(want);
+      const want = pick(fromFiles.find((agent) => agent.id === id))!;
+      expect(want.system).toBeString();
+      const got = pick(fromPackage.find((agent) => agent.id === id))!;
+      expect({ ...got, permissions: undefined }).toEqual({ ...want, permissions: undefined });
+      // The agent's own rules come after the user's global ones either way. Whether opencode's
+      // later rules for every agent (a `browser` deny) land before or after them depends on when
+      // the package finishes installing: before, as for a checkout's line, or after, as from files.
+      const own = embedded.agents.find((agent) => agent.id === id)!.permissions!;
+      const rules = want.permissions!;
+      const start = rules.findIndex((_, index) => JSON.stringify(rules.slice(index, index + own.length)) === JSON.stringify(own));
+      const moved = [...rules.slice(0, start), ...rules.slice(start + own.length), ...own];
+      expect([JSON.stringify(rules), JSON.stringify(moved)]).toContain(JSON.stringify(got.permissions));
     }
 
     const commands = (await get<Array<{ name: string; description?: string }>>("/api/command", projects.packed)).filter((command) => !command.name.includes(":"));
