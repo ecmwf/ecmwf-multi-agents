@@ -234,7 +234,7 @@ cannot resolve its target, the reviewer says so in a line or two instead of givi
 `/review` and `/progress` are the two commands the user sends straight to a helper. With the
 plugin, the helper answers inline: in the user's own session, from the command's text alone, and
 the report stays there as its reply. That saves the turn `lead` would take to relay a child's
-report (24 to 30% cheaper, measured on opencode 1.x). Without the plugin, the command files run
+report (24 to 30% cheaper when measured before the move to opencode 2). Without the plugin, the command files run
 the helper in a child session, and opencode wakes `lead` with the report as a `<subagent ...>`
 message, which `lead` relays briefly, without re-running its checks. Either way `lead` acts on a
 REJECT or on a plan's state only when the user asks.

@@ -70,7 +70,7 @@ Profiles give each agent a model and an effort:
 
 ## Helpers in the background
 
-`lead` usually waits for a helper. When it has other work meanwhile, or you may want to keep talking, it hands off in the background and the report arrives later in your conversation.
+`lead` usually waits for a helper. When it has other work meanwhile, or you may want to keep talking, it hands off in the background and the report arrives later in your conversation. If `lead` is waiting on a helper and you want it back, press Ctrl+B to move the hand-off to the background.
 
 If a helper is doing something you do not want, tell `lead`: "redirect the scout: stay in src/" or "stop the builder". `lead` can list its helpers, send one an amendment it reads at its next step, keeping what it has read, or stop one. You cannot type in a helper's session yourself. A stopped helper reports nothing; its changes stay on disk.
 

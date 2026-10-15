@@ -65,9 +65,10 @@ kept out of git through `.git/info/exclude`, so nothing extra appears in your co
 
 `lead` usually waits for a helper. When it has other work meanwhile, or you may want to keep
 talking, it hands off in the background and the helper's report arrives later in your
-conversation. If a helper is doing something you do not want, tell `lead` to redirect it
-("stay in `src/`") or to stop it: a redirected helper keeps everything it has read and done
-instead of starting over. `lead` steers it with `helpers_steer`; you cannot type in a helper's
+conversation. If `lead` is waiting on a helper and you want it back, press Ctrl+B to move the
+hand-off to the background. If a helper is doing something you do not want, tell `lead` to
+redirect it ("stay in `src/`") or to stop it: a redirected helper keeps everything it has read
+and done instead of starting over. `lead` steers it with `helpers_steer`; you cannot type in a helper's
 session yourself.
 
 ## Requirements

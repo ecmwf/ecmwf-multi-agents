@@ -226,11 +226,9 @@ replace those of an agent of the same name in your global folder, while a projec
 file (`.opencode/agents/scout.md`) or command still wins over the central one. The exceptions
 are as with a project's line (see the README): `/review` and `/progress` are the plugin's, and
 the settings decide the harness agents' model, effort and step limit and `lead`'s review line.
-The agents' own
-permission rules come after your global `permissions`, so a global "allow every shell command"
-does not loosen `scout`'s read-only rules, and `/review` and `/progress` answer in your own
-session, as with any other install. With opencode 1
-the central install won over projects too. A `default_agent` in any of your configs, or
+The agents' own permission rules come after your global `permissions`, so a global "allow
+every shell command" does not loosen `scout`'s read-only rules, and `/review` and `/progress`
+answer in your own session, as with any other install. A `default_agent` in any of your configs, or
 `"default_agent": false` in the settings, still chooses the default agent. Do not install the
 harness in `~/.config/opencode/` as well, nor name it in a project's `plugins` line: opencode
 loads its plugin only once, and `doctor` warns about both.
