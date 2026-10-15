@@ -282,7 +282,9 @@ Findings to act on for 0.2.0:
   opencode 2 the line does nothing" too, find a distro-packaged `/usr/bin/opencode` through
   the system PATH and fail on such machines; give the installer a PATH of only the tools it
   needs, and have `make setup` or `lint` name `reuse` and `shellcheck` when they are missing
-  instead of failing with "command not found"
+  instead of failing with "command not found". The PATH half is done on `release/0.6.0`
+  (Samet: the unit tests give the installer a PATH without any `opencode`); the `reuse` and
+  `shellcheck` hint is still open
 - [x] Version 0.1.0
 
 ## Phase 7: background helpers, steering and cancel
@@ -618,17 +620,25 @@ row: `docs/research/opencode-v2.md` (sections added in this phase), ADR 0004.
 | Not needed on 2 | Shell guard after "Allow always", child pinning, the background flag, `todo` and `list` rules |
 
 Order: research and ADR, eval runner, removal of v1, plugin features, installer, docs and
-release. The removal comes early so the new work is built for one platform.
+release. The removal comes early so the new work is built for one platform. The work
+collects on the branch `release/0.6.0`; `main` keeps 0.5.x patch releases until 0.6.0
+merges.
 
-- [~] Samet: Research addendum (`docs/research/opencode-v2.md`) and ADR 0004 "opencode 2
-  only", superseding ADR 0003 and amending ADR 0001 and 0002
+- [x] Samet: Research addendum (`docs/research/opencode-v2.md`, sections 11 to 15) and ADR
+  0004 "opencode 2 only", superseding ADR 0003 and amending ADR 0001 and 0002
 - [~] Samet: Eval runner on opencode 2: server, routes, permissions and forms, message
   adapter, tool names (`shell`, `subagent`), the eval login (`make eval-login`) and the
   `AGENTS.md` rule for it; `evals/run.integration.test.ts` on the stand-in model
-- [~] Samet: Remove opencode 1.x: plugin core (`plugin.ts` to `{ id, setup }`, guard helpers
+- [x] Samet: Remove opencode 1.x: plugin core (`plugin.ts` to `{ id, setup }`, guard helpers
   moved, pinning and v1 modules deleted), the embedded `v1` block, `emit-v1`,
   `dist/opencode-v1`, installer (`--platform`, version detection, background flag; old
-  `opencode-v1` links still count as ours), tests, prompt lines, Makefile, `exports`
+  `opencode-v1` links still count as ours), tests, prompt lines, Makefile, `exports`. About
+  6,300 source lines and 4,600 generated lines gone; the plugin is `{ id, setup }`, the
+  command splitter lives in `plugin/command-parts.ts`, `todo` and `list` rules are gone, and
+  only 1.x installed stops with `opencode upgrade --major`. Removed until their opencode 2
+  form lands: the per-project line, central install, inline `/review` and `/progress`,
+  `doctor`'s live checks, settings problems on screen. The guide's "Allow always" and Ctrl+B
+  notes were dropped and need checking on 2
 - [~] Samet: Plugin registers agents, skills, commands and the default agent, so a project's
   `plugins` line or the npm package brings the harness; a test compares registered agents with
   agents loaded from files; `doctor` warns when a global install masks a project line
