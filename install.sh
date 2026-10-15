@@ -5,7 +5,7 @@
 
 # Install, check or remove the ecmwf-multi-agents harness for opencode.
 # Run "./install.sh --help" for usage. Needs only standard tools (sed, grep, awk, cmp, ln, cp,
-# readlink); jq is used by doctor when it is installed.
+# readlink, find); doctor uses jq and ss when they are installed.
 
 set -eu
 
@@ -36,6 +36,17 @@ die() {
 	exit 1
 }
 
+# A central folder as an absolute path without a trailing slash; it goes into JSON and module
+# files as it is.
+central_path() {
+	case $1 in /*) central_dir=$1 ;; *) central_dir=$(pwd -P)/$1 ;; esac
+	central_dir=${central_dir%/}
+	case $central_dir in
+	'' | *[!A-Za-z0-9._/+@-]*) die "the central folder's path may only contain letters, digits and . _ / + @ - : $1" ;;
+	esac
+	say "$central_dir"
+}
+
 usage() {
 	cat <<EOF
 Usage: $PROG [command] [options]
@@ -44,9 +55,16 @@ Commands:
   install     Install or update the harness (the default).
   doctor      Check an installation and explain any problem found.
   uninstall   Remove the harness files. Your settings file stays unless you add --purge.
+  central-enable [DIR]
+              On a shared machine: let your opencode service use the central install in
+              DIR (default: the folder of \$OPENCODE_CONFIG). Needed once per user.
+  central-disable
+              Undo central-enable.
 
 Where (default: your own opencode config folder, ~/.config/opencode):
   --project DIR     Install for one project only, into DIR/.opencode (files are copied).
+  --central DIR     For an administrator: a shared, read-only install in DIR that users
+                    switch on with OPENCODE_CONFIG=DIR/opencode.json (see docs/install.md).
 
 Options:
   --profile NAME    Which models the agents use: default, anthropic, copilot or inherit.
@@ -60,6 +78,7 @@ Examples:
   $PROG
   $PROG --profile anthropic --review always
   $PROG --project ~/code/my-repo
+  $PROG --central /opt/ecmwf-multi-agents --review ask
   $PROG doctor
   $PROG doctor --project ~/code/my-repo
 
@@ -73,14 +92,27 @@ EOF
 # ---------------------------------------------------------------- options
 
 COMMAND=install
+ENABLE_DIR=
 case ${1-} in
-install | doctor | uninstall)
+install | doctor | uninstall | central-disable)
 	COMMAND=$1
 	shift
+	;;
+central-enable)
+	COMMAND=$1
+	shift
+	case ${1-} in
+	'' | -*) ;;
+	*)
+		ENABLE_DIR=$1
+		shift
+		;;
+	esac
 	;;
 esac
 
 PROJECT=
+CENTRAL=
 PROFILE_OPT=
 REVIEW_OPT=
 MODE_OPT=
@@ -100,6 +132,15 @@ while [ "$#" -gt 0 ]; do
 		;;
 	--project=*)
 		PROJECT=${1#*=}
+		shift
+		;;
+	--central)
+		need_value "$@"
+		CENTRAL=$2
+		shift 2
+		;;
+	--central=*)
+		CENTRAL=${1#*=}
 		shift
 		;;
 	--profile)
@@ -146,6 +187,7 @@ done
 
 case $REVIEW_OPT in '' | auto | ask | always | never) ;; *) die "--review must be auto, ask, always or never" ;; esac
 [ "$PURGE" = 0 ] || [ "$COMMAND" = uninstall ] || die "--purge only works with uninstall"
+[ -z "$PROJECT" ] || [ -z "$CENTRAL" ] || die "use --project or --central, not both"
 
 DIST_ROOT=${ECMWF_MULTI_AGENTS_DIST:-$SCRIPT_DIR/dist}
 if [ -d "$DIST_ROOT" ]; then
@@ -158,6 +200,10 @@ if [ -n "$PROJECT" ]; then
 	PROJECT=$(CDPATH='' cd -- "$PROJECT" && pwd -P)
 	CONFIG_DIR=$PROJECT/.opencode
 	TARGET=project
+elif [ -n "$CENTRAL" ]; then
+	CENTRAL=$(central_path "$CENTRAL") || exit 1
+	CONFIG_DIR=$CENTRAL
+	TARGET=central
 else
 	CONFIG_DIR=$GLOBAL_DIR
 	TARGET=global
@@ -279,7 +325,7 @@ CONFLICTS=
 NEW_LIST=
 
 cleanup() {
-	[ -z "$NEW_LIST" ] || rm -f -- "$NEW_LIST"
+	[ -z "$NEW_LIST" ] || rm -f -- "$NEW_LIST" "$NEW_LIST.stale" "$NEW_LIST.sources"
 }
 
 place_file() {
@@ -600,6 +646,192 @@ cmd_install() {
 	[ -z "$CONFLICTS" ] || exit 1
 }
 
+# ---------------------------------------------------------------- central install
+
+# A central install is a folder of copies that every user's opencode reads through
+# OPENCODE_CONFIG=DIR/opencode.json (docs/install.md, "Shared machines"). Its config comes from
+# the template in dist/opencode-v2/central/, with the folder's path filled in; the agents' and
+# commands' text sits next to it in prompts/.
+CENTRAL_PLACEHOLDER=@ECMWF_MULTI_AGENTS_DIR@
+# The port every user's opencode service listens on unless told otherwise (0xc0de).
+SERVICE_PORT=49374
+
+is_central_dir() {
+	[ -f "$1/$NAME/installed.txt" ] && grep -qx 'mode=central' "$1/$NAME/installed.txt"
+}
+
+# The files of the central folder, as "source<TAB>path in the folder": the plugin, skills and
+# support files of an install, and the config template with its prompts.
+central_sources() {
+	while IFS= read -r rel || [ -n "$rel" ]; do
+		case $rel in
+		'' | agents/* | commands/* | "$NAME"/files.txt) continue ;;
+		esac
+		valid_rel "$rel" || die "unexpected path in $FILES_TXT: $rel"
+		printf '%s\t%s\n' "$SRC_DIR/$rel" "$rel"
+	done <"$FILES_TXT"
+	(cd -- "$SRC_DIR/central" && find . -type f) | sed 's#^\./##' | sort | while IFS= read -r rel; do
+		valid_rel "$rel" || die "unexpected file in $SRC_DIR/central: $rel"
+		printf '%s\t%s\n' "$SRC_DIR/central/$rel" "$rel"
+	done
+}
+
+cmd_central() {
+	[ -d "$DIST_ROOT" ] || die "no dist folder in $SCRIPT_DIR. Run git pull, or build it with bun run build."
+	SRC_DIR=$DIST_ROOT/opencode-$PLATFORM
+	FILES_TXT=$SRC_DIR/$NAME/files.txt
+	for central_need in "$FILES_TXT" "$SRC_DIR/central/opencode.json"; do
+		[ -f "$central_need" ] || die "the checkout is incomplete: $central_need is missing."
+	done
+	[ "$MODE_OPT" != link ] || die "a central install is always copied; leave out --link"
+	if [ -n "$PROFILE_OPT" ] && [ ! -f "$SRC_DIR/$NAME/profiles/$PROFILE_OPT.json" ]; then
+		die "unknown profile: $PROFILE_OPT. Choose one of: $(profile_names)"
+	fi
+	if [ -e "$CENTRAL" ] && ! is_central_dir "$CENTRAL"; then
+		[ -d "$CENTRAL" ] && [ -z "$(ls -A -- "$CENTRAL")" ] || die "$CENTRAL is not empty and holds no central install of $NAME; choose a new or empty folder."
+	fi
+	detect_versions
+	if [ -z "$V2_VERSION" ]; then
+		warn "opencode 2 was not found here; the central install is for opencode $V2_PINNED."
+	elif [ "$V2_VERSION" != "$V2_PINNED" ]; then
+		warn "opencode $V2_VERSION found; this harness is tested with opencode $V2_PINNED."
+	fi
+
+	NEW_LIST=$(mktemp)
+	trap cleanup EXIT
+	central_sources >"$NEW_LIST.sources" || exit 1
+	if [ "$DRY_RUN" = 1 ]; then
+		say "Dry run: nothing will be changed."
+		say "Would write the central install of $NAME into $CENTRAL ($(wc -l <"$NEW_LIST.sources" | tr -d ' ') files), and make it read-only."
+		rm -f -- "$NEW_LIST.sources"
+		create_settings
+		return 0
+	fi
+	say "Writing the central install of $NAME into $CENTRAL."
+	# An earlier run left the folder read-only.
+	if [ -d "$CENTRAL" ]; then
+		chmod -R u+w -- "$CENTRAL" || die "cannot make $CENTRAL writable; run this as the owner of the folder."
+	fi
+	mkdir -p -- "$CENTRAL"
+	MODE=central
+	while IFS="$(printf '\t')" read -r central_src rel; do
+		mkdir -p -- "$(dirname -- "$CENTRAL/$rel")"
+		rm -f -- "$CENTRAL/$rel"
+		if [ "$rel" = opencode.json ]; then
+			sed "s|$CENTRAL_PLACEHOLDER|$CENTRAL|g" "$central_src" >"$CENTRAL/$rel"
+		else
+			cp -- "$central_src" "$CENTRAL/$rel"
+		fi
+		say "$rel" >>"$NEW_LIST"
+		ADDED=$((ADDED + 1))
+	done <"$NEW_LIST.sources"
+	rm -f -- "$NEW_LIST.sources"
+	if [ -f "$RECORD" ]; then
+		recorded_files | while IFS= read -r rel; do
+			valid_rel "$rel" || continue
+			grep -qxF -- "$rel" "$NEW_LIST" && continue
+			rm -f -- "${CENTRAL:?}/$rel"
+			prune_dirs "$(dirname -- "$CENTRAL/$rel")"
+			say "  removed $CENTRAL/$rel"
+		done
+	fi
+	write_record
+	create_settings
+	chmod -R a+rX,a-w -- "$CENTRAL"
+	say ""
+	say "Done: $ADDED files written; $CENTRAL is read-only now."
+	central_advice
+}
+
+central_advice() {
+	central_config=$CENTRAL/opencode.json
+	central_message="$NAME: opencode's background service reads OPENCODE_CONFIG only when it starts. Run once: opencode service set env OPENCODE_CONFIG $central_config"
+	say ""
+	say "Each user switches it on with one environment variable, OPENCODE_CONFIG, typically from a"
+	say "module file that also reminds them of the one-time step for opencode's background service:"
+	say ""
+	say "  Lmod ($NAME.lua):"
+	say "    whatis(\"Multi-agent harness for opencode\")"
+	say "    setenv(\"OPENCODE_CONFIG\", \"$central_config\")"
+	say "    if (mode() == \"load\") then"
+	say "      LmodMessage(\"$central_message\")"
+	say "    end"
+	say ""
+	say "  Tcl ($NAME):"
+	say "    #%Module1.0"
+	say "    module-whatis \"Multi-agent harness for opencode\""
+	say "    setenv OPENCODE_CONFIG $central_config"
+	say "    if { [module-info mode load] } {"
+	say "      puts stderr \"$central_message\""
+	say "    }"
+	say ""
+	say "  sh, bash:  export OPENCODE_CONFIG=$central_config"
+	say ""
+	say "The one-time step, also offered as: $PROG central-enable $CENTRAL"
+	say "To update, run the same command again. Check with: $PROG doctor --central $CENTRAL"
+}
+
+cmd_central_enable() {
+	if [ -n "$ENABLE_DIR" ]; then
+		enable_dir=$(central_path "$ENABLE_DIR") || exit 1
+	elif [ -n "${OPENCODE_CONFIG-}" ]; then
+		enable_dir=$(dirname -- "$OPENCODE_CONFIG")
+	else
+		die "name the central folder: $PROG central-enable DIR, or load its module first, which sets OPENCODE_CONFIG."
+	fi
+	if ! is_central_dir "$enable_dir" || [ ! -f "$enable_dir/opencode.json" ]; then
+		die "$enable_dir is not a central install of $NAME (no opencode.json, or no $NAME/installed.txt from --central)."
+	fi
+	enable_config=$enable_dir/opencode.json
+	require_opencode2
+	if [ "$DRY_RUN" = 1 ]; then
+		say "Dry run: would run: $OPENCODE_BIN service set env OPENCODE_CONFIG $enable_config"
+		return 0
+	fi
+	"$OPENCODE_BIN" service set env OPENCODE_CONFIG "$enable_config" || die "\"$OPENCODE_BIN service set env OPENCODE_CONFIG $enable_config\" failed."
+	say "Your opencode service now starts with OPENCODE_CONFIG=$enable_config."
+	say "opencode stopped the service if it was running; the next opencode command starts it again."
+	if [ "${OPENCODE_CONFIG-}" != "$enable_config" ]; then
+		say "Set it in your shell as well (load the module, or export OPENCODE_CONFIG=$enable_config),"
+		say "so that opencode --standalone and $PROG doctor see it too."
+	fi
+	check_service_port
+	say "Check it with: $PROG doctor"
+}
+
+cmd_central_disable() {
+	require_opencode2
+	if [ "$DRY_RUN" = 1 ]; then
+		say "Dry run: would run: $OPENCODE_BIN service unset env OPENCODE_CONFIG"
+		return 0
+	fi
+	"$OPENCODE_BIN" service unset env OPENCODE_CONFIG || die "\"$OPENCODE_BIN service unset env OPENCODE_CONFIG\" failed."
+	say "Your opencode service no longer starts with OPENCODE_CONFIG; opencode stopped it if it"
+	say "was running. Unload the module, or unset OPENCODE_CONFIG, in your shell as well."
+}
+
+# Every user's opencode service listens on the same port of 127.0.0.1, so on a shared machine
+# another user's service can hold it, and then this user's service cannot start. ss shows who
+# owns a listening socket; without ss there is nothing to check.
+check_service_port() {
+	[ -n "$OPENCODE_BIN" ] || return 0
+	if [ "$("$OPENCODE_BIN" service get disabled 2>/dev/null || true)" = true ]; then
+		ok "your opencode service is turned off (opencode service set disabled true)"
+		return 0
+	fi
+	port_value=$("$OPENCODE_BIN" service get port 2>/dev/null || true)
+	port_value=${port_value:-$SERVICE_PORT}
+	command -v ss >/dev/null 2>&1 || return 0
+	port_owner=$(ss -Hltne "sport = :$port_value" 2>/dev/null | sed -n 's/.* uid:\([0-9][0-9]*\).*/\1/p' | sed -n '1p')
+	if [ -z "$port_owner" ]; then
+		ok "port $port_value for your opencode service is free"
+	elif [ "$port_owner" = "$(id -u)" ]; then
+		ok "port $port_value is held by your own opencode service"
+	else
+		note "port $port_value, which your opencode service uses, is held by another user's process (uid $port_owner), as happens on shared machines, so your service cannot start. Choose a free port with: opencode service set port <number>, or turn the service off with: opencode service set disabled true, and start opencode with --standalone"
+	fi
+}
+
 # ---------------------------------------------------------------- doctor
 
 FAILS=0
@@ -652,6 +884,8 @@ check_settings_file() {
 cmd_doctor() {
 	if [ "$TARGET" = project ]; then
 		say "Checking $NAME for the project $PROJECT"
+	elif [ "$TARGET" = central ]; then
+		say "Checking the central install of $NAME in $CENTRAL"
 	else
 		say "Checking $NAME in $CONFIG_DIR"
 	fi
@@ -674,6 +908,13 @@ cmd_doctor() {
 	# The project whose opencode config is checked for a plugins line, and that opencode is asked about.
 	LIVE_DIR=${PROJECT:-$PWD}
 	find_plugin_line "$LIVE_DIR"
+	find_central
+	if [ -n "$CENTRAL_DIR" ]; then
+		doctor_central
+		doctor_settings_and_models
+		doctor_live
+		doctor_summary
+	fi
 	if [ ! -f "$RECORD" ]; then
 		if [ "$TARGET" = project ] && [ -n "$LINE_KIND" ]; then
 			check_plugin_line
@@ -703,6 +944,72 @@ cmd_doctor() {
 	doctor_settings_and_models
 	doctor_live
 	doctor_summary
+}
+
+# ---------------------------------------------------------------- doctor: a central install
+
+# The central install this user's opencode reads: the one doctor --central names, else the
+# folder of OPENCODE_CONFIG in this shell, else the one the opencode service starts with.
+find_central() {
+	CENTRAL_DIR=
+	if [ "$TARGET" = central ]; then
+		CENTRAL_DIR=$CENTRAL
+		return 0
+	fi
+	if [ -n "${OPENCODE_CONFIG-}" ] && is_central_dir "$(dirname -- "$OPENCODE_CONFIG")"; then
+		CENTRAL_DIR=$(dirname -- "$OPENCODE_CONFIG")
+		return 0
+	fi
+	[ -n "$OPENCODE_BIN" ] || return 0
+	find_service_config=$("$OPENCODE_BIN" service get env OPENCODE_CONFIG 2>/dev/null || true)
+	if [ -n "$find_service_config" ] && is_central_dir "$(dirname -- "$find_service_config")"; then
+		CENTRAL_DIR=$(dirname -- "$find_service_config")
+	fi
+}
+
+doctor_central() {
+	central_config=$CENTRAL_DIR/opencode.json
+	if ! is_central_dir "$CENTRAL_DIR"; then
+		fail "there is no central install of $NAME in $CENTRAL_DIR ($CENTRAL_DIR/$NAME/installed.txt is missing); run $PROG --central $CENTRAL_DIR"
+		doctor_summary
+	fi
+	RECORD=$CENTRAL_DIR/$NAME/installed.txt
+	central_missing=0
+	for rel in $(recorded_files); do
+		[ -e "$CENTRAL_DIR/$rel" ] || central_missing=$((central_missing + 1))
+	done
+	if [ "$central_missing" -gt 0 ]; then
+		fail "$central_missing files of the central install in $CENTRAL_DIR are missing; run $PROG --central $CENTRAL_DIR again"
+	elif grep -qF -- "$CENTRAL_PLACEHOLDER" "$central_config"; then
+		fail "$central_config still holds $CENTRAL_PLACEHOLDER; run $PROG --central $CENTRAL_DIR again"
+	else
+		ok "central install in $CENTRAL_DIR ($NAME $(recorded_value version))"
+	fi
+	PROFILES_DIR=$CENTRAL_DIR/$NAME/profiles
+	case ${OPENCODE_CONFIG-} in
+	"$central_config") ok "OPENCODE_CONFIG in this shell names it" ;;
+	'') note "OPENCODE_CONFIG is not set in this shell; load the module, or export OPENCODE_CONFIG=$central_config" ;;
+	*) note "OPENCODE_CONFIG in this shell is $OPENCODE_CONFIG, not $central_config" ;;
+	esac
+	if [ -n "$OPENCODE_BIN" ]; then
+		central_service=$("$OPENCODE_BIN" service get env OPENCODE_CONFIG 2>/dev/null || true)
+		case $central_service in
+		"$central_config") ok "your opencode service starts with OPENCODE_CONFIG=$central_config" ;;
+		'') note "your opencode service does not start with OPENCODE_CONFIG, so opencode may run without the harness; run once: $PROG central-enable $CENTRAL_DIR" ;;
+		*) note "your opencode service starts with OPENCODE_CONFIG=$central_service, not $central_config; run: $PROG central-enable $CENTRAL_DIR" ;;
+		esac
+		check_service_port
+	fi
+	if [ "$TARGET" != central ] && [ -f "$CONFIG_DIR/$NAME/installed.txt" ]; then
+		note "the harness is installed in $CONFIG_DIR as well as centrally; opencode loads the plugin only once, and the agent files there change the central agents. Keep one: $PROG uninstall${PROJECT:+ --project $PROJECT} removes the files"
+	fi
+	if [ -n "$LINE_KIND" ]; then
+		note "the plugins line in $LINE_FILE ($LINE_ENTRY) and the central install both bring the harness; opencode keeps the central plugin and reports the line's as \"Duplicate plugin ID\". Remove the line"
+		MASKED=1
+	fi
+	# Ask opencode as this user's service would run it.
+	OPENCODE_CONFIG=$central_config
+	export OPENCODE_CONFIG
 }
 
 # A global install and a project's plugins line: the global copy's plugin loads first, and
@@ -924,7 +1231,9 @@ doctor_live() {
 		live_ok=0
 	fi
 	if [ "$live_ok" = 0 ] || ! grep -q '"output"' "$DOCTOR_TMP/live"; then
-		if grep -q 'rpc.unavailable' "$DOCTOR_TMP/live"; then
+		if grep -q 'rpc.unavailable' "$DOCTOR_TMP/live" && [ -n "${CENTRAL_DIR-}" ]; then
+			fail "the $NAME plugin of the central install is not active in $LIVE_DIR, so opencode has no lead there. Look for errors in: OPENCODE_CONFIG=$CENTRAL_DIR/opencode.json opencode debug config"
+		elif grep -q 'rpc.unavailable' "$DOCTOR_TMP/live"; then
 			fail "the $NAME plugin is not active in $LIVE_DIR, so opencode has no lead there. Run $PROG again or check the plugins line, then look for errors in: opencode debug config, or opencode --print-logs"
 		else
 			fail "could not ask opencode about $LIVE_DIR: $(sed -n '1p' "$DOCTOR_TMP/live")"
@@ -936,7 +1245,13 @@ doctor_live() {
 	if [ "$(json_value leadLoaded)" = true ]; then
 		case $live_source in
 		files) ok "lead is loaded from files ($(json_value leadFiles)), with the plugin $live_version active" ;;
-		*) ok "lead is loaded from the plugin $live_version" ;;
+		*)
+			if [ -n "${CENTRAL_DIR-}" ]; then
+				ok "lead is loaded from the central install, with the plugin $live_version active"
+			else
+				ok "lead is loaded from the plugin $live_version"
+			fi
+			;;
 		esac
 	else
 		fail "opencode has no lead in $LIVE_DIR although the plugin $live_version is active; an opencode config there may disable it"
@@ -1000,12 +1315,15 @@ check_installed_files() {
 # Settings files and the profile's models.
 doctor_settings_and_models() {
 	EFFECTIVE_PROFILE=default
+	if [ -n "${CENTRAL_DIR-}" ]; then
+		check_settings_file "$CENTRAL_DIR/$NAME.jsonc"
+	fi
 	if [ -n "${OPENCODE_CONFIG_DIR-}" ]; then
 		check_settings_file "$OPENCODE_CONFIG_DIR/$NAME.jsonc"
 	fi
 	if [ -f "$GLOBAL_DIR/$NAME.jsonc" ]; then
 		check_settings_file "$GLOBAL_DIR/$NAME.jsonc"
-	elif [ "$TARGET" = global ]; then
+	elif [ "$TARGET" = global ] && [ -z "${CENTRAL_DIR-}" ]; then
 		note "no settings file ($GLOBAL_DIR/$NAME.jsonc); the defaults apply: profile default, review auto"
 	fi
 	if [ "$TARGET" = project ]; then
@@ -1099,7 +1417,14 @@ EOF
 }
 
 case $COMMAND in
-install) cmd_install ;;
+install)
+	if [ "$TARGET" = central ]; then cmd_central; else cmd_install; fi
+	;;
 doctor) cmd_doctor ;;
-uninstall) cmd_uninstall ;;
+uninstall)
+	[ "$TARGET" != central ] || die "to remove a central install, delete its folder: chmod -R u+w $CENTRAL && rm -rf $CENTRAL"
+	cmd_uninstall
+	;;
+central-enable) cmd_central_enable ;;
+central-disable) cmd_central_disable ;;
 esac

@@ -87,6 +87,14 @@ const PROFILES: Record<string, Record<string, { model: string; effort: string }>
   inherit: {},
 };
 
+const PLACEHOLDER = "@ECMWF_MULTI_AGENTS_DIR@";
+const CENTRAL_TEMPLATE = {
+  agents: { lead: { description: "Lead.", mode: "primary", hidden: false, permissions: [], system: "{file:./prompts/lead.md}" } },
+  commands: { plan: { description: "Plan.", agent: "lead", template: "{file:./prompts/commands/plan.md}" } },
+  skills: [`${PLACEHOLDER}/skills`],
+  plugins: [{ package: `${PLACEHOLDER}/plugins/${NAME}`, options: { site: `${PLACEHOLDER}/${NAME}.jsonc` } }],
+};
+
 const MARKDOWN = [
   "agents/lead.md",
   "agents/scout.md",
@@ -107,6 +115,8 @@ const boxes: string[] = [];
 
 afterEach(() => {
   for (const dir of boxes.splice(0)) {
+    // A central install is read-only.
+    Bun.spawnSync(["chmod", "-R", "u+w", dir]);
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -143,13 +153,21 @@ function writePlatform(dist: string, platform: "v1" | "v2" = "v2", extra: string
   for (const id of Object.keys(PROFILES)) put(`${NAME}/profiles/${id}.json`, profileJson(id));
   put(`${NAME}/schema.json`, '{\n  "type": "object"\n}\n');
   files.push(`${NAME}/files.txt`);
+  // The central install's template, which files.txt does not list.
+  if (platform === "v2") {
+    write(path.join(root, "central", "opencode.json"), `${JSON.stringify(CENTRAL_TEMPLATE, null, 2)}\n`);
+    write(path.join(root, "central", "prompts", "lead.md"), "Lead prompt.\n");
+    write(path.join(root, "central", "prompts", "commands", "plan.md"), "Plan: $ARGUMENTS\n");
+  }
   write(path.join(root, NAME, "files.txt"), `${[...files].sort().join("\n")}\n`);
 }
 
 /**
  * A fake opencode command: prints a version and a model list, and answers `opencode api` with
  * the file rpc.json next to its folder (exit code in rpc.exit), or with a good doctor report.
- * Each api call is logged to api.log with the folder it ran in.
+ * Each api call is logged to api.log with the folder it ran in, and its OPENCODE_CONFIG to
+ * api-env.log. `service` keeps OPENCODE_CONFIG in service-env and reads the port from
+ * service-port; each service call is logged to service.log.
  */
 function fakeOpencode(file: string, version: string): void {
   const box = path.dirname(path.dirname(file));
@@ -161,8 +179,19 @@ case "$1" in
   models) printf '%s\\n' anthropic/claude-opus-5-5 anthropic/claude-sonnet-5-5 ;;
   api)
     printf '%s | %s\\n' "$(pwd)" "$*" >>'${box}/api.log'
+    printf '%s\\n' "\${OPENCODE_CONFIG-}" >>'${box}/api-env.log'
     if [ -f '${box}/rpc.json' ]; then cat '${box}/rpc.json'; exit "$(cat '${box}/rpc.exit' 2>/dev/null || echo 0)"; fi
     printf '%s\\n' '${JSON.stringify(GOOD_DOCTOR)}'
+    ;;
+  service)
+    printf '%s\\n' "$*" >>'${box}/service.log'
+    case "$2 $3" in
+      "get env") cat '${box}/service-env' 2>/dev/null; printf '\\n' ;;
+      "get port") cat '${box}/service-port' 2>/dev/null; printf '\\n' ;;
+      "get disabled") printf 'false\\n' ;;
+      "set env") printf '%s' "$5" >'${box}/service-env' ;;
+      "unset env") rm -f '${box}/service-env' ;;
+    esac
     ;;
 esac
 `,
@@ -425,7 +454,6 @@ describe("opencode versions", () => {
   test("--platform is gone", () => {
     const box = makeBox();
     expect(run(box, ["--platform", "v1"]).out).toContain("unknown option: --platform");
-    expect(run(box, ["--central", box.dir]).out).toContain("unknown option: --central");
   });
 });
 
@@ -735,6 +763,197 @@ describe("doctor --project for a project switched on by a plugins line", () => {
   });
 });
 
+
+describe("central install", () => {
+  const central = (box: Box) => path.join(box.dir, "shared", "ecmwf");
+  const config = (box: Box) => path.join(central(box), "opencode.json");
+  const writable = (file: string) => (lstatSync(file).mode & 0o222) !== 0;
+  /** A fake ss that shows a listener on the service port owned by `uid`, or none. */
+  const fakeSs = (box: Box, uid?: number) => {
+    const line = uid === undefined ? "" : `LISTEN 0 512 127.0.0.1:49374 0.0.0.0:* uid:${uid} ino:1 sk:1 <->`;
+    write(path.join(box.bin, "ss"), `#!/bin/sh\nprintf '%s\\n' '${line}'\n`);
+    chmodSync(path.join(box.bin, "ss"), 0o755);
+  };
+  const uid = process.getuid!();
+
+  test("--central writes a read-only folder of copies with the config's paths filled in, and prints the module lines", () => {
+    const box = makeBox();
+    const { code, out } = run(box, ["--central", central(box)]);
+    expect(code).toBe(0);
+    const dir = central(box);
+    const json = JSON.parse(readFileSync(config(box), "utf8")) as typeof CENTRAL_TEMPLATE;
+    expect(json).toEqual(JSON.parse(JSON.stringify(CENTRAL_TEMPLATE).replaceAll(PLACEHOLDER, dir)));
+    expect(json.skills).toEqual([path.join(dir, "skills")]);
+    expect(json.plugins[0]!.package).toBe(path.join(dir, PLUGIN));
+    expect(readFileSync(path.join(dir, "prompts", "lead.md"), "utf8")).toBe("Lead prompt.\n");
+    const size = (rel: string) => readFileSync(path.join(box.dist, "opencode-v2", rel), "utf8").length;
+    expect(listing(dir)).toEqual([
+      `${NAME}/`,
+      `${NAME}/installed.txt (${readFileSync(path.join(dir, NAME, "installed.txt"), "utf8").length})`,
+      `${NAME}/profiles/`,
+      ...Object.keys(PROFILES).sort().map((id) => `${NAME}/profiles/${id}.json (${profileJson(id).length})`),
+      `${NAME}/schema.json (${size(`${NAME}/schema.json`)})`,
+      `opencode.json (${readFileSync(config(box), "utf8").length})`,
+      "plugins/",
+      `${PLUGIN}/`,
+      `${PLUGIN}/index.js (${size(`${PLUGIN}/index.js`)})`,
+      `${PLUGIN}/tui.js (${size(`${PLUGIN}/tui.js`)})`,
+      "prompts/",
+      "prompts/commands/",
+      "prompts/commands/plan.md (17)",
+      "prompts/lead.md (13)",
+      "skills/",
+      `skills/${NAME}-plan/`,
+      `skills/${NAME}-plan/SKILL.md (${readFileSync(path.join(dir, "skills", `${NAME}-plan`, "SKILL.md"), "utf8").length})`,
+    ]);
+    expect(readFileSync(path.join(dir, NAME, "installed.txt"), "utf8")).toContain("mode=central\n");
+    for (const file of [dir, config(box), path.join(dir, PLUGIN, "index.js")]) expect(writable(file)).toBe(false);
+    // No site settings unless asked for, and nothing in the admin's own config.
+    expect(existsSync(path.join(dir, `${NAME}.jsonc`))).toBe(false);
+    expect(existsSync(box.config)).toBe(false);
+    const file = config(box);
+    expect(out).toContain(`    setenv("OPENCODE_CONFIG", "${file}")\n`);
+    expect(out).toContain(`      LmodMessage("${NAME}: opencode's background service reads OPENCODE_CONFIG only when it starts. Run once: opencode service set env OPENCODE_CONFIG ${file}")`);
+    expect(out).toContain(`    setenv OPENCODE_CONFIG ${file}\n`);
+    expect(out).toContain("    if { [module-info mode load] } {");
+    expect(out).toContain(`The one-time step, also offered as: ${INSTALL} central-enable ${dir}\n`);
+    expect(out).toContain(`Check with: ${INSTALL} doctor --central ${dir}\n`);
+  });
+
+  test("--review and --profile write the site settings file, and only then", () => {
+    const box = makeBox();
+    expect(run(box, ["--central", central(box), "--review", "ask", "--profile", "anthropic"]).code).toBe(0);
+    expect(settingsJson(path.join(central(box), `${NAME}.jsonc`))).toEqual({ $schema: `./${NAME}/schema.json`, review: "ask", profile: "anthropic" });
+    const other = makeBox();
+    expect(run(other, ["--central", central(other), "--review", "never"]).code).toBe(0);
+    expect(settingsJson(path.join(central(other), `${NAME}.jsonc`))).toEqual({ $schema: `./${NAME}/schema.json`, review: "never" });
+  });
+
+  test("running it again updates the read-only folder: new files, stale ones gone, site settings kept", () => {
+    const box = makeBox();
+    expect(run(box, ["--central", central(box), "--review", "ask"]).code).toBe(0);
+    writePlatform(box.dist, "v2", [`skills/${NAME}-new/SKILL.md`]);
+    rmSync(path.join(box.dist, "opencode-v2", "central", "prompts", "commands", "plan.md"));
+    const again = run(box, ["--central", central(box)]);
+    expect(again.code).toBe(0);
+    expect(existsSync(path.join(central(box), "skills", `${NAME}-new`, "SKILL.md"))).toBe(true);
+    expect(again.out).toContain(`removed ${path.join(central(box), "prompts", "commands", "plan.md")}`);
+    expect(existsSync(path.join(central(box), "prompts", "commands"))).toBe(false);
+    expect(settingsJson(path.join(central(box), `${NAME}.jsonc`)).review).toBe("ask");
+    expect(writable(central(box))).toBe(false);
+  });
+
+  test("refuses a folder that holds something else, --link, --project, odd paths and uninstall", () => {
+    const box = makeBox();
+    write(path.join(central(box), "mine.txt"), "x");
+    const foreign = run(box, ["--central", central(box)]);
+    expect(foreign.code).toBe(1);
+    expect(foreign.out).toContain("is not empty and holds no central install");
+    expect(readdirSync(central(box))).toEqual(["mine.txt"]);
+    expect(run(box, ["--central", path.join(box.dir, "new"), "--link"]).out).toContain("always copied");
+    expect(run(box, ["--central", path.join(box.dir, "new"), "--project", box.dir]).out).toContain("use --project or --central, not both");
+    expect(run(box, ["--central", path.join(box.dir, "a b")]).out).toContain("may only contain letters");
+    expect(run(box, ["uninstall", "--central", central(box)]).out).toContain(`delete its folder: chmod -R u+w ${central(box)} && rm -rf ${central(box)}`);
+    expect(existsSync(path.join(box.dir, "new"))).toBe(false);
+  });
+
+  test("--dry-run writes nothing", () => {
+    const box = makeBox();
+    const { code, out } = run(box, ["--central", central(box), "--review", "ask", "--dry-run"]);
+    expect(code).toBe(0);
+    expect(out).toContain(`Would write the central install of ${NAME} into ${central(box)}`);
+    expect(existsSync(central(box))).toBe(false);
+  });
+
+  test("central-enable keeps OPENCODE_CONFIG in the service's settings; central-disable removes it", () => {
+    const box = makeBox();
+    fakeSs(box);
+    run(box, ["--central", central(box)]);
+    const enabled = run(box, ["central-enable", central(box)]);
+    expect(enabled.code).toBe(0);
+    expect(readFileSync(path.join(box.dir, "service.log"), "utf8")).toContain(`service set env OPENCODE_CONFIG ${config(box)}\n`);
+    expect(enabled.out).toContain(`Your opencode service now starts with OPENCODE_CONFIG=${config(box)}.`);
+    expect(enabled.out).toContain(`Set it in your shell as well`);
+    expect(enabled.out).toContain(`Check it with: ${INSTALL} doctor`);
+    // Without a folder: the one the module named.
+    rmSync(path.join(box.dir, "service.log"));
+    const fromEnv = run(box, ["central-enable"], box.dir, { OPENCODE_CONFIG: config(box), ECMWF_MULTI_AGENTS_COMMAND: "ecmwf-multi-agents" });
+    expect(fromEnv.code).toBe(0);
+    expect(fromEnv.out).not.toContain("Set it in your shell");
+    expect(fromEnv.out).toContain("Check it with: ecmwf-multi-agents doctor");
+    expect(readFileSync(path.join(box.dir, "service.log"), "utf8")).toContain(`service set env OPENCODE_CONFIG ${config(box)}\n`);
+    const disabled = run(box, ["central-disable"]);
+    expect(disabled.code).toBe(0);
+    expect(readFileSync(path.join(box.dir, "service.log"), "utf8")).toContain("service unset env OPENCODE_CONFIG\n");
+    expect(existsSync(path.join(box.dir, "service-env"))).toBe(false);
+  });
+
+  test("central-enable refuses a folder that is not a central install, and needs one named", () => {
+    const box = makeBox();
+    mkdirSync(path.join(box.dir, "other"));
+    const other = run(box, ["central-enable", path.join(box.dir, "other")]);
+    expect(other.code).toBe(1);
+    expect(other.out).toContain("is not a central install");
+    const none = run(box, ["central-enable"], box.dir, { ECMWF_MULTI_AGENTS_COMMAND: "ecmwf-multi-agents" });
+    expect(none.out).toContain("name the central folder: ecmwf-multi-agents central-enable DIR");
+    expect(existsSync(path.join(box.dir, "service.log"))).toBe(false);
+  });
+
+  test("doctor follows OPENCODE_CONFIG: the folder, the shell, the service, the port, and opencode asked with the central config", () => {
+    const box = makeBox();
+    fakeSs(box);
+    run(box, ["--central", central(box), "--review", "ask"]);
+    run(box, ["central-enable", central(box)]);
+    const { code, out } = run(box, ["doctor"], box.dir, { OPENCODE_CONFIG: config(box) });
+    expect(out).toContain(`OK    central install in ${central(box)} (${NAME} `);
+    expect(out).toContain("OK    OPENCODE_CONFIG in this shell names it");
+    expect(out).toContain(`OK    your opencode service starts with OPENCODE_CONFIG=${config(box)}`);
+    expect(out).toContain("OK    port 49374 for your opencode service is free");
+    expect(out).toContain(`OK    settings ${path.join(central(box), `${NAME}.jsonc`)} (profile not set, review ask)`);
+    expect(out).toContain("OK    lead is loaded from the central install, with the plugin 9.9.9 active");
+    expect(out).not.toContain("is not installed here");
+    expect(code).toBe(0);
+    expect(readFileSync(path.join(box.dir, "api-env.log"), "utf8").trim()).toBe(config(box));
+  });
+
+  test("doctor warns when the service lacks OPENCODE_CONFIG, the shell lacks it, or another user holds the port", () => {
+    const box = makeBox();
+    fakeSs(box, uid + 1);
+    run(box, ["--central", central(box)]);
+    const viaService = run(box, ["doctor"]);
+    expect(viaService.out).toContain("Checking ecmwf-multi-agents in");
+    // Nothing points at it yet: an ordinary global doctor.
+    expect(viaService.out).toContain("is not installed here");
+    writeFileSync(path.join(box.dir, "service-port"), "50000");
+    const { code, out } = run(box, ["doctor", "--central", central(box)], box.dir, { ECMWF_MULTI_AGENTS_COMMAND: "ecmwf-multi-agents" });
+    expect(out).toContain(`Checking the central install of ${NAME} in ${central(box)}`);
+    expect(out).toContain(`WARN  OPENCODE_CONFIG is not set in this shell; load the module, or export OPENCODE_CONFIG=${config(box)}`);
+    expect(out).toContain(`WARN  your opencode service does not start with OPENCODE_CONFIG, so opencode may run without the harness; run once: ecmwf-multi-agents central-enable ${central(box)}`);
+    expect(out).toContain(`WARN  port 50000, which your opencode service uses, is held by another user's process (uid ${uid + 1})`);
+    expect(out).toContain("opencode service set port <number>");
+    expect(out).toContain("opencode service set disabled true");
+    expect(code).toBe(0);
+    // The service alone names it: doctor finds it from there.
+    writeFileSync(path.join(box.dir, "service-env"), config(box));
+    const found = run(box, ["doctor"]);
+    expect(found.out).toContain(`OK    central install in ${central(box)}`);
+    expect(found.out).toContain(`OK    your opencode service starts with OPENCODE_CONFIG=${config(box)}`);
+  });
+
+  test("doctor fails on a central folder with missing files, and on a folder that is none", () => {
+    const box = makeBox();
+    fakeSs(box);
+    run(box, ["--central", central(box)]);
+    Bun.spawnSync(["chmod", "-R", "u+w", central(box)]);
+    rmSync(path.join(central(box), "prompts", "lead.md"));
+    const broken = run(box, ["doctor", "--central", central(box)]);
+    expect(broken.code).toBe(1);
+    expect(broken.out).toContain(`FAIL  1 files of the central install in ${central(box)} are missing; run ${INSTALL} --central ${central(box)} again`);
+    const none = run(box, ["doctor", "--central", path.join(box.dir, "none")]);
+    expect(none.code).toBe(1);
+    expect(none.out).toContain("there is no central install of");
+  });
+});
 
 test("install.sh passes shellcheck", () => {
   const shellcheck = Bun.which("shellcheck");
