@@ -554,9 +554,10 @@ export function reportMentions(agent: string, title: string, terms: Term[]): Che
 
 /**
  * In the sessions the turns started, every background helper's completion (a message opencode
- * wrote itself, starting `<subagent `) was answered by lead: lead replied after it. A helper that
- * answers a command in the session (`/review`, `/progress`) may reply in between, because the
- * plugin holds the completion back from it and wakes lead once it has finished.
+ * wrote itself, starting `<subagent `) was answered by lead: lead replied after it and before
+ * the user's next request. A helper that answers a command in the session (`/review`,
+ * `/progress`) may reply in between, because the plugin holds the completion back from it and
+ * wakes lead once it has finished.
  */
 export function completionsWakeLead(): Check {
   return {
@@ -571,7 +572,11 @@ export function completionsWakeLead(): Check {
         session.messages.forEach((message, index) => {
           if (!isCompletion(message)) return;
           completions += 1;
-          const replies = session.messages.slice(index + 1).filter((next) => next.info.role === "assistant");
+          // Only replies before the next request from the user count: a later turn of lead's,
+          // started by the user, says nothing about whether this completion woke it.
+          const after = session.messages.slice(index + 1);
+          const request = after.findIndex(isUserRequest);
+          const replies = after.slice(0, request === -1 ? after.length : request).filter((next) => next.info.role === "assistant");
           if (replies.some((reply) => reply.info.agent === "lead")) return;
           const answer = replies[0];
           if (answer === undefined) wrong.push("one was never answered");
@@ -582,6 +587,11 @@ export function completionsWakeLead(): Check {
       return wrong.length === 0 ? ok(`${completions} completion(s), all answered by lead`) : fail(wrong.join("; "));
     },
   };
+}
+
+/** A user message the user wrote: some text that opencode or the plugin did not add itself. */
+function isUserRequest(message: ApiMessage): boolean {
+  return message.info.role === "user" && message.parts.some((part) => part.type === "text" && part.synthetic !== true);
 }
 
 /** A message opencode wrote itself as a background helper's completion (`<subagent ...>`). */

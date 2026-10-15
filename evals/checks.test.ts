@@ -326,6 +326,13 @@ describe("completionsWakeLead", () => {
     expect(run(completionsWakeLead(), context({ sessions: none, rootSessions: ["root"] })).pass).toBe(false);
   });
 
+  test("a reply of lead's to a later request from the user does not count for an earlier completion", () => {
+    const later = [session([completion(), message("assistant", "reviewer", "VERDICT: APPROVE"), message("user", "lead", "and now this?"), message("assistant", "lead", "sure")])];
+    expect(run(completionsWakeLead(), context({ sessions: later, rootSessions: ["root"] })).detail).toBe("one was answered by reviewer");
+    const neverAnswered = [session([completion(), message("user", "lead", "and now this?"), message("assistant", "lead", "sure")])];
+    expect(run(completionsWakeLead(), context({ sessions: neverAnswered, rootSessions: ["root"] })).detail).toBe("one was never answered");
+  });
+
   test("looks only at the sessions the turns started, and only at messages opencode wrote", () => {
     const child = session([completion(), message("assistant", "scout", "x")], "child");
     const typed = session([message("user", "lead", '<subagent sessionID="x"> typed by the user'), message("assistant", "reviewer", "x"), completion(), message("assistant", "lead", "ok")]);
