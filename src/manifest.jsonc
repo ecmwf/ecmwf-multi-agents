@@ -185,8 +185,9 @@
   // Names checked against opencode's built-in commands in docs/research/command-clashes.md.
   // `review` deliberately replaces opencode's built-in review command.
   //
-  // `review` and `progress` belong to a helper, so they run in a child session and lead relays
-  // the report (see tools/emit-v2.ts).
+  // `review` and `progress` belong to a helper. The plugin runs them in the user's own session
+  // (plugin/inline.ts); without it, the command files run them in a child session and lead
+  // relays the report (see tools/emit-v2.ts).
   "commands": {
     "onboard": {
       "description": "Survey this repository and keep a short summary for later sessions",

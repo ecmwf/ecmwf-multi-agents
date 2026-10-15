@@ -229,11 +229,44 @@ notes, not blockers. A report may leave out NOTES when there is nothing to note,
 may ask for another format (as `/progress` does). When `/review` finds nothing to review, or
 cannot resolve its target, the reviewer says so in a line or two instead of giving a verdict.
 
-`/review` and `/progress` are the two commands the user sends straight to a helper. They run
-in a child session: running one in the user's session would first switch the whole session to
-the helper, so the user's next message would go to the helper. When the child finishes,
-opencode wakes `lead` with the report; `lead` relays it briefly, without re-running its checks.
-`lead` acts on a REJECT or on a plan's state only when the user asks.
+`/review` and `/progress` are the two commands the user sends straight to a helper. With the
+plugin, the helper answers inline: in the user's own session, from the command's text alone, and
+the report stays there as its reply. That saves the turn `lead` would take to relay a child's
+report (24 to 30% cheaper, measured on opencode 1.x). Without the plugin, the command files run
+the helper in a child session, and opencode wakes `lead` with the report as a `<subagent ...>`
+message, which `lead` relays briefly, without re-running its checks. Either way `lead` acts on a
+REJECT or on a plan's state only when the user asks.
+
+A native command for a helper cannot answer inline: it would switch the session to the helper for
+good, so the user's next message would go to the helper, and the helper would see the whole
+conversation. So the plugin registers its own `review` and `progress` (`plugin/inline.ts`), in a
+command transform registered again after each plugin activation, like the agent transform, so
+that it comes after the command files and the plugin's own first registration and wins over both.
+A project switched on by a `plugins` line alone gets the same. A run:
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant P as Plugin
+    participant S as Session
+    U->>P: /review target
+    P-->>U: command accepted at once
+    P->>S: wait until idle (lead answers first)
+    P->>S: switch to reviewer, and to its model if it has one
+    P->>S: the command's text, marked as the reviewer's brief
+    S->>S: reviewer answers from its brief
+    P->>S: wait, then switch back to lead and its model
+    P->>S: if reports were held: queued wake for lead
+```
+
+The `context` hook keeps the helper to its brief: its requests start at the marked brief, and
+background reports that arrive meanwhile are left out of them, counted by message id. They stay in
+the session for `lead`, and when any were held a short queued message wakes `lead` after the run.
+If such a report is the only news after the helper's answer, a one-line note asks the helper to
+end there. A helper request in the session after a run, in the few milliseconds before the switch
+back, is treated the same way, and the session is given back to `lead` at once. `lead`'s own
+requests go through the answer-first rule above, and both wakes count as the end of a reply, so a
+held report wakes `lead` once.
 
 ## Planning and execution
 
@@ -433,13 +466,15 @@ emitter that writes `dist/opencode-v2/`. During setup, before anything else, it 
   file says `subagent: true` (`/review`, `/progress`) instead creates a child session with the
   helper, sends it the text, waits for it in the background and reports to the parent as a
   queued `<subagent ...>` message, the same form opencode uses when a subagent finishes, so
-  `lead` reads it like any helper's report.
+  `lead` reads it like any helper's report. After activation the plugin replaces these two
+  with its inline ones (see [Reports](#reports)), and keeps the child session only where it
+  cannot run a command inline.
 
 opencode's loaders for agent, command and skill files and for config are plugins that activate
 after user plugins, so files and config override what the plugin registers: agents merge field
 by field, commands and skills are replaced whole, and a `default_agent` in a config wins. With
 the harness also installed as files, the registration is harmless: same content, and the files
-win. A test compares the agents, commands and skills the plugin registers with those opencode
+win, except over `/review` and `/progress`, which the plugin registers again after them. A test compares the agents, commands and skills the plugin registers with those opencode
 loads from the generated files.
 
 One difference remains: opencode adds a config's top-level `permissions` to every agent that

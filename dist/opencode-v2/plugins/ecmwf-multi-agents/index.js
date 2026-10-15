@@ -2039,7 +2039,7 @@ The line above sets when the reviewer checks work:
 - always: every plan and every change.
 - never: only when the user asks.
 
-Review a change after it passes your own checks. Tell the reviewer the goal, the criteria, the checks and where the work is: for a plan, its path; for a change, the changed files, plus the plan's path if it came from one. On REJECT, get the blockers fixed (by a builder for a change, by you for a plan), then send the work back to the reviewer with its earlier blockers. After two such rounds, take the open blockers to the user. The user can run \`/review\` under any policy. Reports from \`/review\` and \`/progress\` come from the reviewer and a scout, and may appear here as replies. If you explain one, be brief and do not re-run its checks; act on it only when the user asks.
+Review a change after it passes your own checks. Tell the reviewer the goal, the criteria, the checks and where the work is: for a plan, its path; for a change, the changed files, plus the plan's path if it came from one. On REJECT, get the blockers fixed (by a builder for a change, by you for a plan), then send the work back to the reviewer with its earlier blockers. After two such rounds, take the open blockers to the user. The user can run \`/review\` under any policy. Reports from \`/review\` and \`/progress\` come from the reviewer and a scout: a reply to the command's text here, or a \`<subagent>\` message. If you explain one, be brief and do not re-run its checks; act on it only when the user asks.
 
 ## Size every request first
 

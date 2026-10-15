@@ -11,6 +11,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ## [Unreleased]
 
+### Added
+
+- On opencode 2, `/review` and `/progress` answer in your own session again: the reviewer or a
+  scout replies there from the command's text alone, and the session goes back to `lead`, which
+  no longer takes a turn to relay the report. Background reports that arrive meanwhile are held
+  back from the helper and wake `lead` after it. A command sent while `lead` is answering waits
+  until it has answered. With the harness installed as files but without the plugin, the
+  commands still run in a child session.
+
 ### Changed
 
 - opencode 2 is tested on 2.0.29, the version in use now; 2.0.28 still works and now gets the
