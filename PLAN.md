@@ -641,9 +641,12 @@ merges.
   form lands: the per-project line, central install, inline `/review` and `/progress`,
   `doctor`'s live checks, settings problems on screen. The guide's "Allow always" and Ctrl+B
   notes were dropped and need checking on 2
-- [~] Samet: Plugin registers agents, skills, commands and the default agent, so a project's
+- [x] Samet: Plugin registers agents, skills, commands and the default agent, so a project's
   `plugins` line or the npm package brings the harness; a test compares registered agents with
-  agents loaded from files; `doctor` warns when a global install masks a project line
+  agents loaded from files; `doctor` warns when a global install masks a project line. Also
+  done here: the plugin as a folder (`index.js`, `tui.js`; `server.js` and `tui.js` at the
+  checkout root re-export them), the RPC (`doctor`, `problems`) and the toast entry, and
+  `install.sh doctor` through the RPC (the task "Plugin RPC `doctor` and `problems`" below)
 - [~] Samet: Agents brought by a `plugins` line keep their own rules over the user's global
   `permissions`: opencode appends a config's top-level `permissions` after a
   plugin-registered agent's rules but before an agent file's, so a global "allow all shell"
@@ -653,8 +656,9 @@ merges.
 - [~] Samet: Inline `/review` and `/progress` owned by the plugin, with the `context` hook
   isolation and the switch back; integration tests on the stand-in (idle, busy, report during
   the review)
-- [~] Samet: Plugin RPC `doctor` and `problems`, the TUI toast entry, the plugin as a folder;
-  `install.sh doctor` through the RPC
+- [x] Samet: Plugin RPC `doctor` and `problems`, the TUI toast entry, the plugin as a folder;
+  `install.sh doctor` through the RPC (with the registration task; the toast is unit-tested only,
+  since it needs a terminal)
 - [~] Samet: Central install on opencode 2 through `OPENCODE_CONFIG`, module file lines (Lmod,
   Tcl), the service step and the port check
 - [x] Samet: Answer-first ignores the 2.0.29 output-limit and incomplete-stream notes; pin
