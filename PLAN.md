@@ -680,12 +680,13 @@ merges.
 - [x] Samet: Answer-first ignores the 2.0.29 output-limit and incomplete-stream notes; pin
   2.0.29: the notes (and the server-restart note) are no request and the cut-off step before
   one ends no turn; pinned to 2.0.29, integration suites pass on it
-- [~] Samet: Tiago's review of #5 (changes requested at b708cf7): evals load config from
+- [x] Samet: Tiago's review of #5 (changes requested at b708cf7): evals load config from
   folders above their sandbox, `uninstall --central` advises `rm -rf` for any folder, a
   message typed during an inline `/review` reaches the helper, 0.5.x central installs cannot
   be upgraded, the no-push check misses opencode 2's `write`/`edit`/`patch` input, docs that
   contradict the code, upgrade steps, `doctor` and old `"plugin"` lines, a stray file drops
-  the plugin from the install record, and smaller items
+  the plugin from the install record, and smaller items. All addressed; `make check` 602
+  pass, integration 59 of 59 on 2.0.29
 - [~] Samet: Docs for opencode 2 only (README, install, architecture, guide skill), changelog
 - [~] Samet: Real-model evals on opencode 2 (`plan-execute`, `execute-chat`,
   `review-background`, inline `/review` cost against the 1.x numbers)
