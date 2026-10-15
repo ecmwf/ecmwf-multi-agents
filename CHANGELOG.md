@@ -24,7 +24,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
   replaces the 0.5.x install in place. In the module file, replace the `OPENCODE_CONFIG_DIR`
   line with `OPENCODE_CONFIG` set to `DIR/opencode.json`, and drop the
   `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS` line. Each user then loads the new module and
-  runs `install.sh central-enable DIR` once. While `OPENCODE_CONFIG_DIR` still names the
+  runs `opencode service set env OPENCODE_CONFIG DIR/opencode.json` once (or
+  `install.sh central-enable DIR`). While `OPENCODE_CONFIG_DIR` still names the
   folder, a user's opencode 2 service does not start, and `doctor` reports a FAIL. The steps
   are in `docs/install.md`.
 
@@ -46,10 +47,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
   model, effort and step limit of the harness agents, which the settings decide.
 - Problems with the settings files show as a warning in the opencode TUI.
 - `install.sh doctor` asks opencode what it loaded: whether `lead` is there and is the
-  harness's own, and if not, which fields differ and the `lead.md` files and opencode configs
-  that may have changed it, its review line, the default agent and the plugin's problems. `doctor --project` checks a
-  project switched on by a `plugins` line, and `doctor` warns when an install in
-  `~/.config/opencode/` masks a project's line.
+  harness's own (if not, which fields differ, and the `lead.md` files and opencode configs that
+  may have changed it), its review line, the default agent and the plugin's problems.
+  `doctor --project` checks a project switched on by a `plugins` line, and `doctor` warns when
+  an install in `~/.config/opencode/` masks a project's line.
 - Central install on opencode 2, for shared machines such as HPC login nodes:
   `install.sh --central DIR` writes a read-only folder with an `opencode.json` that users
   switch on with `OPENCODE_CONFIG=DIR/opencode.json`, typically from a module file whose Lmod

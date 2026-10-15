@@ -687,9 +687,12 @@ merges.
   contradict the code, upgrade steps, `doctor` and old `"plugin"` lines, a stray file drops
   the plugin from the install record, and smaller items. All addressed; `make check` 602
   pass, integration 59 of 59 on 2.0.29
-- [~] Samet: Docs for opencode 2 only (README, install, architecture, guide skill), changelog
-- [~] Samet: Real-model evals on opencode 2 (`plan-execute`, `execute-chat`,
-  `review-background`, inline `/review` cost against the 1.x numbers)
+- [x] Samet: Docs for opencode 2 only (README, install, architecture, guide skill), changelog: done with the 1.x removal, each
+  feature's own docs and Tiago's review of #5 (the exceptions to files winning, upgrade steps
+  from 0.5.x, the Ctrl+B tip)
+- [ ] Samet, after 0.6.0 (released without them, on the owners' decision): real-model
+  evals on opencode 2 (`plan-execute`, `execute-chat`, `review-background`, inline `/review`
+  cost against the 1.x numbers)
 
 Exit: `make check` and the integration suites pass on 2.0.29 with no 1.x code left; every row
 above works on the stand-in; the real-model evals pass on opencode 2.
