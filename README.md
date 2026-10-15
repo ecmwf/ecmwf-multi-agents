@@ -137,8 +137,13 @@ work here):
 ```
 
 The plugin then brings the agents, commands and skills, and makes `lead` the default agent, in
-that project only. Your own agent files, commands, skills and `default_agent` still win. The
-settings files work as below. To update, change the version in the line (or `git pull` the
+that project only. Your own agent files, commands, skills and `default_agent` still win, with
+two exceptions. The plugin replaces `/review` and `/progress` after opencode has loaded the
+command files, so they answer in your session; a command file of your own with either name is
+not used. And the settings decide the model, effort and step limit of `lead`, `scout`, `builder`
+and `reviewer`, and `lead`'s review line: an agent file of yours with one of those names can
+change its other fields, but change these in the settings file. The settings files work as
+below. To update, change the version in the line (or `git pull` the
 checkout) and restart opencode; an entry without a version is updated only by
 `opencode plugin update`.
 

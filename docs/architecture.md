@@ -477,8 +477,11 @@ opencode's loaders for agent, command and skill files and for config are plugins
 after user plugins, so files and config override what the plugin registers: agents merge field
 by field, commands and skills are replaced whole, and a `default_agent` in a config wins. With
 the harness also installed as files, the registration is harmless: same content, and the files
-win, except over `/review` and `/progress`, which the plugin registers again after them. A test compares the agents, commands and skills the plugin registers with those opencode
-loads from the generated files.
+win. Two things win over files and config, with or without registration: `/review` and
+`/progress`, which the plugin registers again after the command files, and the settings, which
+the late agent transform applies over every agent with a harness name (model, effort, step
+limit, and `lead`'s review line). A test compares the agents, commands and skills the plugin
+registers with those opencode loads from the generated files.
 
 Each agent's own permission rules win over the user's config either way. opencode's loader adds
 a config's top-level `permissions` to every agent that exists when it runs, and an agent file's

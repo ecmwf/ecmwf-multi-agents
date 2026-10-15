@@ -212,7 +212,9 @@ The central config sits above your global config folder and below the project:
 
 Agents merge field by field, so the central agents set every field the harness defines and
 replace those of an agent of the same name in your global folder, while a project's own agent
-file (`.opencode/agents/scout.md`) or command still wins over the central one. The agents' own
+file (`.opencode/agents/scout.md`) or command still wins over the central one. The exceptions
+are as with a project's line (see the README): `/review` and `/progress` are the plugin's, and
+the settings decide the harness agents' model, effort and step limit. The agents' own
 permission rules come after your global `permissions`, so a global "allow every shell command"
 does not loosen `scout`'s read-only rules, and `/review` and `/progress` answer in your own
 session, as with any other install. With opencode 1

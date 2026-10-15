@@ -23,7 +23,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
   `"plugins": ["@ecmwf.int/multi-agents@X.Y.Z"]`, or the path of a checkout such as
   `"{env:HOME}/.local/share/ecmwf-multi-agents"`. The plugin registers the agents, commands,
   skills and `lead` as the default agent in that project only; your own files and config still
-  win.
+  win, except over `/review` and `/progress`, which the plugin answers in your session, and the
+  model, effort and step limit of the harness agents, which the settings decide.
 - Problems with the settings files show as a warning in the opencode TUI.
 - `install.sh doctor` asks opencode what it loaded: whether `lead` is there and from where,
   its review line, the default agent and the plugin's problems. `doctor --project` checks a
@@ -64,8 +65,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
   opencode 1 installed, the installer stops and asks you to upgrade with
   `opencode upgrade --major`. Running `./install.sh` again replaces an install made for
   opencode 1, and `doctor` reports one until then.
-- With it go the installer's `--platform` and `--central` options, the per-project plugin line
-  for opencode 1.x, the background flag advice in the installer and `doctor`, `doctor`'s checks
+- With it go the installer's `--platform` option, the per-project plugin line for opencode
+  1.x, the background flag advice in the installer and `doctor`, `doctor`'s checks
   that started opencode 1.x, the files in `dist/opencode-v1/`, and the plugin parts that only
   opencode 1.x used: the shell guard after "Allow always" (on opencode 2 a configured deny
   always holds) and the pinning of messages in a helper's session (on opencode 2 you cannot
