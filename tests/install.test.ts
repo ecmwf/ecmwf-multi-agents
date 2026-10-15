@@ -640,6 +640,25 @@ describe("the plugin folder", () => {
     expect(readlinkSync(path.join(box.config, PLUGIN))).toBe(path.join(box.dist, "opencode-v2", PLUGIN));
   });
 
+  test("a stray file in a copied plugin folder keeps the plugin's files recorded, so uninstall still removes them", () => {
+    const box = makeBox();
+    expect(run(box, ["--copy"]).code).toBe(0);
+    const stray = path.join(box.config, PLUGIN, "index.js~");
+    write(stray, "an editor backup\n");
+    const linked = run(box, ["--link"]);
+    expect(linked.code).toBe(1);
+    expect(linked.out).toContain(`not from ${NAME}:\n  ${path.join(box.config, PLUGIN)}\n`);
+    const record = readFileSync(path.join(box.config, NAME, "installed.txt"), "utf8");
+    expect(record).toContain(`file=${PLUGIN}/index.js\n`);
+    expect(record).toContain(`file=${PLUGIN}/tui.js\n`);
+    const removed = run(box, ["uninstall"]);
+    expect(removed.code).toBe(0);
+    expect(existsSync(path.join(box.config, PLUGIN, "index.js"))).toBe(false);
+    expect(existsSync(path.join(box.config, PLUGIN, "tui.js"))).toBe(false);
+    expect(removed.out).toContain(`Warning: left in place, because it is not from ${NAME}: ${stray}`);
+    expect(readFileSync(stray, "utf8")).toBe("an editor backup\n");
+  });
+
   test("a plugin folder that is not ours is left alone and reported", () => {
     const box = makeBox();
     write(path.join(box.config, PLUGIN, "index.js"), "export default {};\n");

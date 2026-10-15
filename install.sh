@@ -435,7 +435,14 @@ unlink_plugin_dir() {
 
 place_plugin_file() {
 	case $PLUGIN_ACTION in
-	conflict) return 0 ;;
+	conflict)
+		# A stray file stops the folder from being replaced, but the plugin's own files in it
+		# stay recorded, so that uninstall still removes them.
+		if [ ! -L "$CONFIG_DIR/$PLUGIN_REL" ] && is_ours "$CONFIG_DIR/$1" "$1"; then
+			say "$1" >>"$NEW_LIST"
+		fi
+		return 0
+		;;
 	unchanged) UNCHANGED=$((UNCHANGED + 1)) ;;
 	update) UPDATED=$((UPDATED + 1)) ;;
 	add) ADDED=$((ADDED + 1)) ;;
@@ -1521,6 +1528,14 @@ cmd_uninstall() {
 	done <<EOF
 $UNINSTALL_LIST
 EOF
+	# Files someone else put in the plugin folder stay, and so does the folder.
+	if [ -d "$CONFIG_DIR/$PLUGIN_REL" ] && [ ! -L "$CONFIG_DIR/$PLUGIN_REL" ]; then
+		for uninstall_entry in "$CONFIG_DIR/$PLUGIN_REL"/* "$CONFIG_DIR/$PLUGIN_REL"/.[!.]*; do
+			[ -e "$uninstall_entry" ] || [ -L "$uninstall_entry" ] || continue
+			is_ours "$uninstall_entry" "$PLUGIN_REL/${uninstall_entry##*/}" && continue
+			warn "left in place, because it is not from $NAME: $uninstall_entry"
+		done
+	fi
 	if [ -d "$CONFIG_DIR/$NAME" ]; then
 		if [ "$DRY_RUN" = 1 ]; then
 			say "  would remove $CONFIG_DIR/$NAME/"
