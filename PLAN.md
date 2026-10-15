@@ -626,9 +626,10 @@ merges.
 
 - [x] Samet: Research addendum (`docs/research/opencode-v2.md`, sections 11 to 15) and ADR
   0004 "opencode 2 only", superseding ADR 0003 and amending ADR 0001 and 0002
-- [~] Samet: Eval runner on opencode 2: server, routes, permissions and forms, message
+- [x] Samet: Eval runner on opencode 2: server, routes, permissions and forms, message
   adapter, tool names (`shell`, `subagent`), the eval login (`make eval-login`) and the
-  `AGENTS.md` rule for it; `evals/run.integration.test.ts` on the stand-in model
+  `AGENTS.md` rule for it; `evals/run.integration.test.ts` on the stand-in model. 10 of 10 on 2.0.28 and 2.0.29; messages go through an adapter to the old shape
+  (`evals/messages.ts`); the login is `evals/login.ts`
 - [x] Samet: Remove opencode 1.x: plugin core (`plugin.ts` to `{ id, setup }`, guard helpers
   moved, pinning and v1 modules deleted), the embedded `v1` block, `emit-v1`,
   `dist/opencode-v1`, installer (`--platform`, version detection, background flag; old
