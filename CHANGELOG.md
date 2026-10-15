@@ -29,6 +29,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
   its review line, the default agent and the plugin's problems. `doctor --project` checks a
   project switched on by a `plugins` line, and `doctor` warns when an install in
   `~/.config/opencode/` masks a project's line.
+- Central install on opencode 2, for shared machines such as HPC login nodes:
+  `install.sh --central DIR` writes a read-only folder with an `opencode.json` that users
+  switch on with `OPENCODE_CONFIG=DIR/opencode.json`, typically from a module file whose Lmod
+  and Tcl lines the installer prints. `--profile` and `--review` write the site settings,
+  which your own and a project's settings override. `install.sh central-enable DIR` (and
+  `central-disable`) keeps the variable in your opencode service's settings, since the service
+  reads it only when it starts. `doctor` checks the folder, the variable in your shell and in
+  the service, and warns when another user holds your service's port. A project's own agent
+  files now win over the central ones.
 
 ### Changed
 
@@ -44,6 +53,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 - On opencode 2, the note opencode adds to continue a response that was cut off (interrupted,
   over the output limit, or stopped by a server restart) no longer counts as a new question
   from you: a task report is held back only while `lead` is still answering your own question.
+- The installer's messages name the command you ran, such as `ecmwf-multi-agents doctor` for
+  the npm package's command, instead of always `./install.sh`.
+- `doctor` reports `lead`'s review line as your settings make it: the plugin's RPC no longer
+  answers before the settings reach the agents.
 
 ### Removed
 

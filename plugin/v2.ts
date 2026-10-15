@@ -78,6 +78,12 @@ export function v2ProjectRoot(ctx: V2Context | undefined): string | undefined {
   return typeof directory === "string" && directory !== "" ? directory : undefined;
 }
 
+/** The site settings file a central install names in the plugin's `site` option. */
+export function siteSettings(ctx: V2Context | undefined): string | undefined {
+  const site = ctx?.options?.site;
+  return typeof site === "string" && site !== "" ? site : undefined;
+}
+
 /** One transform kept at the end of the list by registering it again. */
 class LateTransform<E> {
   private current: V2Registration | undefined;
@@ -90,6 +96,11 @@ class LateTransform<E> {
     private readonly reporter: Reporter,
     private readonly what: string,
   ) {}
+
+  /** Register now unless a registration is there already, as when the RPC asks before any event. */
+  ensure(): Promise<void> {
+    return this.current === undefined ? this.register() : this.queue;
+  }
 
   register(): Promise<void> {
     this.queue = this.queue.then(async () => {
@@ -154,13 +165,15 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
       let loaded: LoadedSettings = { settings: mergeSettings([], harness), problems: [], applied: [], sources: {} };
       try {
         environment = (options.environment ?? processEnvironment)();
-        loaded = loadSettings(harness, environment, v2ProjectRoot(ctx));
+        loaded = loadSettings(harness, environment, v2ProjectRoot(ctx), siteSettings(ctx));
       } catch (error) {
         reporter.internal("reading the settings", error);
       }
       const settings: Settings = loaded.settings;
 
       const ruleOrder = new RuleOrder(harness, environment?.home ?? "");
+      // The RPC can be asked before the late transform is registered; it registers it first.
+      let late: LateTransform<V2AgentEditor> | undefined;
       await registerHarness(ctx, harness, {
         home: environment?.home ?? "",
         ruleOrder,
@@ -178,6 +191,12 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
             environment,
             directory: ctx.location?.directory,
             projectRoot: v2ProjectRoot(ctx),
+            // By the time the RPC answers, every plugin has activated.
+            ready: async () => {
+              if (late === undefined) return;
+              ruleOrder.start();
+              await late.ensure();
+            },
           });
         } catch (error) {
           reporter.internal("registering the RPC", error);
@@ -254,7 +273,7 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
         });
       }
 
-      const late = new LateTransform<V2AgentEditor>(
+      late = new LateTransform<V2AgentEditor>(
         (callback) => ctx.agent.transform(callback),
         (editor) => {
           // Runs on every rebuild; opencode disables a plugin whose transform throws.
@@ -288,15 +307,16 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
               "command",
             )
           : undefined;
+      const agentTransform = late;
       const onActivation = () => {
         ruleOrder.start();
-        void late.register();
+        void agentTransform.register();
         void lateCommands?.register();
       };
       const stopWatching = watchEvents(ctx, onActivation, (event) => tracker.observe(event), reporter, options.fallbackMs ?? FALLBACK_MS);
       return async () => {
         stopWatching();
-        late.stop();
+        agentTransform.stop();
         lateCommands?.stop();
       };
     } catch (error) {

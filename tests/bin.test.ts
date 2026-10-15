@@ -41,7 +41,14 @@ describe.skipIf(node === null)("the npm command", () => {
   test("passes the arguments on and returns install.sh's exit code and error", () => {
     const { code, err } = run([node!, linked("args"), "--no-such-option"]);
     expect(code).toBe(1);
-    expect(err).toContain("unknown option: --no-such-option");
+    expect(err).toContain("unknown option: --no-such-option (see ecmwf-multi-agents --help)");
+  });
+
+  test("messages name the command the user ran, not install.sh", () => {
+    const { out } = run([node!, linked("name"), "--help"]);
+    expect(out).toContain("Usage: ecmwf-multi-agents [command] [options]");
+    expect(out).toContain("  ecmwf-multi-agents doctor\n");
+    expect(out).not.toContain("install.sh");
   });
 
   test("runs by its shebang, also through a chain of symlinks", () => {

@@ -50,18 +50,21 @@ function has(value: object, key: string): boolean {
 }
 
 /**
- * The settings files in the order they apply, later ones overriding earlier ones:
- * `$OPENCODE_CONFIG_DIR` (site defaults), the user's global opencode directory, then the
- * project's `.opencode/`. A path that appears twice is read once, in its first position.
+ * The settings files in the order they apply, later ones overriding earlier ones: the site file
+ * a central install names in the plugin's `site` option, `$OPENCODE_CONFIG_DIR`, the user's
+ * global opencode directory, then the project's `.opencode/`. A path that appears twice is read
+ * once, in its first position.
  */
-export function settingsPaths(environment: Pick<Environment, "env" | "home">, projectRoot: string | undefined): string[] {
+export function settingsPaths(environment: Pick<Environment, "env" | "home">, projectRoot: string | undefined, site?: string): string[] {
   const { env, home } = environment;
   const out: string[] = [];
-  const add = (dir: string | undefined) => {
-    if (!dir) return;
-    const file = path.resolve(dir, SETTINGS_FILE);
+  const addFile = (file: string) => {
     if (!out.includes(file)) out.push(file);
   };
+  const add = (dir: string | undefined) => {
+    if (dir) addFile(path.resolve(dir, SETTINGS_FILE));
+  };
+  if (site) addFile(path.resolve(site));
   add(env.OPENCODE_CONFIG_DIR);
   const xdg = env.XDG_CONFIG_HOME;
   add(path.join(xdg ? xdg : path.join(home, ".config"), "opencode"));
@@ -204,11 +207,11 @@ export function settingSources(files: readonly SettingsFile[], applied: readonly
 }
 
 /** Read, check and merge every settings file. Missing files are skipped without a word. */
-export function loadSettings(harness: EmbeddedHarness, environment: Environment, projectRoot: string | undefined): LoadedSettings {
+export function loadSettings(harness: EmbeddedHarness, environment: Environment, projectRoot: string | undefined, site?: string): LoadedSettings {
   const files: SettingsFile[] = [];
   const problems: Problem[] = [];
   const applied: string[] = [];
-  for (const file of settingsPaths(environment, projectRoot)) {
+  for (const file of settingsPaths(environment, projectRoot, site)) {
     let text: string | undefined;
     try {
       text = environment.readFile(file);

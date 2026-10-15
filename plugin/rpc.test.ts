@@ -54,6 +54,19 @@ describe("doctor", () => {
     });
   });
 
+  test("waits for the settings to reach the agents before it reads them", async () => {
+    const state = { system: "Review policy: auto" };
+    const doctor = input({}, []);
+    doctor.ctx.agent.list = async () => [{ id: "lead", system: state.system }];
+    doctor.ready = async () => {
+      await Bun.sleep(5);
+      state.system = "Review policy: never";
+    };
+    expect(await doctorReport(doctor)).toMatchObject({ reviewLine: "Review policy: never" });
+    doctor.ready = async () => Promise.reject(new Error("no"));
+    expect(await doctorReport(doctor)).toMatchObject({ leadLoaded: true });
+  });
+
   test("lead from files, and lead missing", async () => {
     const files = { "/repo/.opencode/agents/lead.md": "---\n---\nx", [`${GLOBAL}/agent/lead.md`]: "x" };
     const fromFiles = await doctorReport(input(files, [{ id: "lead", system: "x" }]));

@@ -245,6 +245,20 @@ describe("v2 setup", () => {
     expect([...state.agents.keys()].filter((id) => id.endsWith("-rule-probe"))).toEqual([]);
   });
 
+  test("the site file named in the plugin's site option applies first; the user's and the project's override it", async () => {
+    const site = "/central/ecmwf-multi-agents.jsonc";
+    const host = new FakeHost();
+    (host.ctx as { options?: Record<string, unknown> }).options = { site };
+    await start({ [site]: '{ "review": "never", "agents": { "scout": { "steps": 4 }, "reviewer": { "steps": 5 } } }', [GLOBAL]: '{ "agents": { "scout": { "steps": 6 } } }' }, host);
+    host.loader();
+    host.emit("plugin.updated");
+    await settle();
+    const state = host.build();
+    expect(state.agents.get("lead")!.system).toContain("Review policy: never");
+    expect(state.agents.get("scout")!.steps).toBe(6);
+    expect(state.agents.get("reviewer")!.steps).toBe(5);
+  });
+
   test("other events do not register anything", async () => {
     const { host } = await start({});
     host.emit("agent.updated");

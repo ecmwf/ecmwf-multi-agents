@@ -365,12 +365,14 @@ and its findings are added to the existing sections.
 
 ## Settings
 
-`ecmwf-multi-agents.jsonc`, read at startup from up to three places, each overriding the one
+`ecmwf-multi-agents.jsonc`, read at startup from up to four places, each overriding the one
 before, with `agents` entries merged per agent and per field:
 
-1. `$OPENCODE_CONFIG_DIR/ecmwf-multi-agents.jsonc`, when the variable is set (site defaults);
-2. `${XDG_CONFIG_HOME:-$HOME/.config}/opencode/ecmwf-multi-agents.jsonc` (the user's own);
-3. `<project root>/.opencode/ecmwf-multi-agents.jsonc` (the project's).
+1. the site file a central install names in the plugin's `site` option
+   (`DIR/ecmwf-multi-agents.jsonc`, site defaults; see "Central install");
+2. `$OPENCODE_CONFIG_DIR/ecmwf-multi-agents.jsonc`, when the variable is set;
+3. `${XDG_CONFIG_HOME:-$HOME/.config}/opencode/ecmwf-multi-agents.jsonc` (the user's own);
+4. `<project root>/.opencode/ecmwf-multi-agents.jsonc` (the project's).
 
 Changes take effect when opencode restarts.
 
@@ -527,6 +529,49 @@ flowchart LR
   T[TUI tui.js] -->|problems, problem events| P
 ```
 
+## Central install
+
+A central install serves every user of a shared machine from one read-only folder, which each
+user opts into with `OPENCODE_CONFIG=DIR/opencode.json` (ADR 0004; `docs/install.md`, "Shared
+machines"). opencode reads that file above the user's global config folder and below the
+project's config.
+
+The generator writes the template `dist/opencode-v2/central/`, which `files.txt` leaves out:
+
+```text
+central/opencode.json             every agent and command inline; skills and plugin paths
+central/prompts/<agent>.md        an agent's prompt, without frontmatter
+central/prompts/commands/<id>.md  a command's template, without frontmatter
+```
+
+Each agent sets every field the harness defines (description, mode, model, steps, color,
+permissions), `hidden`, and `"system": "{file:./prompts/<agent>.md}"`; opencode inserts a
+`{file:}` relative to the config file, trimmed. Agents from configs merge field by field, so
+setting them all keeps a user's global agent of the same name from leaking fields into the
+harness's. Commands carry `template`, `description`, `agent` and `subagent` where their files
+do. The template names `skills` and the plugin folder in `plugins` with the folder's path as
+`@ECMWF_MULTI_AGENTS_DIR@`, and gives the plugin the option `site`, the site settings file.
+`default_agent` is left out: the plugin makes `lead` the default, so a user's own
+`default_agent` and the `default_agent` setting keep working.
+
+`install.sh --central DIR` copies the template, the plugin folder, the skills and the support
+files into DIR, fills in DIR's absolute path, records the files with `mode=central`, writes
+the site settings only for `--profile` or `--review`, and makes the folder read-only. The
+plugin loads through the central config and registers the harness as it does from a `plugins`
+line; the config's loader runs after it, so the central agents and commands win, as files do,
+with the same content. Two things still come from the plugin's late transforms, which run after
+that loader: `/review` and `/progress` are registered again and answer inline, and each agent's
+own rules end up after the user's global `permissions` (the central config's rules already come
+after them, and the plugin's copy is moved there too). The plugin reads the site file from its
+`site` option, before the user's and the project's settings files.
+
+Because the user's background service reads `OPENCODE_CONFIG` only when it starts,
+`install.sh central-enable DIR` runs `opencode service set env OPENCODE_CONFIG
+DIR/opencode.json`, which keeps the variable in the user's service settings. `doctor` finds a
+central install through `OPENCODE_CONFIG` or the service's setting, checks both, warns when
+another user's process holds the service's port (read with `ss`), and asks the plugin's RPC
+with the central config.
+
 ## Source and output
 
 ```text
@@ -537,7 +582,7 @@ src/commands/*.md         command templates
 src/skills/<id>/SKILL.md  skill bodies
 src/profiles/*.jsonc      model profiles
 tools/                    generator (TypeScript on Bun)
-dist/opencode-v2/         output for opencode 2 (tested on 2.0.29)
+dist/opencode-v2/         output for opencode 2 (tested on 2.0.29), and central/ for --central
 plugin/                   runtime plugin sources
 ```
 

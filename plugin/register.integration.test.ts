@@ -99,6 +99,20 @@ const GLOBAL_PERMISSIONS = [
   { action: "shell", resource: "touch user-denied*", effect: "deny" },
 ];
 
+/**
+ * The permission rules an agent the plugin registered may have, given the same agent loaded from
+ * a file: the agent's own rules always come after the user's global ones, and opencode's later
+ * rules for every agent (a `browser` deny, which no rule of the harness matches) land before
+ * them or after them depending on when the plugin finished activating. Both orders decide the
+ * same way.
+ */
+function acceptedRules(fromFile: unknown[], own: unknown[]): string[] {
+  const start = fromFile.findIndex((_, index) => JSON.stringify(fromFile.slice(index, index + own.length)) === JSON.stringify(own));
+  expect(start).toBeGreaterThan(-1);
+  const moved = [...fromFile.slice(0, start), ...fromFile.slice(start + own.length), ...own];
+  return [JSON.stringify(fromFile), JSON.stringify(moved)];
+}
+
 /** The npm package of this repository, packed as `npm pack` would publish it; returns the tarball. */
 function npmPack(destination: string): string {
   mkdirSync(destination, { recursive: true });
@@ -349,8 +363,8 @@ describe.skipIf(!v2Available)(`a project's plugins line in opencode ${V2_VERSION
       const want = pick(fromFiles.find((agent) => agent.id === id))!;
       expect(want.system).toBeString();
       // The agent's own rules come after the user's global ones, as from the file. Rules opencode
-      // adds to every agent after the config (a `browser` deny) come before them instead of after:
-      // nothing in the agent's own rules matches them.
+      // adds to every agent after the config (a `browser` deny) may land before them or after:
+      // nothing in the agent's own rules matches them (acceptedRules).
       const own = embedded.agents.find((agent) => agent.id === id)!.permissions!;
       const rules = want.permissions!;
       const start = rules.findIndex((_, index) => JSON.stringify(rules.slice(index, index + own.length)) === JSON.stringify(own));
@@ -358,7 +372,9 @@ describe.skipIf(!v2Available)(`a project's plugins line in opencode ${V2_VERSION
       const later = rules.slice(start + own.length);
       expect(later.length).toBeLessThan(own.length);
       for (const rule of later) expect(own.some((item) => item.action === (rule as PermissionRule).action)).toBe(false);
-      expect(pick(fromPlugin.find((agent) => agent.id === id))).toEqual({ ...want, permissions: [...rules.slice(0, start), ...later, ...own] });
+      const got = pick(fromPlugin.find((agent) => agent.id === id))!;
+      expect({ ...got, permissions: undefined }).toEqual({ ...want, permissions: undefined });
+      expect(acceptedRules(rules, own)).toContain(JSON.stringify(got.permissions));
     }
 
     const commands = async (project: string) => (await get<Array<{ name: string; description?: string }>>("/api/command", project)).filter((command) => !command.name.includes(":"));
@@ -460,16 +476,19 @@ describe.skipIf(!v2Available)(`a project's plugins line in opencode ${V2_VERSION
     expect(existsSync(path.join(projects.packed, "node_modules"))).toBe(false);
 
     await Bun.sleep(4_000);
-    // The package brings what a checkout's line brings, field for field and rule for rule; the
-    // test above compares a checkout's line with the generated files.
-    await active(projects.line);
-    const fromLine = await agents(projects.line);
+    const fromFiles = await withLead(projects.files);
     const fromPackage = await agents(projects.packed);
     expect(fromPackage[0]?.id).toBe("lead");
     for (const id of AGENTS) {
-      const want = pick(fromLine.find((agent) => agent.id === id));
-      expect(want?.system).toBeString();
-      expect(pick(fromPackage.find((agent) => agent.id === id))).toEqual(want);
+      const want = pick(fromFiles.find((agent) => agent.id === id))!;
+      expect(want.system).toBeString();
+      const got = pick(fromPackage.find((agent) => agent.id === id))!;
+      expect({ ...got, permissions: undefined }).toEqual({ ...want, permissions: undefined });
+      // The agent's own rules come after the user's global ones either way. Whether opencode's
+      // later rules for every agent (a `browser` deny) land before or after them depends on when
+      // the package finishes installing: before, as for a checkout's line, or after, as from files.
+      const own = embedded.agents.find((agent) => agent.id === id)!.permissions!;
+      expect(acceptedRules(want.permissions!, own)).toContain(JSON.stringify(got.permissions));
     }
 
     const commands = (await get<Array<{ name: string; description?: string }>>("/api/command", projects.packed)).filter((command) => !command.name.includes(":"));
