@@ -48,9 +48,7 @@ function fixture(): ResolvedHarness {
           { action: "shell", resource: "git log *", effect: "allow" },
           { action: "delegate", resource: "*", effect: "deny" },
           { action: "question", resource: "*", effect: "deny" },
-          { action: "todo", resource: "*", effect: "deny" },
           { action: "skill", resource: "ecmwf-multi-agents-*", effect: "deny" },
-          { action: "list", resource: "*", effect: "allow" },
         ],
       },
       {
@@ -257,17 +255,8 @@ describe("emitV2 agents", () => {
     ]);
   });
 
-  test("leaves out todo and list rules and records each one as a frontmatter comment", () => {
-    const scout = file(emitV2(fixture()), "agents/scout.md");
-    expect(scout.comments).toEqual([
-      MARKER,
-      '# no todo action in opencode 2.0.28, rule left out: todo "*" deny',
-      '# no list action in opencode 2.0.28, rule left out: list "*" allow',
-    ]);
-    const actions = (scout.data.permissions as { action: string }[]).map((rule) => rule.action);
-    expect(actions).not.toContain("todo");
-    expect(actions).not.toContain("todowrite");
-    expect(actions).not.toContain("list");
+  test("the marker is the only frontmatter comment", () => {
+    expect(file(emitV2(fixture()), "agents/scout.md").comments).toEqual([MARKER]);
   });
 
   test("an agent without rules gets no permissions key", () => {
@@ -356,8 +345,6 @@ describe("action and model helpers", () => {
     expect(Object.keys(V2_ACTIONS).sort()).toEqual(ACTIONS.filter((action) => action !== "tool").sort());
     expect(V2_ACTIONS.shell).toBe("shell");
     expect(V2_ACTIONS.delegate).toBe("subagent");
-    expect(V2_ACTIONS.todo).toBeNull();
-    expect(V2_ACTIONS.list).toBeNull();
     expect(V2_ACTIONS.execute).toBe("execute");
   });
 
@@ -366,28 +353,24 @@ describe("action and model helpers", () => {
     expect(
       v2Permissions([
         { action: "tool", resource: "helpers_status", effect: "deny" },
-        { action: "todo", resource: "*", effect: "deny" },
         { action: "shell", resource: "ls *", effect: "allow" },
       ]),
-    ).toEqual({
-      rules: [
-        { action: "helpers_status", resource: "*", effect: "deny" },
-        { action: "shell", resource: "ls *", effect: "allow" },
-      ],
-      dropped: [{ action: "todo", resource: "*", effect: "deny" }],
-    });
-  });
-  test("v2Permissions keeps order and separates dropped rules", () => {
-    const result = v2Permissions([
-      { action: "todo", resource: "*", effect: "deny" },
-      { action: "delegate", resource: "*", effect: "deny" },
-      { action: "delegate", resource: "scout", effect: "allow" },
+    ).toEqual([
+      { action: "helpers_status", resource: "*", effect: "deny" },
+      { action: "shell", resource: "ls *", effect: "allow" },
     ]);
-    expect(result.rules).toEqual([
+  });
+
+  test("v2Permissions keeps order", () => {
+    expect(
+      v2Permissions([
+        { action: "delegate", resource: "*", effect: "deny" },
+        { action: "delegate", resource: "scout", effect: "allow" },
+      ]),
+    ).toEqual([
       { action: "subagent", resource: "*", effect: "deny" },
       { action: "subagent", resource: "scout", effect: "allow" },
     ]);
-    expect(result.dropped).toEqual([{ action: "todo", resource: "*", effect: "deny" }]);
   });
 
   test("v2Model joins model and variant", () => {

@@ -64,7 +64,6 @@ const harness: ResolvedHarness = {
         { action: "shell", resource: "ls *", effect: "allow" },
         { action: "delegate", resource: "*", effect: "deny" },
         { action: "question", resource: "*", effect: "deny" },
-        { action: "todo", resource: "*", effect: "deny" },
         { action: "skill", resource: "ecmwf-multi-agents-*", effect: "deny" },
       ],
     },
@@ -267,14 +266,13 @@ describe.skipIf(!enabled)(`emitV2 output in opencode ${V2_VERSION}`, () => {
     return rules.slice(0, rules.length - TRAILING.length);
   };
 
-  test("agent rules follow the built-in defaults in order, with dropped actions absent", async () => {
+  test("agent rules follow the built-in defaults in order", async () => {
     const agents = await get<ApiAgent[]>("/api/agent");
     for (const expected of harness.agents) {
       const rules = ownRules(agents, expected.id);
-      const mapped = v2Permissions(expected.permissions).rules;
+      const mapped = v2Permissions(expected.permissions);
       expect(rules[0]).toEqual({ action: "*", resource: "*", effect: "allow" });
       expect(rules.slice(rules.length - mapped.length)).toEqual(mapped);
-      expect(rules.some((rule) => rule.action === "todo" || rule.action === "todowrite")).toBe(false);
     }
   });
 

@@ -2,11 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Single source for the harness. The generator (tools/) reads this file, the Markdown it
-// names and the VERSION file at the repository root, and writes dist/opencode-v1/ and
-// dist/opencode-v2/. Paths are relative to src/.
-// Permission actions are platform neutral; the emitters map them: shell to bash (v1) or shell
-// (v2), delegate to task or subagent, todo to todowrite (v1 only), execute to Code Mode (v2
-// only). Rules are ordered and the last match wins. Agent rules come after the user's own
+// names and the VERSION file at the repository root, and writes dist/opencode-v2/. Paths are
+// relative to src/.
+// Permission actions are neutral; the emitter maps them to opencode's: delegate to subagent,
+// execute to Code Mode, the others by name. Rules are ordered and the last match wins. Agent rules come after the user's own
 // rules, so allow and ask rules here override the user's policy: keep them few and deliberate.
 {
   "name": "ecmwf-multi-agents",
@@ -131,9 +130,8 @@
       "prompt": ["agents/scout.md"],
       "budget": "helper",
       "steps": 30,
-      // Edits are denied except the notes folder. Paths match relative to the repository root
-      // (v1) or the session directory (v2); the second pattern covers sessions started in a
-      // subdirectory.
+      // Edits are denied except the notes folder. Paths match relative to the session
+      // directory; the second pattern covers sessions started in a subdirectory.
       "permissions": [
         { "action": "edit", "resource": "*", "effect": "deny" },
         { "action": "edit", "resource": ".ecmwf-multi-agents/notes/*", "effect": "allow" },
@@ -142,7 +140,6 @@
         { "use": "read-only-shell", "effect": "allow" },
         { "action": "delegate", "resource": "*", "effect": "deny" },
         { "action": "question", "resource": "*", "effect": "deny" },
-        { "action": "todo", "resource": "*", "effect": "deny" },
         { "action": "execute", "resource": "*", "effect": "deny" },
         { "action": "skill", "resource": "ecmwf-multi-agents-*", "effect": "deny" },
         { "use": "helper-tools", "effect": "deny" }
@@ -178,7 +175,6 @@
         { "use": "gh-read", "effect": "allow" },
         { "action": "delegate", "resource": "*", "effect": "deny" },
         { "action": "question", "resource": "*", "effect": "deny" },
-        { "action": "todo", "resource": "*", "effect": "deny" },
         { "action": "execute", "resource": "*", "effect": "deny" },
         { "action": "skill", "resource": "ecmwf-multi-agents-*", "effect": "deny" },
         { "use": "helper-tools", "effect": "deny" }
@@ -189,10 +185,8 @@
   // Names checked against opencode's built-in commands in docs/research/command-clashes.md.
   // `review` deliberately replaces opencode's built-in review command.
   //
-  // `review` and `progress` have no `subtask`: on opencode 1.x their helper answers in the
-  // user's own session, so the report appears there and lead takes no extra turn to relay it,
-  // and the plugin keeps the earlier conversation out of the helper's requests. opencode 2 has
-  // no such mode and runs them in a child session (see tools/emit-v2.ts).
+  // `review` and `progress` belong to a helper, so they run in a child session and lead relays
+  // the report (see tools/emit-v2.ts).
   "commands": {
     "onboard": {
       "description": "Survey this repository and keep a short summary for later sessions",

@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, test } from "bun:test";
-import { earlyReports, heldReports, heldReportsV2, replyOpen, requestBefore, stepsV1, stepsV2, WAKE_TEXT } from "./answer-first.ts";
-import type { V1MessageWithParts } from "./isolate.ts";
+import { earlyReports, heldReports, heldReportsV2, replyOpen, requestBefore, stepsV2, WAKE_TEXT } from "./answer-first.ts";
 import type { V2ModelMessage } from "./types.ts";
 
 describe("the rule", () => {
@@ -33,28 +32,6 @@ describe("the rule", () => {
   test("the request a report interrupted is the one before it", () => {
     expect(requestBefore(["request", "ended", "request", "other", "report"], 4)).toBe(2);
     expect(requestBefore(["report"], 0)).toBe(-1);
-  });
-});
-
-describe("stepsV1", () => {
-  const message = (role: string, agent: string, parts: unknown[], extra: Record<string, unknown> = {}): V1MessageWithParts => ({ info: { role, agent, sessionID: "ses_1", ...extra }, parts });
-  const text = (value: string, synthetic = false) => ({ type: "text", text: value, ...(synthetic ? { synthetic: true } : {}) });
-  const step = (finish: string, parts: unknown[] = [], extra: Record<string, unknown> = {}) => message("assistant", "lead", parts, { finish, ...extra });
-  const steps = (...messages: V1MessageWithParts[]) => stepsV1(messages, "lead");
-
-  test("the question, the lookup and a report that arrived meanwhile: lead is still replying", () => {
-    const seen = steps(message("user", "lead", [text("What range?")]), step("tool-calls", [{ type: "tool", tool: "read" }]), message("user", "lead", [text('<task id="ses_c" state="completed">\nDONE\n</task>', true)]));
-    expect(seen).toEqual(["request", "other", "report"]);
-    expect(replyOpen(seen)).toBe(true);
-  });
-
-  test("a final step, an error or a compaction summary ends the turn; a final step that still ran a tool does not, unless the provider ran it", () => {
-    expect(steps(step("stop"), step("tool-calls", [], { error: { name: "Aborted" } }), step("stop", [], { summary: true }))).toEqual(["ended", "ended", "ended"]);
-    expect(steps(step("stop", [{ type: "tool", tool: "read" }]), step("stop", [{ type: "tool", tool: "web", metadata: { providerExecuted: true } }]), step("unknown"))).toEqual(["other", "ended", "other"]);
-  });
-
-  test("a note opencode wrote is no request, and a message to a helper or another agent is a boundary", () => {
-    expect(steps(message("user", "lead", [text("Continue.", true)]), message("user", "reviewer", [text("/review")]), message("user", "build", [text("fix it")]))).toEqual(["other", "boundary", "boundary"]);
   });
 });
 

@@ -112,7 +112,6 @@ const agents: ResolvedAgent[] = [
       ...readOnlyShell,
       { action: "delegate", resource: "*", effect: "deny" },
       { action: "question", resource: "*", effect: "deny" },
-      { action: "todo", resource: "*", effect: "deny" },
       { action: "execute", resource: "*", effect: "deny" },
       { action: "skill", resource: "ecmwf-multi-agents-*", effect: "deny" },
       ...harnessTools,
@@ -150,7 +149,6 @@ const agents: ResolvedAgent[] = [
       ...shell("allow", "gh pr view *", "gh pr diff *", "gh pr checks *"),
       { action: "delegate", resource: "*", effect: "deny" },
       { action: "question", resource: "*", effect: "deny" },
-      { action: "todo", resource: "*", effect: "deny" },
       { action: "execute", resource: "*", effect: "deny" },
       { action: "skill", resource: "ecmwf-multi-agents-*", effect: "deny" },
       ...harnessTools,
@@ -206,7 +204,6 @@ export function fakeEnvironment(files: Record<string, string>, env: Record<strin
   return {
     env,
     home,
-    platform: "linux",
     readFile: (file) => files[file],
   };
 }

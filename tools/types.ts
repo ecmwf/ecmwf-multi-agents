@@ -1,77 +1,61 @@
 // SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
 // SPDX-License-Identifier: Apache-2.0
 
-// Contract between the generator core (load, validate, resolve, write) and the platform
-// emitters. The core turns src/manifest.jsonc into a ResolvedHarness; each emitter turns a
-// ResolvedHarness into files for one opencode platform. Emitters are pure functions.
+// Contract between the generator core (load, validate, resolve, write) and the emitter. The
+// core turns src/manifest.jsonc into a ResolvedHarness; the emitter turns a ResolvedHarness into
+// files for opencode 2. Emitters are pure functions.
 
 export type Effect = "allow" | "ask" | "deny";
 
-/** Platform-neutral permission actions. Emitters map them to platform names. */
+/** Neutral permission actions. The emitter maps them to opencode's names. */
 export const ACTIONS = [
   "read",
   "edit",
   "glob",
   "grep",
-  "list",
   "shell",
   "delegate",
   "skill",
   "question",
   "webfetch",
   "websearch",
-  "todo",
   "external_directory",
-  // Code Mode in opencode 2 (tools reachable only through the `execute` tool, such as MCP
-  // tools). opencode 1.x has no Code Mode, so its emitter drops these rules.
+  // Code Mode (tools reachable only through the `execute` tool, such as MCP tools).
   "execute",
-  // A tool the harness plugin adds, named by its id in the resource (exact, no pattern). Both
-  // platforms key such a rule by the tool id with the pattern "*": a deny removes the tool from
+  // A tool the harness plugin adds, named by its id in the resource (exact, no pattern).
+  // opencode keys such a rule by the tool id with the pattern "*": a deny removes the tool from
   // the agent's requests (docs/research/background-helpers.md, section 8).
   "tool",
 ] as const;
 export type Action = (typeof ACTIONS)[number];
-/** The actions the emitters map to a platform permission key; `tool` carries its key in the resource. */
+/** The actions the emitter maps to an opencode permission key; `tool` carries its key in the resource. */
 export type MappedAction = Exclude<Action, "tool">;
 
-/** A plugin tool id: lowercase words joined by underscores, as both platforms name tools. */
+/** A plugin tool id: lowercase words joined by underscores, as opencode names tools. */
 export const TOOL_ID = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/;
 /**
- * Permission keys the platforms use for their own tools (opencode 1.x and 2.0.16 together), so
- * a `tool` rule may not name one: those are reached through the neutral actions above. Sources:
- * the direct tools of each platform (docs/research/background-helpers.md, section 10), the
- * tool ids opencode 1.x registers besides them (opencode/src/tool/registry.ts at v1.18.35:
- * `invalid`, `todoread`, `lsp`, `apply_patch`, `patch`, the MCP resource tools) and the
- * permission keys it maps them to (opencode/src/permission/index.ts:204-214, `doom_loop` in
- * emit-v1.ts), and the Code Mode names of 2.0.16. Reserving a name that is not a tool costs
- * nothing, so the list errs on the side of more.
+ * Permission keys opencode uses for its own tools, so a `tool` rule may not name one: those are
+ * reached through the neutral actions above. Sources: the direct tools of opencode 2.0.16
+ * (docs/research/background-helpers.md, section 10), the write and patch tools that `edit`
+ * covers, and the Code Mode names. Reserving a name that is not a tool costs nothing, so the
+ * list errs on the side of more.
  */
 export const PLATFORM_TOOL_IDS: ReadonlySet<string> = new Set([
-  "bash",
   "shell",
   "read",
   "edit",
   "write",
   "patch",
-  "apply_patch",
   "glob",
   "grep",
-  "list",
-  "task",
   "subagent",
   "skill",
   "question",
   "webfetch",
   "websearch",
-  "todowrite",
-  "todoread",
   "external_directory",
   "execute",
-  "invalid",
-  "doom_loop",
-  "lsp",
   "list_mcp_resources",
-  "list_mcp_resource_templates",
   "read_mcp_resource",
   "opencode_list_mcp_resources",
   "opencode_read_mcp_resource",

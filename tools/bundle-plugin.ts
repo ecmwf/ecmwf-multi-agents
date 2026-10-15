@@ -1,19 +1,16 @@
 // SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
 // SPDX-License-Identifier: Apache-2.0
 
-// Bundles plugin/ into one ES module for both platforms. The build writes the result to
-// plugins/ecmwf-multi-agents.js in dist/opencode-v1/ and dist/opencode-v2/. The harness data the
-// plugin needs (profiles, agents and their shell rules, commands, and the opencode 1.x agent and
-// command entries it registers when the files are not installed) is embedded at bundle time through
-// Bun.build `define`, so the module imports nothing but runtime built-ins and works without the
-// generator or any package next to it. The output starts with the marker line the installer
+// Bundles plugin/ into one ES module. The build writes the result to
+// plugins/ecmwf-multi-agents.js in dist/opencode-v2/. The harness data the plugin needs (profiles
+// and agents) is embedded at bundle time through Bun.build `define`, so the module imports
+// nothing but runtime built-ins and works without the generator or any package next to it. The output starts with the marker line the installer
 // looks for and is the same for the same input: no timestamps, no absolute paths.
 
 import { builtinModules } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import type { EmbeddedHarness, EmbeddedProfile } from "../plugin/types.ts";
-import { v1AgentEntry, v1CommandEntry } from "./emit-v1.ts";
 import type { ResolvedHarness } from "./types.ts";
 
 /** The global constant plugin/index.ts reads; replaced with the harness data at bundle time. */
@@ -60,7 +57,6 @@ export function embedHarness(harness: ResolvedHarness): EmbeddedHarness {
   for (const command of harness.commands) {
     if (!ids.includes(command.agent)) fail(`command ${command.id} names unknown agent ${JSON.stringify(command.agent)}`);
   }
-  const modes = new Map(harness.agents.map((agent) => [agent.id, agent.mode] as const));
 
   return {
     name: harness.name,
@@ -68,19 +64,7 @@ export function embedHarness(harness: ResolvedHarness): EmbeddedHarness {
     defaultAgent: harness.defaultAgent,
     defaultProfile: harness.defaultProfile,
     profiles,
-    agents: harness.agents.map((agent) => ({
-      id: agent.id,
-      mode: agent.mode,
-      shell: agent.permissions
-        .filter((rule) => rule.action === "shell")
-        .map((rule) => ({ resource: rule.resource, effect: rule.effect })),
-    })),
-    commands: harness.commands.map((command) => ({ id: command.id, agent: command.agent, description: command.description })),
-    v1: {
-      agents: Object.fromEntries(harness.agents.map((agent) => [agent.id, v1AgentEntry(agent)])),
-      commands: Object.fromEntries(harness.commands.map((command) => [command.id, v1CommandEntry(command, modes)])),
-      skills: harness.skills.map((skill) => skill.id),
-    },
+    agents: harness.agents.map((agent) => ({ id: agent.id, mode: agent.mode })),
   };
 }
 

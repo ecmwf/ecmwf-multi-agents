@@ -8,7 +8,6 @@
 
 import { lstat, mkdir, readdir, readFile, rm, rmdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { emitV1 } from "./emit-v1.ts";
 import { emitV2 } from "./emit-v2.ts";
 import { load } from "./load.ts";
 import { checkHarness, resolveHarness, type SizeRow, sizeTable } from "./resolve.ts";
@@ -24,7 +23,7 @@ export const PLUGIN_FILE = "plugins/ecmwf-multi-agents.js";
 export interface BuildOptions {
   /** Repository root: the directory that holds src/ and dist/. */
   root: string;
-  /** Platform directory name, such as "opencode-v1", to the emitter for that platform. */
+  /** Platform directory name, such as "opencode-v2", to the emitter for that platform. */
   emitters: Record<string, Emitter>;
   /** Files added to every platform, such as the plugin bundle. */
   extras?: (harness: ResolvedHarness) => Promise<OutputFile[]>;
@@ -84,7 +83,7 @@ export function supportFiles(harness: ResolvedHarness): OutputFile[] {
 // Assembling a platform
 
 export interface FileGroup {
-  /** Who produced the files, for messages: "emitter opencode-v1", "extras", "support files". */
+  /** Who produced the files, for messages: "emitter opencode-v2", "extras", "support files". */
   origin: string;
   files: readonly OutputFile[];
 }
@@ -331,7 +330,7 @@ async function main(args: readonly string[]): Promise<number> {
     const { bundlePlugin } = await import("./bundle-plugin.ts");
     await build({
       root,
-      emitters: { "opencode-v1": emitV1, "opencode-v2": emitV2 },
+      emitters: { "opencode-v2": emitV2 },
       extras: async (harness) => [{ path: PLUGIN_FILE, content: await bundlePlugin(root, harness) }],
       check,
     });

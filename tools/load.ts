@@ -428,7 +428,7 @@ function readPermissions(
 
 /**
  * A rule's resource. For the `tool` action it is the exact id of a tool the plugin adds, so it
- * must look like one and must not be a tool the platforms have themselves.
+ * must look like one and must not be a tool opencode has itself.
  */
 function readResource(value: unknown, c: Checker, at: KeyPath, action: Action | undefined): string | undefined {
   const resource = c.text(value, at);
@@ -649,7 +649,7 @@ function readProfileModel(value: unknown, c: Checker, at: KeyPath): string | und
 function readProfileEffort(value: unknown, c: Checker, at: KeyPath): string | undefined {
   const effort = c.text(value, at);
   if (effort === undefined) return undefined;
-  // Written as opencode's model variant: one word on 1.x, and 2 reads "#" as a separator.
+  // Written as opencode's model variant, which follows the model after "#"; variants are single words.
   if (!EFFORT_PATTERN.test(effort)) {
     c.fail(at, `${JSON.stringify(effort)} must be one word without "#", such as high`);
     return undefined;
