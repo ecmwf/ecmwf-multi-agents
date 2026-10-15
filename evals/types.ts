@@ -133,6 +133,8 @@ export interface QuestionRecord {
   agent: string;
   questions: Array<{ question: string; options: string[] }>;
   answers: string[][];
+  /** The reply failed and the form was cancelled instead; answers is empty. */
+  cancelled?: true;
   at: number;
 }
 

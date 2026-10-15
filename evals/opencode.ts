@@ -16,6 +16,7 @@
 //   GET  /api/session/:id/message                      messages, paged      (message.ts)
 //   GET  /api/permission/request, POST /api/session/:sid/permission/:id/reply {decision}
 //   GET  /api/form, POST /api/session/:sid/form/:id/reply {answer}             (form.ts)
+//   DELETE /api/session/:sid/form/:id?message=        cancel a form            (session.ts)
 //   GET  /api/event                                    server-sent events {type, data}
 // Every request carries the server password (basic auth, user "opencode"); every reply wraps
 // its result in {data}. Routes that depend on the project take ?location[directory]=<project>.
@@ -422,9 +423,15 @@ export async function driveTurn(ctx: TurnContext): Promise<TurnResult> {
       if (watched.has(request.sessionID)) pending++;
       const decision = decidePermission(ctx.policy, request);
       const agent = await agentOf(request.sessionID);
-      await api
+      // A request whose reply failed stays unanswered, so the next poll tries again.
+      const replied = await api
         .call("POST", `/api/session/${request.sessionID}/permission/${request.id}/reply`, { decision: decision.reply })
-        .catch((error: unknown) => ctx.log?.(`permission reply failed: ${String(error)}`));
+        .then(() => true)
+        .catch((error: unknown) => {
+          ctx.log?.(`permission reply failed: ${String(error)}`);
+          return false;
+        });
+      if (!replied) continue;
       answered.add(request.id);
       ctx.permissions.push({
         id: request.id,
@@ -445,19 +452,36 @@ export async function driveTurn(ctx: TurnContext): Promise<TurnResult> {
       const questions = formQuestions(form);
       const answers = answerQuestions(ctx.policy, questions);
       const agent = await agentOf(form.sessionID);
-      await api
+      const replied = await api
         .call("POST", `/api/session/${form.sessionID}/form/${form.id}/reply`, { answer: formAnswer(form, answers) })
-        .catch((error: unknown) => ctx.log?.(`form reply failed: ${String(error)}`));
+        .then(() => true)
+        .catch((error: unknown) => {
+          ctx.log?.(`form reply failed: ${String(error)}`);
+          return false;
+        });
+      // A form the reply failed for is cancelled, so its asker goes on; when that fails too,
+      // the form stays unanswered and the next poll tries again.
+      const cancelled =
+        !replied &&
+        (await api
+          .call("DELETE", `/api/session/${form.sessionID}/form/${form.id}?message=${encodeURIComponent("The eval runner could not answer this question.")}`)
+          .then(() => true)
+          .catch((error: unknown) => {
+            ctx.log?.(`form cancel failed: ${String(error)}`);
+            return false;
+          }));
+      if (!replied && !cancelled) continue;
       answered.add(form.id);
       ctx.questions.push({
         id: form.id,
         sessionID: form.sessionID,
         agent,
         questions: questions.questions.map((question) => ({ question: question.question, options: question.options.map((option) => option.label) })),
-        answers,
+        answers: replied ? answers : [],
+        ...(cancelled ? { cancelled: true } : {}),
         at: Date.now(),
       });
-      ctx.log?.(`question from ${agent}: answered ${JSON.stringify(answers)}`);
+      ctx.log?.(`question from ${agent}: ${replied ? `answered ${JSON.stringify(answers)}` : "cancelled, the reply failed"}`);
     }
 
     const active = await api.data<Record<string, unknown>>("GET", "/api/session/active").catch(() => ({}) as Record<string, unknown>);

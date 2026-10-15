@@ -122,7 +122,8 @@ binary included; the binary stays.
 The runner plays the user. It approves permission requests once, except pushes, pull requests,
 merges and history rewrites, which it refuses with a plain reject: that ends lead's turn, as a
 refusal in the TUI does. It answers questions (forms in opencode 2) with the first option, which
-the harness prompts mark as the recommended one. In `plan-execute` it approves the plan with
+the harness prompts mark as the recommended one. A permission reply that fails is sent again at
+the next poll; a form whose reply fails is cancelled, so the agent that asked goes on. In `plan-execute` it approves the plan with
 "Approved. Go ahead." and, if lead does not finish the plan in the same session, runs `/execute` in a
 new session.
 
