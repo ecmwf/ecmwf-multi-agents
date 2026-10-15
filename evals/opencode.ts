@@ -467,7 +467,8 @@ export async function driveTurn(ctx: TurnContext): Promise<TurnResult> {
     if (busy) sawBusy = true;
 
     if (!busy && pending === 0) {
-      const newest = (await newestMessages(api, root, 1))[0];
+      // A command answered in the session ends with the plugin switching back to lead after the idle marker.
+      const newest = (await newestMessages(api, root, 5)).find((message) => message.type !== "agent-switched" && message.type !== "model-switched");
       const fresh = newest !== undefined && newest.id > marker;
       const idle = fresh && newest.type === "idle" ? newest : undefined;
       // A plain refusal stops the turn without an idle marker: its last step ends as aborted.

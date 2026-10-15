@@ -35,6 +35,7 @@ function partsOf(parts) {
   return Array.isArray(parts) ? parts.filter((part) => part !== null && typeof part === "object") : [];
 }
 var WAKE_TEXT = "Reports from your helpers arrived while you were answering the user, so they were held back until you had answered. They are above: act on them now.";
+var INLINE_WAKE_TEXT = "Reports from your helpers arrived while a helper answered a command here, so they were held back until it had finished. They are above: act on them now.";
 var V2_REPORT_PREFIX = "<subagent ";
 var V2_CHECKPOINT_PREFIX = "<conversation-checkpoint>";
 var V2_CONTINUE_NOTES = [
@@ -60,7 +61,7 @@ function stepsV2(messages) {
       const text = firstText(message);
       if (text.startsWith(V2_REPORT_PREFIX))
         return "report";
-      if (text.startsWith(V2_CHECKPOINT_PREFIX) || text.startsWith(WAKE_TEXT))
+      if (text.startsWith(V2_CHECKPOINT_PREFIX) || text.startsWith(WAKE_TEXT) || text.startsWith(INLINE_WAKE_TEXT))
         return "boundary";
       return "request";
     }
@@ -848,6 +849,229 @@ async function registerHarness(ctx, harness, options) {
   }
 }
 
+// plugin/inline.ts
+function inlineCommands(harness, helpers) {
+  return harness.commands.filter((command) => command.agent !== undefined && helpers.has(command.agent));
+}
+var INLINE_MARK = "ecmwf-multi-agents.inline";
+var HELD_NOTE = "A message for lead arrived and was held back for it. Your answer above stands: reply only with the word done.";
+var isReport = (message) => message?.role === "user" && firstText(message).startsWith(V2_REPORT_PREFIX);
+function reportKey(message) {
+  return typeof message.id === "string" && message.id !== "" ? message.id : `text:${firstText(message)}`;
+}
+function briefIndex(messages, brief) {
+  for (let index = messages.length - 1;index >= 0; index--) {
+    const message = messages[index];
+    if (message?.role !== "user")
+      continue;
+    if (typeof message.metadata?.[INLINE_MARK] === "string")
+      return index;
+    if (brief !== undefined && firstText(message) === brief)
+      return index;
+  }
+  return -1;
+}
+function isolateHelperRequest(messages, brief) {
+  const start = briefIndex(messages, brief);
+  if (start > 0)
+    messages.splice(0, start);
+  let tail = messages.length;
+  while (tail > 0 && isReport(messages[tail - 1]))
+    tail--;
+  const answeredBefore = tail < messages.length && messages[tail - 1]?.role === "assistant";
+  const held = [];
+  for (let index = messages.length - 1;index >= 0; index--) {
+    if (!isReport(messages[index]))
+      continue;
+    held.unshift(reportKey(messages[index]));
+    messages.splice(index, 1);
+  }
+  if (answeredBefore)
+    messages.push({ role: "user", content: [{ type: "text", text: HELD_NOTE }] });
+  return held;
+}
+
+class InlineRuns {
+  active = new Map;
+  past = new Map;
+  woken = new Map;
+  start(session, run) {
+    this.active.set(session, run);
+  }
+  get(session) {
+    return session === undefined ? undefined : this.active.get(session);
+  }
+  finish(session) {
+    const run = this.active.get(session);
+    this.active.delete(session);
+    if (run !== undefined)
+      remember(this.past, session, run);
+    return run;
+  }
+  last(session) {
+    return session === undefined ? undefined : this.past.get(session);
+  }
+  claim(session, keys) {
+    const woken = this.woken.get(session) ?? new Set;
+    const fresh = [...new Set(keys)].filter((key) => !woken.has(key));
+    for (const key of fresh)
+      woken.add(key);
+    remember(this.woken, session, woken);
+    return fresh;
+  }
+}
+function classifyHelperRequest(agent, run, hadRun, root, helpers) {
+  if (agent === undefined || !helpers.has(agent) || !root)
+    return "leave";
+  if (run !== undefined)
+    return run.helper === agent ? "inline" : "leave";
+  return hadRun ? "stray" : "leave";
+}
+function isModel(value) {
+  const model = value;
+  return typeof model?.id === "string" && typeof model.providerID === "string";
+}
+var sameModel = (a, b) => a?.id === b?.id && a?.providerID === b?.providerID && a?.variant === b?.variant;
+
+class Inline {
+  deps;
+  runs = new InlineRuns;
+  chains = new Map;
+  roots = new Map;
+  constructor(deps) {
+    this.deps = deps;
+  }
+  available() {
+    const session = this.deps.ctx.session;
+    return [session?.get, session?.prompt, session?.switchAgent, session?.wait].every((call) => typeof call === "function");
+  }
+  commands() {
+    return inlineCommands(this.deps.harness, this.deps.helpers).map((command) => ({
+      name: command.name,
+      ...command.description === undefined ? {} : { description: command.description },
+      execute: async (invocation) => {
+        const sessionID = invocation?.sessionID;
+        if (typeof sessionID !== "string")
+          return;
+        const previous = this.chains.get(sessionID) ?? Promise.resolve();
+        const next = previous.then(() => this.run(command, invocation)).catch((error) => this.deps.reporter.internal(`the /${command.name} command`, error));
+        remember(this.chains, sessionID, next);
+      }
+    }));
+  }
+  async modelOf(agent) {
+    try {
+      const info = unwrap(await this.deps.ctx.agent.get?.({ agentID: agent }));
+      if (isModel(info?.model))
+        return info.model;
+    } catch {}
+    return this.deps.plannedModel(agent);
+  }
+  async defaultModel() {
+    try {
+      const model = unwrap(await this.deps.ctx.model?.default?.());
+      return isModel(model) ? { id: model.id, providerID: model.providerID } : undefined;
+    } catch {
+      return;
+    }
+  }
+  async idle(sessionID) {
+    const session = this.deps.ctx.session;
+    for (let round = 0;round < 10; round++) {
+      await session.wait({ sessionID });
+      if (this.deps.tracker.get(sessionID)?.state !== "running")
+        return;
+    }
+  }
+  async run(command, invocation) {
+    const session = this.deps.ctx.session;
+    const sessionID = invocation.sessionID;
+    await this.idle(sessionID);
+    const info = unwrap(await session.get({ sessionID }));
+    const before = this.runs.last(sessionID);
+    const onHelper = typeof info?.agent === "string" && this.deps.helpers.has(info.agent);
+    const owner = !onHelper && typeof info?.agent === "string" ? info.agent : before?.owner ?? this.deps.harness.defaultAgent;
+    const ownerModel = onHelper ? before?.ownerModel : isModel(info?.model) ? info.model : undefined;
+    const helperModel = (command.model === undefined ? undefined : parseModel(command.model)) ?? await this.modelOf(command.agent);
+    const brief = fillTemplate(command.template, typeof invocation.prompt?.text === "string" ? invocation.prompt.text : "");
+    const run = { command: command.name, helper: command.agent, owner, ownerModel, switchedModel: false, brief, held: new Set };
+    this.runs.start(sessionID, run);
+    try {
+      await session.switchAgent({ sessionID, agent: command.agent });
+      if (helperModel !== undefined && !sameModel(helperModel, ownerModel) && typeof session.switchModel === "function") {
+        run.switchedModel = true;
+        await session.switchModel({ sessionID, model: helperModel });
+      }
+      await session.prompt({ ...invocation.prompt, sessionID, text: brief, metadata: { [INLINE_MARK]: command.name }, delivery: "steer" });
+      await session.wait({ sessionID });
+    } finally {
+      this.runs.finish(sessionID);
+      await this.restore(sessionID, run);
+      await this.wake(sessionID, run.held);
+    }
+  }
+  async restore(sessionID, run) {
+    const session = this.deps.ctx.session;
+    try {
+      await session.switchAgent({ sessionID, agent: run.owner });
+      if (run.switchedModel) {
+        const model = run.ownerModel ?? await this.defaultModel() ?? await this.modelOf(run.owner);
+        if (model !== undefined)
+          await session.switchModel({ sessionID, model });
+        else
+          this.deps.reporter.internal("switching back", new Error(`no model to give ${run.owner} back in session ${sessionID}`));
+      }
+    } catch (error) {
+      this.deps.reporter.internal("switching back after a command", error);
+    }
+  }
+  async wake(sessionID, held) {
+    if (this.runs.claim(sessionID, held).length === 0)
+      return;
+    try {
+      await this.deps.ctx.session?.synthetic?.({ sessionID, text: INLINE_WAKE_TEXT, description: "Reports held while a helper answered", delivery: "queue" });
+    } catch (error) {
+      this.deps.reporter.internal("waking lead after a command", error);
+    }
+  }
+  async isRoot(sessionID) {
+    const tracked = this.deps.tracker.get(sessionID);
+    if (tracked?.parentID !== undefined)
+      return false;
+    const known = this.roots.get(sessionID);
+    if (known !== undefined)
+      return known;
+    const info = unwrap(await this.deps.ctx.session?.get?.({ sessionID }));
+    if (info === undefined)
+      return false;
+    const root = typeof info.parentID !== "string";
+    remember(this.roots, sessionID, root);
+    return root;
+  }
+  async context(event) {
+    const sessionID = event.sessionID;
+    const agent = event.agent;
+    if (typeof sessionID !== "string" || typeof agent !== "string" || !this.deps.helpers.has(agent) || !Array.isArray(event.messages))
+      return false;
+    const run = this.runs.get(sessionID);
+    const before = this.runs.last(sessionID);
+    if (run === undefined && before === undefined)
+      return false;
+    const kind = classifyHelperRequest(agent, run, before !== undefined, await this.isRoot(sessionID), this.deps.helpers);
+    if (kind === "leave")
+      return false;
+    if (kind === "inline") {
+      for (const key of isolateHelperRequest(event.messages, run.brief))
+        run.held.add(key);
+      return true;
+    }
+    const held = isolateHelperRequest(event.messages, (run ?? before).brief);
+    const owner = run ?? before;
+    this.restore(sessionID, owner).then(() => this.wake(sessionID, held));
+    return true;
+  }
+}
+
 // plugin/report.ts
 function describe(error) {
   if (error instanceof Error)
@@ -1583,30 +1807,32 @@ function v2ProjectRoot(ctx) {
 }
 
 class LateTransform {
-  ctx;
+  transform;
   callback;
   reporter;
+  what;
   current;
   queue = Promise.resolve();
   stopped = false;
-  constructor(ctx, callback, reporter) {
-    this.ctx = ctx;
+  constructor(transform, callback, reporter, what) {
+    this.transform = transform;
     this.callback = callback;
     this.reporter = reporter;
+    this.what = what;
   }
   register() {
     this.queue = this.queue.then(async () => {
       if (this.stopped)
         return;
       try {
-        const next = await this.ctx.agent.transform(this.callback);
+        const next = await this.transform(this.callback);
         const previous = this.current;
         this.current = next;
         if (previous !== undefined)
           await previous.dispose();
       } catch (error) {
         if (!this.stopped)
-          this.reporter.internal("registering the agent transform", error);
+          this.reporter.internal(`registering the ${this.what} transform`, error);
       }
     });
     return this.queue;
@@ -1718,10 +1944,23 @@ function createSetup(harness, options = {}) {
             throw new Error(message);
         });
       }
+      const inline = new Inline({
+        harness,
+        ctx,
+        tracker,
+        helpers,
+        reporter,
+        plannedModel: (agent) => {
+          const plan = plans.find((item) => item.id === agent);
+          return plan?.model === undefined ? undefined : modelRef(plan.model, plan.effort);
+        }
+      });
       if (typeof ctx.session?.hook === "function") {
         const woken = new Set;
         await ctx.session.hook("context", async (event) => {
           try {
+            if (await inline.context(event))
+              return;
             if (event?.agent !== harness.defaultAgent || !Array.isArray(event.messages))
               return;
             const found = heldReportsV2(event.messages);
@@ -1743,17 +1982,31 @@ ${found.reply}`;
           }
         });
       }
-      const late = new LateTransform(ctx, (editor) => {
+      const late = new LateTransform((callback) => ctx.agent.transform(callback), (editor) => {
         try {
           reporter.report(applyToV2Agents(editor, harness, settings, plans));
         } catch (error) {
           reporter.internal("the agent transform", error);
         }
-      }, reporter);
-      const stopWatching = watchEvents(ctx, () => void late.register(), (event) => tracker.observe(event), reporter, options.fallbackMs ?? FALLBACK_MS);
+      }, reporter, "agent");
+      const commandTransform = ctx.command?.transform;
+      const lateCommands = typeof commandTransform === "function" && inline.available() && inlineCommands(harness, helpers).length > 0 ? new LateTransform((callback) => commandTransform.call(ctx.command, callback), (editor) => {
+        try {
+          for (const command of inline.commands())
+            editor.add(command);
+        } catch (error) {
+          reporter.internal("the command transform", error);
+        }
+      }, reporter, "command") : undefined;
+      const onActivation = () => {
+        late.register();
+        lateCommands?.register();
+      };
+      const stopWatching = watchEvents(ctx, onActivation, (event) => tracker.observe(event), reporter, options.fallbackMs ?? FALLBACK_MS);
       return async () => {
         stopWatching();
         late.stop();
+        lateCommands?.stop();
       };
     } catch (error) {
       reporter.internal("setup", error);
@@ -1786,7 +2039,7 @@ The line above sets when the reviewer checks work:
 - always: every plan and every change.
 - never: only when the user asks.
 
-Review a change after it passes your own checks. Tell the reviewer the goal, the criteria, the checks and where the work is: for a plan, its path; for a change, the changed files, plus the plan's path if it came from one. On REJECT, get the blockers fixed (by a builder for a change, by you for a plan), then send the work back to the reviewer with its earlier blockers. After two such rounds, take the open blockers to the user. The user can run \`/review\` under any policy. Reports from \`/review\` and \`/progress\` come from the reviewer and a scout, and may appear here as replies. If you explain one, be brief and do not re-run its checks; act on it only when the user asks.
+Review a change after it passes your own checks. Tell the reviewer the goal, the criteria, the checks and where the work is: for a plan, its path; for a change, the changed files, plus the plan's path if it came from one. On REJECT, get the blockers fixed (by a builder for a change, by you for a plan), then send the work back to the reviewer with its earlier blockers. After two such rounds, take the open blockers to the user. The user can run \`/review\` under any policy. Reports from \`/review\` and \`/progress\` come from the reviewer and a scout: a reply to the command's text here, or a \`<subagent>\` message. If you explain one, be brief and do not re-run its checks; act on it only when the user asks.
 
 ## Size every request first
 

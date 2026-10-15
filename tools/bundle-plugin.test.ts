@@ -5,6 +5,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { helperIds } from "../plugin/helpers.ts";
+import { inlineCommands } from "../plugin/inline.ts";
 import { resolvedFixture } from "../plugin/testing.ts";
 import { HARNESS_CONSTANT, bundlePlugin, embedHarness, matterContent, pluginMarker, runtimeImports } from "./bundle-plugin.ts";
 import { load } from "./load.ts";
@@ -129,7 +131,7 @@ describe("bundlePlugin", () => {
 });
 
 describe("embedHarness", () => {
-  test("keeps what the plugin needs: profiles and agents with their mode", () => {
+  test("keeps what the plugin needs: profiles, agents with their mode, and the helpers' commands", () => {
     const data = embedHarness(resolvedFixture());
     expect(Object.keys(data)).toEqual(["name", "version", "defaultAgent", "defaultProfile", "profiles", "agents", "commands", "skills"]);
     expect(data.profiles.map((profile) => profile.id)).toEqual(["anthropic", "copilot", "default", "inherit"]);
@@ -147,7 +149,7 @@ describe("embedHarness", () => {
     ]);
   });
 
-  test("from src/: lead and three helpers", async () => {
+  test("from src/: lead and three helpers; review and progress answered inline", async () => {
     const data = embedHarness(resolveHarness(await load(root)));
     expect(data.agents.map((agent) => [agent.id, agent.mode])).toEqual([
       ["lead", "primary"],
@@ -155,6 +157,12 @@ describe("embedHarness", () => {
       ["builder", "subagent"],
       ["reviewer", "subagent"],
     ]);
+    const inline = inlineCommands(data, helperIds(data));
+    expect(inline.map((command) => [command.name, command.agent])).toEqual([
+      ["review", "reviewer"],
+      ["progress", "scout"],
+    ]);
+    expect(inline[0]!.template).toContain("Target: $ARGUMENTS");
   });
 
   test("agents, commands and skills are what the generated files say, as opencode reads them", () => {
@@ -168,6 +176,7 @@ describe("embedHarness", () => {
     expect(data.commands).toEqual([
       { name: "plan", description: "Plan a piece of work with you", agent: "lead", template: "Plan: $ARGUMENTS" },
       { name: "review", description: "Independent review of your changes", agent: "reviewer", subagent: true, template: "Review $ARGUMENTS" },
+      { name: "progress", description: "Show progress on the current plan", agent: "scout", subagent: true, template: "Progress of $ARGUMENTS" },
     ]);
     expect(data.skills).toEqual([
       { id: "ecmwf-multi-agents-plan", name: "ecmwf-multi-agents-plan", description: "Plan file format and rules.", autoinvoke: false, content: "\n# Plan\n\nRules.\n" },

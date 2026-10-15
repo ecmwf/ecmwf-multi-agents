@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 import {
   answerMentions,
   answeredDuringPlan,
+  answersInline,
   committedLocally,
   completionsWakeLead,
   finishedWithin,
@@ -311,6 +312,11 @@ describe("completionsWakeLead", () => {
     expect(run(completionsWakeLead(), context({ sessions, rootSessions: ["root"] }))).toEqual({ pass: true, detail: "1 completion(s), all answered by lead" });
   });
 
+  test("passes when the reviewer, answering /review in the session, replies first and lead after it", () => {
+    const sessions = [session([message("user", "reviewer", "Review"), completion(), message("assistant", "reviewer", "VERDICT: REJECT"), message("user", "lead", "Reports arrived", true), message("assistant", "lead", "the scout reported")])];
+    expect(run(completionsWakeLead(), context({ sessions, rootSessions: ["root"] }))).toEqual({ pass: true, detail: "1 completion(s), all answered by lead" });
+  });
+
   test("fails when the reviewer answers a completion, when none is answered, or when none arrived", () => {
     const toReviewer = [session([message("user", "reviewer", "Review"), completion(), message("assistant", "reviewer", "VERDICT: APPROVE")])];
     expect(run(completionsWakeLead(), context({ sessions: toReviewer, rootSessions: ["root"] })).detail).toBe("one was answered by reviewer");
@@ -324,6 +330,17 @@ describe("completionsWakeLead", () => {
     const child = session([completion(), message("assistant", "scout", "x")], "child");
     const typed = session([message("user", "lead", '<subagent sessionID="x"> typed by the user'), message("assistant", "reviewer", "x"), completion(), message("assistant", "lead", "ok")]);
     expect(run(completionsWakeLead(), context({ sessions: [child, typed], rootSessions: ["root"] }))).toEqual({ pass: true, detail: "1 completion(s), all answered by lead" });
+  });
+});
+
+describe("answersInline", () => {
+  const reply = (sessionID: string, agent: string): ApiMessage => ({ info: { id: `r-${sessionID}`, sessionID, role: "assistant", agent }, parts: [{ type: "text", text: "VERDICT: APPROVE" }] });
+  test("passes for a reply of the helper's in a root session with no child session of its own, and fails otherwise", () => {
+    const inline = context({ sessions: [{ id: "root", messages: [reply("root", "reviewer")] }], rootSessions: ["root"] });
+    expect(run(answersInline("reviewer"), inline)).toEqual({ pass: true, detail: "1 message(s)" });
+    const child = context({ sessions: [{ id: "root", messages: [reply("root", "lead")] }, { id: "c", messages: [reply("c", "reviewer")] }], rootSessions: ["root"] });
+    child.metrics.childSessions = { reviewer: 1 };
+    expect(run(answersInline("reviewer"), child)).toEqual({ pass: false, detail: "no reply of reviewer's in the user's session; 1 reviewer child session(s)" });
   });
 });
 

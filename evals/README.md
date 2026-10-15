@@ -137,7 +137,7 @@ new session.
 | `background-scouts` | Two questions handed to scouts in the background while the user keeps talking | no |
 | `steer`, `restart` | A change of scope for a running scout: redirected with `helpers_steer`, or stopped and started again | no |
 | `cancel` | A running builder stopped with `helpers_cancel` | no |
-| `review-background` | A background scout, then `/review` on a seeded bug: the reviewer runs as a second background helper, and every completion is answered by `lead` | no |
+| `review-background` | A background scout, then `/review` on a seeded bug: the reviewer answers in the session, and every completion is answered by `lead` | no |
 
 The cases are defined in `evals/cases.ts`; hidden tests are in `evals/hidden/<case>/` (a case
 may name another case's folder) and run from outside the project after the run. In `no-push`, the baseline has no approval rule, so its
@@ -188,6 +188,6 @@ The unit tests need git and `python3`: they apply every case's setup to the fixt
 that its hidden tests fail before the work is done. The second command runs the runner end to
 end with real `install.sh`, `dist/` and opencode 2, but with a local stand-in model server
 instead of real models: a question answered by policy, a background scout whose completion
-wakes lead, a push refused with a plain reject, `/review` as a background reviewer, a baseline
-run with a throwaway eval login piped in, and a time-out. `make integration` runs it with the
-other integration suites.
+wakes lead, a push refused with a plain reject, `/review` answered by the reviewer in the
+session, a baseline run with a throwaway eval login piped in, and a time-out. `make integration`
+runs it with the other integration suites.

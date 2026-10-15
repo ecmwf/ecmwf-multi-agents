@@ -31,19 +31,24 @@
 // The `context` session hook leaves a background helper's report that arrives while lead is still
 // replying to the user out of lead's requests until the reply has ended, and a message queued for
 // after the turn wakes lead to act on it; see answer-first.ts.
+//
+// `/review` and `/progress` are registered again, late in the same way, by a command transform:
+// their helper answers in the user's own session (inline.ts). The same `context` hook keeps that
+// helper to its brief; it sees a helper's requests there and lead's, never both at once.
 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { heldReportsV2, WAKE_TEXT } from "./answer-first.ts";
-import { applyToV2Agents, planAgents, type AgentPlan } from "./apply.ts";
+import { applyToV2Agents, modelRef, planAgents, type AgentPlan } from "./apply.ts";
 import { processEnvironment } from "./environment.ts";
 import { Activity, helperIds, toolCallBlock } from "./helpers.ts";
+import { Inline, inlineCommands } from "./inline.ts";
 import { registerHarness } from "./register.ts";
 import { v2Reporter, type Reporter } from "./report.ts";
 import { ProblemLog, registerRpc } from "./rpc.ts";
 import { loadSettings, mergeSettings, type LoadedSettings } from "./settings.ts";
 import { SessionTracker, v2Tools } from "./tools-v2.ts";
-import type { EmbeddedHarness, Environment, Settings, V2AgentEditor, V2Cleanup, V2Context, V2Event, V2Registration } from "./types.ts";
+import type { EmbeddedHarness, Environment, Settings, V2AgentEditor, V2Cleanup, V2CommandEditor, V2Context, V2Event, V2Registration } from "./types.ts";
 
 /** Registers anyway when no `plugin.updated` arrives, in case the first one came before the subscription. */
 export const FALLBACK_MS = 3000;
@@ -70,27 +75,28 @@ export function v2ProjectRoot(ctx: V2Context | undefined): string | undefined {
 }
 
 /** One transform kept at the end of the list by registering it again. */
-class LateTransform {
+class LateTransform<E> {
   private current: V2Registration | undefined;
   private queue: Promise<void> = Promise.resolve();
   private stopped = false;
 
   constructor(
-    private readonly ctx: V2Context,
-    private readonly callback: (editor: V2AgentEditor) => void,
+    private readonly transform: (callback: (editor: E) => void) => Promise<V2Registration>,
+    private readonly callback: (editor: E) => void,
     private readonly reporter: Reporter,
+    private readonly what: string,
   ) {}
 
   register(): Promise<void> {
     this.queue = this.queue.then(async () => {
       if (this.stopped) return;
       try {
-        const next = await this.ctx.agent.transform(this.callback);
+        const next = await this.transform(this.callback);
         const previous = this.current;
         this.current = next;
         if (previous !== undefined) await previous.dispose();
       } catch (error) {
-        if (!this.stopped) this.reporter.internal("registering the agent transform", error);
+        if (!this.stopped) this.reporter.internal(`registering the ${this.what} transform`, error);
       }
     });
     return this.queue;
@@ -205,12 +211,25 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
           if (message !== undefined) throw new Error(message);
         });
       }
+      const inline = new Inline({
+        harness,
+        ctx,
+        tracker,
+        helpers,
+        reporter,
+        plannedModel: (agent) => {
+          const plan = plans.find((item) => item.id === agent);
+          return plan?.model === undefined ? undefined : modelRef(plan.model, plan.effort);
+        },
+      });
       if (typeof ctx.session?.hook === "function") {
         /** Replies whose held reports already have a wake queued, by session and request. */
         const woken = new Set<string>();
         await ctx.session.hook("context", async (event) => {
           // A session hook that throws cannot fail cleanly (core/src/plugin/hooks.ts:23-28).
           try {
+            // A helper answering a command here, else lead answering first: never both.
+            if (await inline.context(event)) return;
             if (event?.agent !== harness.defaultAgent || !Array.isArray(event.messages)) return;
             const found = heldReportsV2(event.messages);
             if (found === undefined) return;
@@ -229,8 +248,8 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
         });
       }
 
-      const late = new LateTransform(
-        ctx,
+      const late = new LateTransform<V2AgentEditor>(
+        (callback) => ctx.agent.transform(callback),
         (editor) => {
           // Runs on every rebuild; opencode disables a plugin whose transform throws.
           try {
@@ -240,11 +259,33 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
           }
         },
         reporter,
+        "agent",
       );
-      const stopWatching = watchEvents(ctx, () => void late.register(), (event) => tracker.observe(event), reporter, options.fallbackMs ?? FALLBACK_MS);
+      const commandTransform = ctx.command?.transform;
+      const lateCommands =
+        typeof commandTransform === "function" && inline.available() && inlineCommands(harness, helpers).length > 0
+          ? new LateTransform<V2CommandEditor>(
+              (callback) => commandTransform.call(ctx.command, callback),
+              (editor) => {
+                try {
+                  for (const command of inline.commands()) editor.add(command);
+                } catch (error) {
+                  reporter.internal("the command transform", error);
+                }
+              },
+              reporter,
+              "command",
+            )
+          : undefined;
+      const onActivation = () => {
+        void late.register();
+        void lateCommands?.register();
+      };
+      const stopWatching = watchEvents(ctx, onActivation, (event) => tracker.observe(event), reporter, options.fallbackMs ?? FALLBACK_MS);
       return async () => {
         stopWatching();
         late.stop();
+        lateCommands?.stop();
       };
     } catch (error) {
       reporter.internal("setup", error);

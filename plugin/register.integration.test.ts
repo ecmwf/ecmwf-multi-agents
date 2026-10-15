@@ -12,8 +12,9 @@
 //
 // What is pinned here: the agents, commands and skills the plugin registers are the ones opencode
 // loads from the generated files; a project without the line has none of them; the RPC answers;
-// the plugin folder loads with its TUI entry; and `/review`, a subagent command the plugin
-// registers, runs the reviewer in a child session whose report wakes lead.
+// the plugin folder loads with its TUI entry; and `/review`, which the plugin registers again
+// after activation, is answered by the reviewer in the user's own session (inline.ts), with no
+// child session, and a report that arrives later wakes lead.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
@@ -343,22 +344,25 @@ describe.skipIf(!v2Available)(`a project's plugins line in opencode ${V2_VERSION
     expect(none.data.type).toBe("rpc.unavailable");
   }, 120_000);
 
-  test("/review, registered by the plugin, runs the reviewer in a child and its report wakes lead", async () => {
+  test("/review, registered by the plugin, is answered by the reviewer in the user's session, and a later report wakes lead", async () => {
     await active(projects.run);
     await Bun.sleep(4_000);
     const session = (await call<{ id: string }>("POST", "/api/session", projects.run, { agent: "lead", location: { directory: projects.run } })).data;
     const sent = await call("POST", `/api/session/${session.id}/command`, projects.run, { name: "review", text: "main" });
     expect(sent.status).toBeLessThan(300);
-    const child = await within(30_000, "the reviewer's child session", async () =>
-      (await get<Array<{ id: string; parentID?: string; agent?: string }>>("/api/session", projects.run)).find((item) => item.parentID === session.id),
+    const review = await within(30_000, "the review", async () => model.seen.find((item) => item.agent === "reviewer"));
+    // The reviewer sees only its brief: the command's text, without the subagent line of a child session.
+    expect(review.users).toHaveLength(1);
+    expect(review.users[0]).toStartWith("Review the target below");
+    expect(review.users[0]).toContain("Target: main");
+    await within(30_000, "the session to go back to lead", async () =>
+      (await get<{ agent?: string }>(`/api/session/${session.id}`, projects.run)).agent === "lead" ? true : undefined,
     );
-    expect(child.agent).toBe("reviewer");
-    const review = model.seen.find((item) => item.agent === "reviewer");
-    expect(review?.users[0]).toStartWith("You are a subagent spawned by another session.\nReview the target below");
-    expect(review?.users[0]).toContain("Target: main");
-    const woken = await within(60_000, "lead to be woken by the report", async () => model.seen.find((item) => item.agent === "lead" && item.users.some((user) => user.startsWith("<subagent "))));
-    const report = woken.users.find((user) => user.startsWith("<subagent "))!;
-    expect(report).toContain(`sessionID="${child.id}" state="completed"`);
-    expect(report).toContain("VERDICT: APPROVE");
+    const sessions = await get<Array<{ id: string; parentID?: string }>>("/api/session", projects.run);
+    expect(sessions.filter((item) => item.parentID === session.id)).toEqual([]);
+    const report = `<subagent sessionID="ses_fake" state="completed" description="fake">fake report</subagent>`;
+    await call("POST", `/api/session/${session.id}/synthetic`, projects.run, { text: report });
+    const woken = await within(60_000, "lead to be woken by the report", async () => model.seen.find((item) => item.agent === "lead" && item.users.at(-1) === report));
+    expect(woken.users.some((user) => user.startsWith("Review the target below"))).toBe(true);
   }, 180_000);
 });

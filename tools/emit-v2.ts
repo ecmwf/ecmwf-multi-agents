@@ -128,7 +128,8 @@ export function v2CommandFrontmatter(command: ResolvedCommand, modes: ReadonlyMa
   // current session, but first switches that session to the command's agent for good
   // (core/src/config/plugin/command.ts:124-131), so the user's next message would go to the
   // helper instead of lead. A helper's command therefore always runs in a child session here,
-  // whatever `subtask` says; the parent agent then gets a turn to relay the result.
+  // whatever `subtask` says; the parent agent then gets a turn to relay the result. The plugin
+  // replaces these commands with its own, which answer in the user's session (plugin/inline.ts).
   if (command.subtask || modes.get(command.agent) === "subagent") data.subagent = true;
   return data;
 }

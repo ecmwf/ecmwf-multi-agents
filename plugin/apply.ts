@@ -73,7 +73,7 @@ function reviewProblem(harness: EmbeddedHarness, settings: Settings, problem: st
   return { message: `${harness.name}: ${problem}`, notify: settings.reviewSet };
 }
 
-function modelRef(model: string, effort: string | undefined): V2ModelRef {
+export function modelRef(model: string, effort: string | undefined): V2ModelRef {
   // Split at the first "/", as opencode does (Model.Ref.parse in @opencode/schema 2.0.16).
   const slash = model.indexOf("/");
   const ref: V2ModelRef = { id: model.slice(slash + 1), providerID: model.slice(0, slash) };

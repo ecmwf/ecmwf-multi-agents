@@ -507,6 +507,22 @@ export function helperTool(tool: "helpers_status" | "helpers_steer" | "helpers_c
   };
 }
 
+/** A helper answered a command in the user's own session, and ran in no child session. */
+export function answersInline(agent: string): Check {
+  return {
+    id: `${agent}-inline`,
+    title: `${agent} answered in the user's session`,
+    variants: ["harness"],
+    run(ctx) {
+      const roots = new Set(ctx.rootSessions);
+      const replies = ctx.sessions.filter((session) => roots.has(session.id)).flatMap((session) => session.messages.filter((message) => message.info.role === "assistant" && message.info.agent === agent));
+      const children = ctx.metrics.childSessions[agent] ?? 0;
+      if (replies.length === 0) return fail(`no reply of ${agent}'s in the user's session${children > 0 ? `; ${children} ${agent} child session(s)` : ""}`);
+      return children === 0 ? ok(`${replies.length} message(s)`) : fail(`${replies.length} message(s), and ${children} ${agent} child session(s)`);
+    },
+  };
+}
+
 /** The number of child sessions a helper agent ran. */
 export function helperSessions(agent: string, expected: number): Check {
   return {
@@ -538,8 +554,9 @@ export function reportMentions(agent: string, title: string, terms: Term[]): Che
 
 /**
  * In the sessions the turns started, every background helper's completion (a message opencode
- * wrote itself, starting `<subagent `) was answered by lead: the next assistant message after it
- * is lead's, never a helper's.
+ * wrote itself, starting `<subagent `) was answered by lead: lead replied after it. A helper that
+ * answers a command in the session (`/review`, `/progress`) may reply in between, because the
+ * plugin holds the completion back from it and wakes lead once it has finished.
  */
 export function completionsWakeLead(): Check {
   return {
@@ -554,9 +571,11 @@ export function completionsWakeLead(): Check {
         session.messages.forEach((message, index) => {
           if (!isCompletion(message)) return;
           completions += 1;
-          const answer = session.messages.slice(index + 1).find((next) => next.info.role === "assistant");
+          const replies = session.messages.slice(index + 1).filter((next) => next.info.role === "assistant");
+          if (replies.some((reply) => reply.info.agent === "lead")) return;
+          const answer = replies[0];
           if (answer === undefined) wrong.push("one was never answered");
-          else if (answer.info.agent !== "lead") wrong.push(`one was answered by ${answer.info.agent ?? "an unknown agent"}`);
+          else wrong.push(`one was answered by ${answer.info.agent ?? "an unknown agent"}`);
         });
       }
       if (completions === 0) return fail("no background completion arrived in the user's session");
