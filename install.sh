@@ -4,15 +4,20 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Install, check or remove the ecmwf-multi-agents harness for opencode.
-# Run "./install.sh --help" for usage. Needs only standard tools (sed, grep, cmp, ln, cp,
+# Run "./install.sh --help" for usage. Needs only standard tools (sed, grep, awk, cmp, ln, cp,
 # readlink); jq is used by doctor when it is installed.
 
 set -eu
 
 NAME=ecmwf-multi-agents
+NPM_NAME=@ecmwf.int/multi-agents
 MARKER_MD="# managed by $NAME"
 MARKER_JS="// managed by $NAME"
 V2_PINNED=2.0.29
+# The plugin is a folder. opencode loads it only when its entry's real path lies inside it, so in
+# link mode the folder itself is the link. Earlier releases installed one file instead.
+PLUGIN_REL=plugins/$NAME
+LEGACY_PLUGIN=plugins/$NAME.js
 
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
 
@@ -48,6 +53,10 @@ Examples:
   ./install.sh --profile anthropic --review always
   ./install.sh --project ~/code/my-repo
   ./install.sh doctor
+  ./install.sh doctor --project ~/code/my-repo
+
+A project can also switch the harness on without installing files, with one line in its
+opencode.json: "plugins": ["@ecmwf.int/multi-agents@VERSION"] or the path of a checkout.
 
 The harness needs opencode 2.
 EOF
@@ -307,8 +316,107 @@ place_file() {
 	fi
 }
 
+# The plugin folder in link mode: one link to the folder in this checkout. Decided once, then
+# counted for each of its files.
+PLUGIN_ACTION=
+PLUGIN_UNLINKED=0
+
+plugin_dir_is_ours() {
+	for plugin_entry in "$1"/* "$1"/.[!.]*; do
+		[ -e "$plugin_entry" ] || [ -L "$plugin_entry" ] || continue
+		is_ours "$plugin_entry" "$PLUGIN_REL/${plugin_entry##*/}" || return 1
+	done
+	return 0
+}
+
+link_plugin_dir() {
+	plugin_src=$SRC_DIR/$PLUGIN_REL
+	plugin_dst=$CONFIG_DIR/$PLUGIN_REL
+	if [ -L "$plugin_dst" ]; then
+		if [ "$(readlink "$plugin_dst")" = "$plugin_src" ]; then
+			PLUGIN_ACTION=unchanged
+			return 0
+		fi
+		link_is_ours "$plugin_dst" "$PLUGIN_REL" || PLUGIN_ACTION=conflict
+	elif [ -d "$plugin_dst" ]; then
+		plugin_dir_is_ours "$plugin_dst" || PLUGIN_ACTION=conflict
+	elif [ -e "$plugin_dst" ]; then
+		PLUGIN_ACTION=conflict
+	fi
+	if [ "$PLUGIN_ACTION" = conflict ]; then
+		CONFLICTS="$CONFLICTS
+  $plugin_dst"
+		return 0
+	fi
+	if [ -L "$plugin_dst" ] || [ -e "$plugin_dst" ]; then PLUGIN_ACTION=update; else PLUGIN_ACTION=add; fi
+	if [ "$DRY_RUN" = 1 ]; then
+		say "  would $PLUGIN_ACTION $plugin_dst (a link to the folder)"
+		return 0
+	fi
+	mkdir -p -- "$(dirname -- "$plugin_dst")"
+	if [ -L "$plugin_dst" ]; then
+		rm -f -- "$plugin_dst"
+	elif [ -d "$plugin_dst" ]; then
+		rm -rf -- "$plugin_dst"
+	fi
+	ln -s -- "$plugin_src" "$plugin_dst"
+}
+
+# In copy mode the folder must be a real folder: replace a link to it from a link install.
+unlink_plugin_dir() {
+	plugin_dst=$CONFIG_DIR/$PLUGIN_REL
+	[ -L "$plugin_dst" ] || return 0
+	if ! link_is_ours "$plugin_dst" "$PLUGIN_REL"; then
+		PLUGIN_ACTION=conflict
+		CONFLICTS="$CONFLICTS
+  $plugin_dst"
+		return 0
+	fi
+	if [ "$DRY_RUN" = 1 ]; then
+		say "  would replace the link $plugin_dst with a folder"
+		return 0
+	fi
+	rm -f -- "$plugin_dst"
+}
+
+place_plugin_file() {
+	case $PLUGIN_ACTION in
+	conflict) return 0 ;;
+	unchanged) UNCHANGED=$((UNCHANGED + 1)) ;;
+	update) UPDATED=$((UPDATED + 1)) ;;
+	add) ADDED=$((ADDED + 1)) ;;
+	esac
+	say "$1" >>"$NEW_LIST"
+}
+
 remove_file() {
 	remove_path=$CONFIG_DIR/$1
+	# Never remove a file through the plugin folder's link: that would delete it from the checkout.
+	# The link goes with the first of its files, and counts for each.
+	case $1 in
+	"$PLUGIN_REL"/*)
+		if [ "$PLUGIN_UNLINKED" = 1 ]; then
+			REMOVED=$((REMOVED + 1))
+			return 0
+		fi
+		if [ -L "$CONFIG_DIR/$PLUGIN_REL" ]; then
+			remove_path=$CONFIG_DIR/$PLUGIN_REL
+			if ! link_is_ours "$remove_path" "$PLUGIN_REL"; then
+				warn "left in place, because it was changed by hand: $remove_path"
+				return 0
+			fi
+			PLUGIN_UNLINKED=1
+			REMOVED=$((REMOVED + 1))
+			if [ "$DRY_RUN" = 1 ]; then
+				say "  would remove $remove_path"
+				return 0
+			fi
+			rm -f -- "$remove_path"
+			prune_dirs "$(dirname -- "$remove_path")"
+			return 0
+		fi
+		;;
+	esac
 	if [ ! -L "$remove_path" ] && [ ! -e "$remove_path" ]; then
 		return 0
 	fi
@@ -425,23 +533,37 @@ cmd_install() {
 	if [ "$DRY_RUN" = 0 ]; then
 		mkdir -p -- "$CONFIG_DIR"
 	fi
+	if [ "$MODE" = link ]; then link_plugin_dir; else unlink_plugin_dir; fi
 	while IFS= read -r rel || [ -n "$rel" ]; do
 		[ -n "$rel" ] || continue
 		valid_rel "$rel" || die "unexpected path in $FILES_TXT: $rel"
+		case $rel in
+		"$PLUGIN_REL"/*)
+			if [ "$MODE" = link ] || [ "$PLUGIN_ACTION" = conflict ]; then
+				place_plugin_file "$rel"
+				continue
+			fi
+			;;
+		esac
 		place_file "$rel"
 	done <"$FILES_TXT"
 
-	if [ -f "$RECORD" ]; then
-		recorded_files | while IFS= read -r rel; do
-			[ -n "$rel" ] || continue
-			valid_rel "$rel" || continue
-			grep -qxF -- "$rel" "$FILES_TXT" || say "$rel"
-		done >"$NEW_LIST.stale"
-		while IFS= read -r rel; do
-			remove_file "$rel"
-		done <"$NEW_LIST.stale"
-		rm -f -- "$NEW_LIST.stale"
-	fi
+	{
+		if [ -f "$RECORD" ]; then recorded_files; fi
+		# The single-file plugin of earlier releases, also when no record names it.
+		if [ -L "$CONFIG_DIR/$LEGACY_PLUGIN" ] || [ -e "$CONFIG_DIR/$LEGACY_PLUGIN" ]; then say "$LEGACY_PLUGIN"; fi
+	} | sort -u | while IFS= read -r rel; do
+		[ -n "$rel" ] || continue
+		valid_rel "$rel" || continue
+		grep -qxF -- "$rel" "$FILES_TXT" || say "$rel"
+	done >"$NEW_LIST.stale"
+	while IFS= read -r rel; do
+		case $rel in
+		"$PLUGIN_REL"/*) [ "$MODE" = copy ] || continue ;;
+		esac
+		remove_file "$rel"
+	done <"$NEW_LIST.stale"
+	rm -f -- "$NEW_LIST.stale"
 
 	if [ "$DRY_RUN" = 0 ]; then
 		write_record
@@ -474,6 +596,7 @@ cmd_install() {
 
 FAILS=0
 WARNS=0
+MASKED=0
 ok() { say "  OK    $*"; }
 note() {
 	say "  WARN  $*"
@@ -539,9 +662,21 @@ cmd_doctor() {
 
 	DOCTOR_TMP=$(mktemp -d)
 	trap 'rm -rf -- "$DOCTOR_TMP"' EXIT
+	SRC_DIR=$DIST_ROOT/opencode-$PLATFORM
+	# The project whose opencode config is checked for a plugins line, and that opencode is asked about.
+	LIVE_DIR=${PROJECT:-$PWD}
+	find_plugin_line "$LIVE_DIR"
 	if [ ! -f "$RECORD" ]; then
+		if [ "$TARGET" = project ] && [ -n "$LINE_KIND" ]; then
+			check_plugin_line
+			doctor_masking
+			PROFILES_DIR=$SRC_DIR/$NAME/profiles
+			doctor_settings_and_models
+			doctor_live
+			doctor_summary
+		fi
 		if [ "$TARGET" = project ]; then
-			fail "$NAME is not installed here ($RECORD is missing); run ./install.sh --project $PROJECT"
+			fail "$NAME is not switched on here: no plugins line names it in the project's opencode config, and no files are installed ($RECORD is missing). Add the line, or run ./install.sh --project $PROJECT"
 		else
 			fail "$NAME is not installed here ($RECORD is missing); run ./install.sh"
 		fi
@@ -549,7 +684,6 @@ cmd_doctor() {
 	fi
 
 	MODE=$(recorded_value mode)
-	SRC_DIR=$DIST_ROOT/opencode-$PLATFORM
 	PROFILES_DIR=$CONFIG_DIR/$NAME/profiles
 	[ -d "$PROFILES_DIR" ] || PROFILES_DIR=$SRC_DIR/$NAME/profiles
 	if [ "$(recorded_value platform)" = v1 ]; then
@@ -557,7 +691,267 @@ cmd_doctor() {
 	fi
 
 	check_installed_files
+	doctor_masking
 	doctor_settings_and_models
+	doctor_live
+	doctor_summary
+}
+
+# A global install and a project's plugins line: the global copy's plugin loads first, and
+# opencode drops the project's as "Duplicate plugin ID".
+doctor_masking() {
+	[ -n "$LINE_KIND" ] || return 0
+	if [ "$TARGET" = project ] && [ -f "$RECORD" ]; then
+		note "the files installed in $CONFIG_DIR and the plugins line in $LINE_FILE ($LINE_ENTRY) both bring the harness, and the files win; keep one of them"
+	fi
+	if [ -f "$GLOBAL_DIR/$NAME/installed.txt" ]; then
+		MASKED=1
+		note "the harness installed in $GLOBAL_DIR masks the one named in $LINE_FILE ($LINE_ENTRY): opencode loads the installed copy and reports the project's as \"Duplicate plugin ID\". Remove the line, or remove the global install with ./install.sh uninstall"
+	fi
+}
+
+# ---------------------------------------------------------------- doctor: the plugins line
+
+# The entries of the "plugins" list of a JSON or JSONC config file, one per line: strings, and
+# the "package" of an object entry.
+plugin_entries() {
+	awk '
+	{ s = s $0 "\n" }
+	END {
+		n = length(s)
+		p = index(s, "\"plugins\"")
+		if (p == 0) exit
+		i = p + 9
+		while (i <= n && substr(s, i, 1) != "[") {
+			c = substr(s, i, 1)
+			if (c != " " && c != "\t" && c != "\n" && c != "\r" && c != ":") exit
+			i++
+		}
+		i++
+		depth = 1
+		key = ""
+		while (i <= n && depth > 0) {
+			c = substr(s, i, 1)
+			if (c == "/" && substr(s, i + 1, 1) == "/") {
+				while (i <= n && substr(s, i, 1) != "\n") i++
+				continue
+			}
+			if (c == "/" && substr(s, i + 1, 1) == "*") {
+				j = index(substr(s, i + 2), "*/")
+				if (j == 0) exit
+				i = i + j + 3
+				continue
+			}
+			if (c == "[" || c == "{") depth++
+			else if (c == "]" || c == "}") depth--
+			else if (c == "\"") {
+				out = ""
+				i++
+				while (i <= n) {
+					c = substr(s, i, 1)
+					if (c == "\\") { out = out substr(s, i + 1, 1); i += 2; continue }
+					if (c == "\"") break
+					out = out c
+					i++
+				}
+				j = i + 1
+				while (substr(s, j, 1) == " " || substr(s, j, 1) == "\t") j++
+				if (substr(s, j, 1) == ":") key = out
+				else {
+					if (depth == 1 || (depth == 2 && key == "package")) print out
+					key = ""
+				}
+			}
+			i++
+		}
+	}' "$1"
+}
+
+# A plugins entry as a folder: {env:VAR} filled in, relative to the config file, file:// removed.
+# Prints nothing for a package name.
+entry_folder() {
+	entry_value=$1
+	while :; do
+		case $entry_value in
+		*'{env:'*'}'*) ;;
+		*) break ;;
+		esac
+		entry_var=${entry_value#*\{env:}
+		entry_var=${entry_var%%\}*}
+		case $entry_var in '' | [!A-Za-z_]* | *[!A-Za-z0-9_]*) return 0 ;; esac
+		entry_env=$(eval "printf '%s' \"\${$entry_var-}\"")
+		entry_value="${entry_value%%\{env:"$entry_var"\}*}$entry_env${entry_value#*\{env:"$entry_var"\}}"
+	done
+	case $entry_value in
+	file://*) entry_value=${entry_value#file://} ;;
+	esac
+	case $entry_value in
+	./* | ../*) say "$(dirname -- "$2")/$entry_value" ;;
+	/*) say "$entry_value" ;;
+	esac
+}
+
+# Finds a plugins line for the harness in the project at $1. Sets LINE_KIND (npm, checkout or
+# folder; empty when there is none), LINE_ENTRY, LINE_FILE and LINE_DIR.
+find_plugin_line() {
+	LINE_KIND=
+	LINE_ENTRY=
+	LINE_FILE=
+	LINE_DIR=
+	for line_file in "$1/opencode.json" "$1/opencode.jsonc" "$1/.opencode/opencode.json" "$1/.opencode/opencode.jsonc"; do
+		[ -f "$line_file" ] || continue
+		plugin_entries "$line_file" >"$DOCTOR_TMP/entries" || continue
+		while IFS= read -r line_entry; do
+			case $line_entry in
+			"$NPM_NAME" | "$NPM_NAME"@*)
+				LINE_KIND=npm
+				;;
+			*)
+				line_dir=$(entry_folder "$line_entry" "$line_file")
+				[ -n "$line_dir" ] || continue
+				if [ -d "$line_dir" ]; then line_dir=$(CDPATH='' cd -- "$line_dir" && pwd -P); fi
+				if [ -f "$line_dir/package.json" ] && grep -q "\"name\"[[:space:]]*:[[:space:]]*\"$NPM_NAME\"" "$line_dir/package.json"; then
+					LINE_KIND=checkout
+				elif [ -f "$line_dir/index.js" ] && sed -n '1p' "$line_dir/index.js" | grep -qxF -- "$MARKER_JS"; then
+					LINE_KIND=folder
+				else
+					case $line_dir in
+					*/"$NAME" | */"$NAME"/) LINE_KIND=checkout ;;
+					*) continue ;;
+					esac
+				fi
+				LINE_DIR=$line_dir
+				;;
+			esac
+			LINE_ENTRY=$line_entry
+			LINE_FILE=$line_file
+			return 0
+		done <"$DOCTOR_TMP/entries"
+	done
+}
+
+check_plugin_line() {
+	ok "switched on by the plugins line in $LINE_FILE: $LINE_ENTRY"
+	case $LINE_KIND in
+	npm)
+		ok "opencode installs the package $LINE_ENTRY itself; the check below shows whether it loaded"
+		;;
+	checkout)
+		if [ ! -f "$LINE_DIR/package.json" ] || [ ! -f "$LINE_DIR/server.js" ]; then
+			fail "$LINE_DIR is not a checkout of $NAME (package.json or server.js is missing); clone it there, or fix the line"
+		elif [ ! -f "$LINE_DIR/dist/opencode-v2/$PLUGIN_REL/index.js" ] || [ ! -f "$LINE_DIR/dist/opencode-v2/$PLUGIN_REL/tui.js" ]; then
+			fail "the checkout $LINE_DIR has no plugin folder (dist/opencode-v2/$PLUGIN_REL); run git pull there"
+		else
+			ok "the checkout $LINE_DIR has the plugin folder"
+		fi
+		;;
+	folder)
+		ok "the plugin folder $LINE_DIR is there"
+		;;
+	esac
+}
+
+# ---------------------------------------------------------------- doctor: asking opencode
+
+# The values of a key in JSON on standard input, one per line: strings unescaped, other values as
+# written.
+json_values() {
+	awk -v key="$1" '
+	{ s = s $0 "\n" }
+	END {
+		n = length(s)
+		pattern = "\"" key "\":"
+		i = 1
+		while ((p = index(substr(s, i), pattern)) > 0) {
+			i = i + p - 1 + length(pattern)
+			while (substr(s, i, 1) == " ") i++
+			# A list: its first item.
+			if (substr(s, i, 1) == "[") {
+				i++
+				while (substr(s, i, 1) == " ") i++
+			}
+			if (substr(s, i, 1) == "\"") {
+				out = ""
+				i++
+				while (i <= n) {
+					c = substr(s, i, 1)
+					if (c == "\\") {
+						d = substr(s, i + 1, 1)
+						if (d == "n") out = out "\n"
+						else if (d == "t") out = out "\t"
+						else if (d == "u") { out = out "?"; i += 4 }
+						else out = out d
+						i += 2
+						continue
+					}
+					if (c == "\"") break
+					out = out c
+					i++
+				}
+				print out
+			} else {
+				out = ""
+				while (i <= n && index(",}] \n", substr(s, i, 1)) == 0) { out = out substr(s, i, 1); i++ }
+				print out
+			}
+		}
+	}'
+}
+
+json_value() {
+	json_values "$1" <"$DOCTOR_TMP/live" | sed -n '1p'
+}
+
+# Ask opencode, through the plugin's RPC, how it sees the project: a private server waits until
+# the plugins are active, which the shared service's agent list does not.
+doctor_live() {
+	if [ -z "$OPENCODE_BIN" ]; then
+		note "cannot ask opencode about the agents without opencode 2"
+		return 0
+	fi
+	say "  ...   asking opencode about $LIVE_DIR"
+	if (cd "$LIVE_DIR" && "$OPENCODE_BIN" api --standalone POST "/api/rpc/$NAME/doctor" -d '{"input":{}}' -H "x-opencode-directory:$LIVE_DIR") >"$DOCTOR_TMP/live" 2>&1; then
+		live_ok=1
+	else
+		live_ok=0
+	fi
+	if [ "$live_ok" = 0 ] || ! grep -q '"output"' "$DOCTOR_TMP/live"; then
+		if grep -q 'rpc.unavailable' "$DOCTOR_TMP/live"; then
+			fail "the $NAME plugin is not active in $LIVE_DIR, so opencode has no lead there. Run ./install.sh again or check the plugins line, then look for errors in: opencode debug config, or opencode --print-logs"
+		else
+			fail "could not ask opencode about $LIVE_DIR: $(sed -n '1p' "$DOCTOR_TMP/live")"
+		fi
+		return 0
+	fi
+	live_version=$(json_value version)
+	live_source=$(json_value leadSource)
+	if [ "$(json_value leadLoaded)" = true ]; then
+		case $live_source in
+		files) ok "lead is loaded from files ($(json_value leadFiles)), with the plugin $live_version active" ;;
+		*) ok "lead is loaded from the plugin $live_version" ;;
+		esac
+	else
+		fail "opencode has no lead in $LIVE_DIR although the plugin $live_version is active; an opencode config there may disable it"
+	fi
+	live_review=$(json_value reviewLine)
+	case $live_review in
+	'' | null) note "lead's prompt has no \"Review policy:\" line; a changed agent file may hide it" ;;
+	*) ok "lead's $live_review" ;;
+	esac
+	live_default=$(json_value defaultAgent)
+	if [ "$live_default" = lead ]; then
+		ok "lead is the default agent"
+	else
+		note "the default agent is ${live_default:-none}, not lead: a default_agent in an opencode config, or \"default_agent\": false in the settings, chooses it"
+	fi
+	json_values problem <"$DOCTOR_TMP/live" >"$DOCTOR_TMP/problems"
+	while IFS= read -r live_problem; do
+		[ -n "$live_problem" ] || continue
+		note "$live_problem"
+	done <"$DOCTOR_TMP/problems"
+	if [ "$MASKED" = 0 ] && grep -q "Duplicate plugin ID: $NAME" "$DOCTOR_TMP/live"; then
+		note "opencode loaded $NAME twice and kept the first (\"Duplicate plugin ID\"): a global install masks a project's plugins line"
+	fi
 }
 
 # The files an install recorded: present, still ours, and matching this checkout.
@@ -633,8 +1027,6 @@ doctor_settings_and_models() {
 		fi
 	fi
 
-	note "the agents cannot be checked from the shell; start opencode and press Tab to see lead"
-	doctor_summary
 }
 
 doctor_summary() {

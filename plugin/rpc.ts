@@ -112,11 +112,14 @@ export async function doctorReport(input: DoctorInput): Promise<Record<string, u
     settingsFiles: loaded.applied,
     settingsSources: loaded.sources,
     problems: input.problems.list(),
-    plugins: (Array.isArray(plugins) ? plugins : []).map((plugin) => ({
-      id: plugin.id ?? null,
-      status: plugin.state?.status ?? null,
-      ...(typeof plugin.state?.error === "string" ? { error: plugin.state.error } : {}),
-    })),
+    // opencode's own plugins only when they failed.
+    plugins: (Array.isArray(plugins) ? plugins : [])
+      .filter((plugin) => !plugin.id?.startsWith("opencode.") || plugin.state?.status !== "active")
+      .map((plugin) => ({
+        id: plugin.id ?? null,
+        status: plugin.state?.status ?? null,
+        ...(typeof plugin.state?.error === "string" ? { error: plugin.state.error } : {}),
+      })),
   };
 }
 

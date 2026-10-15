@@ -1377,7 +1377,7 @@ async function doctorReport(input) {
     settingsFiles: loaded.applied,
     settingsSources: loaded.sources,
     problems: input.problems.list(),
-    plugins: (Array.isArray(plugins) ? plugins : []).map((plugin) => ({
+    plugins: (Array.isArray(plugins) ? plugins : []).filter((plugin) => !plugin.id?.startsWith("opencode.") || plugin.state?.status !== "active").map((plugin) => ({
       id: plugin.id ?? null,
       status: plugin.state?.status ?? null,
       ...typeof plugin.state?.error === "string" ? { error: plugin.state.error } : {}

@@ -26,6 +26,8 @@ describe("doctor", () => {
       { [`${GLOBAL}/ecmwf-multi-agents.jsonc`]: '{ "review": "always", "agents": { "scout": { "steps": 9 } } }' },
       { data: [{ id: "lead", system: "Hi.\nReview policy: always\nBye.", model: { providerID: "p", id: "m", variant: "high" } }, { id: "build" }] },
       [
+        { id: "opencode.agent", state: { status: "active" } },
+        { id: "opencode.broken", state: { status: "failed", error: "boom" } },
         { id: "ecmwf-multi-agents", state: { status: "active" } },
         { id: "ecmwf-multi-agents", state: { status: "failed", error: "Duplicate plugin ID: ecmwf-multi-agents" } },
       ],
@@ -45,6 +47,7 @@ describe("doctor", () => {
       settingsSources: { review: `${GLOBAL}/ecmwf-multi-agents.jsonc`, "agents.scout.steps": `${GLOBAL}/ecmwf-multi-agents.jsonc` },
       problems: [{ problem: "x: something", notify: true }],
       plugins: [
+        { id: "opencode.broken", status: "failed", error: "boom" },
         { id: "ecmwf-multi-agents", status: "active" },
         { id: "ecmwf-multi-agents", status: "failed", error: "Duplicate plugin ID: ecmwf-multi-agents" },
       ],

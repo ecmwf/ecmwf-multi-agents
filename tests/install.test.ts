@@ -29,6 +29,28 @@ const MARKER_MD = `# managed by ${NAME}`;
 const MARKER_JS = `// managed by ${NAME}`;
 /** The opencode 2 version the installer is tested with, read from install.sh so the two never drift. */
 const V2_PINNED = /^V2_PINNED=(\S+)$/m.exec(readFileSync(INSTALL, "utf8"))![1]!;
+const PLUGIN = `plugins/${NAME}`;
+const NPM = "@ecmwf.int/multi-agents";
+
+/** What the plugin's RPC answers `doctor` with when all is well (see plugin/rpc.ts). */
+const GOOD_DOCTOR = {
+  output: {
+    name: NAME,
+    version: "9.9.9",
+    defaultAgent: "lead",
+    leadLoaded: true,
+    leadSource: "plugin",
+    leadFiles: [],
+    reviewLine: "Review policy: auto",
+    leadModel: "anthropic/claude-opus-5-5#xhigh",
+    settings: { review: "auto", profile: "default", default_agent: true, agents: {} },
+    settingsFiles: [],
+    settingsSources: {},
+    problems: [],
+    plugins: [{ id: NAME, status: "active" }],
+  },
+};
+const UNAVAILABLE = { type: "rpc.unavailable", message: `RPC is unavailable: ${NAME}` };
 
 /**
  * The system's commands without any opencode, so a real opencode on the developer's machine,
@@ -113,25 +135,45 @@ function writePlatform(dist: string, platform: "v1" | "v2" = "v2", extra: string
   for (const rel of [...MARKDOWN, ...extra]) {
     put(rel, `---\n${MARKER_MD}\ndescription: ${rel} for opencode ${platform}\n---\n\nBody of ${rel}.\n`);
   }
-  put(`plugins/${NAME}.js`, `${MARKER_JS}\nexport default { id: "${NAME}" };\n`);
+  if (platform === "v1") put(`plugins/${NAME}.js`, `${MARKER_JS}\nexport default { id: "${NAME}" };\n`);
+  else {
+    put(`${PLUGIN}/index.js`, `${MARKER_JS}\nexport default { id: "${NAME}" };\n`);
+    put(`${PLUGIN}/tui.js`, `${MARKER_JS}\nexport default { id: "${NAME}" };\n`);
+  }
   for (const id of Object.keys(PROFILES)) put(`${NAME}/profiles/${id}.json`, profileJson(id));
   put(`${NAME}/schema.json`, '{\n  "type": "object"\n}\n');
   files.push(`${NAME}/files.txt`);
   write(path.join(root, NAME, "files.txt"), `${[...files].sort().join("\n")}\n`);
 }
 
-/** A fake opencode command: prints a version and a model list. */
+/**
+ * A fake opencode command: prints a version and a model list, and answers `opencode api` with
+ * the file rpc.json next to its folder (exit code in rpc.exit), or with a good doctor report.
+ * Each api call is logged to api.log with the folder it ran in.
+ */
 function fakeOpencode(file: string, version: string): void {
+  const box = path.dirname(path.dirname(file));
   write(
     file,
     `#!/bin/sh
 case "$1" in
   --version) printf '%s\\n' '${version}' ;;
   models) printf '%s\\n' anthropic/claude-opus-5-5 anthropic/claude-sonnet-5-5 ;;
+  api)
+    printf '%s | %s\\n' "$(pwd)" "$*" >>'${box}/api.log'
+    if [ -f '${box}/rpc.json' ]; then cat '${box}/rpc.json'; exit "$(cat '${box}/rpc.exit' 2>/dev/null || echo 0)"; fi
+    printf '%s\\n' '${JSON.stringify(GOOD_DOCTOR)}'
+    ;;
 esac
 `,
   );
   chmodSync(file, 0o755);
+}
+
+/** What the fake opencode answers to the RPC. */
+function answer(box: Box, body: unknown, exit = 0): void {
+  writeFileSync(path.join(box.dir, "rpc.json"), `${JSON.stringify(body)}\n`);
+  writeFileSync(path.join(box.dir, "rpc.exit"), `${exit}\n`);
 }
 
 function makeBox(versions: { opencode?: string; opencode2?: string } = { opencode: `opencode v${V2_PINNED}`, opencode2: `opencode v${V2_PINNED}` }): Box {
@@ -203,11 +245,13 @@ describe("install", () => {
     const box = makeBox();
     const { code, out } = run(box, []);
     expect(code).toBe(0);
-    expect(out).toContain("Done: 11 added, 0 updated, 0 unchanged, 0 removed.");
+    expect(out).toContain("Done: 12 added, 0 updated, 0 unchanged, 0 removed.");
     for (const rel of fileList(box)) {
-      const target = path.join(box.config, rel);
+      // The plugin folder is linked as a whole: opencode loads it only when its entry's real path is inside it.
+      const linked = rel.startsWith(`${PLUGIN}/`) ? PLUGIN : rel;
+      const target = path.join(box.config, linked);
       expect(lstatSync(target).isSymbolicLink()).toBe(true);
-      expect(readlinkSync(target)).toBe(path.join(box.dist, "opencode-v2", rel));
+      expect(readlinkSync(target)).toBe(path.join(box.dist, "opencode-v2", linked));
     }
     expect(settingsJson(path.join(box.config, `${NAME}.jsonc`))).toEqual({
       $schema: `./${NAME}/schema.json`,
@@ -232,7 +276,7 @@ describe("install", () => {
     const before = listing(box.config);
     const { code, out } = run(box, []);
     expect(code).toBe(0);
-    expect(out).toContain("Done: 0 added, 0 updated, 11 unchanged, 0 removed.");
+    expect(out).toContain("Done: 0 added, 0 updated, 12 unchanged, 0 removed.");
     expect(listing(box.config)).toEqual(before);
   });
 
@@ -257,7 +301,7 @@ describe("install", () => {
     writePlatform(box.dist, "v2", ["agents/extra.md"]);
     const { code, out } = run(box, []);
     expect(code).toBe(0);
-    expect(out).toContain("Done: 1 added, 0 updated, 11 unchanged, 0 removed.");
+    expect(out).toContain("Done: 1 added, 0 updated, 12 unchanged, 0 removed.");
     expect(lstatSync(path.join(box.config, "agents/extra.md")).isSymbolicLink()).toBe(true);
   });
 
@@ -278,7 +322,7 @@ describe("install", () => {
     write(path.join(box.config, "agents/lead.md"), `---\n${MARKER_MD}\ndescription: old\n---\n\nOld body.\n`);
     const { code, out } = run(box, []);
     expect(code).toBe(0);
-    expect(out).toContain("10 added, 1 updated");
+    expect(out).toContain("11 added, 1 updated");
     expect(lstatSync(path.join(box.config, "agents/lead.md")).isSymbolicLink()).toBe(true);
   });
 
@@ -308,7 +352,7 @@ describe("install", () => {
     const dry = run(box, ["--dry-run"]);
     expect(dry.code).toBe(0);
     expect(dry.out).toContain("would add");
-    expect(dry.out).toContain("Would do: 11 added");
+    expect(dry.out).toContain("Would do: 12 added");
     expect(existsSync(box.config)).toBe(false);
     run(box, []);
     const before = listing(box.config);
@@ -399,9 +443,11 @@ describe("an install for opencode 1", () => {
     const { code, out } = run(box, []);
     expect(code).toBe(0);
     expect(out).toContain("are for opencode 1, which is no longer supported; they are replaced");
-    expect(out).toContain("Done: 0 added, 11 updated, 0 unchanged, 1 removed.");
+    expect(out).toContain("Done: 2 added, 10 updated, 0 unchanged, 2 removed.");
     expect(existsSync(path.join(box.config, "commands/old.md"))).toBe(false);
-    for (const rel of fileList(box)) expect(readlinkSync(path.join(box.config, rel))).toBe(path.join(box.dist, "opencode-v2", rel));
+    for (const rel of fileList(box).filter((rel) => !rel.startsWith(`${PLUGIN}/`))) expect(readlinkSync(path.join(box.config, rel))).toBe(path.join(box.dist, "opencode-v2", rel));
+    expect(readlinkSync(path.join(box.config, PLUGIN))).toBe(path.join(box.dist, "opencode-v2", PLUGIN));
+    expect(existsSync(path.join(box.config, `plugins/${NAME}.js`))).toBe(false);
     expect(readFileSync(path.join(box.config, NAME, "installed.txt"), "utf8")).toContain("platform=v2\n");
     expect(run(box, ["doctor"]).code).toBe(0);
   });
@@ -445,7 +491,7 @@ describe("uninstall", () => {
     write(path.join(box.config, "agents/mine.md"), "my agent\n");
     const { code, out } = run(box, ["uninstall"]);
     expect(code).toBe(0);
-    expect(out).toContain("Done: 11 files removed.");
+    expect(out).toContain("Done: 12 files removed.");
     expect(listing(box.config)).toEqual(["agents/", "agents/mine.md (9)", `${NAME}.jsonc (${readFileSync(path.join(box.config, `${NAME}.jsonc`), "utf8").length})`]);
   });
 
@@ -478,9 +524,11 @@ describe("doctor", () => {
     const { code, out } = run(box, ["doctor"]);
     expect(code).toBe(0);
     expect(out).toContain(`OK    opencode ${V2_PINNED}`);
-    expect(out).toContain("OK    11 files installed (link)");
+    expect(out).toContain("OK    12 files installed (link)");
     expect(out).toContain("WARN  profile default: not available: github-copilot/gpt-6.1-sol");
-    expect(out).toContain("agents cannot be checked from the shell");
+    expect(out).toContain("OK    lead is loaded from the plugin 9.9.9");
+    expect(out).toContain("OK    lead's Review policy: auto");
+    expect(out).toContain("OK    lead is the default agent");
   });
 
   test("fails on a broken link and on a missing file", () => {
@@ -508,6 +556,167 @@ describe("doctor", () => {
     const { code, out } = run(box, ["doctor"]);
     expect(code).toBe(1);
     expect(out).toContain("is not installed here");
+  });
+});
+
+describe("the plugin folder", () => {
+  test("a link install links the folder; uninstall removes the link and leaves the checkout's files", () => {
+    const box = makeBox();
+    expect(run(box, []).code).toBe(0);
+    expect(readlinkSync(path.join(box.config, PLUGIN))).toBe(path.join(box.dist, "opencode-v2", PLUGIN));
+    expect(run(box, ["uninstall"]).code).toBe(0);
+    expect(existsSync(path.join(box.config, "plugins"))).toBe(false);
+    expect(existsSync(path.join(box.dist, "opencode-v2", PLUGIN, "index.js"))).toBe(true);
+    expect(existsSync(path.join(box.dist, "opencode-v2", PLUGIN, "tui.js"))).toBe(true);
+  });
+
+  test("a copy install copies the folder, and a later link install replaces the copy with the link", () => {
+    const box = makeBox();
+    expect(run(box, ["--copy"]).code).toBe(0);
+    expect(lstatSync(path.join(box.config, PLUGIN)).isDirectory()).toBe(true);
+    expect(lstatSync(path.join(box.config, PLUGIN, "index.js")).isFile()).toBe(true);
+    const linked = run(box, ["--link"]);
+    expect(linked.code).toBe(0);
+    expect(readlinkSync(path.join(box.config, PLUGIN))).toBe(path.join(box.dist, "opencode-v2", PLUGIN));
+    const copied = run(box, ["--copy"]);
+    expect(copied.code).toBe(0);
+    expect(lstatSync(path.join(box.config, PLUGIN)).isDirectory()).toBe(true);
+    expect(existsSync(path.join(box.dist, "opencode-v2", PLUGIN, "index.js"))).toBe(true);
+  });
+
+  test("the single-file plugin of an earlier release is removed, even when no record names it", () => {
+    const box = makeBox();
+    run(box, []);
+    symlinkSync(path.join(box.dist, "opencode-v2", `plugins/${NAME}.js`), path.join(box.config, `plugins/${NAME}.js`));
+    const { code, out } = run(box, []);
+    expect(code).toBe(0);
+    expect(out).toContain("1 removed.");
+    expect(existsSync(path.join(box.config, `plugins/${NAME}.js`))).toBe(false);
+    expect(readlinkSync(path.join(box.config, PLUGIN))).toBe(path.join(box.dist, "opencode-v2", PLUGIN));
+  });
+
+  test("a plugin folder that is not ours is left alone and reported", () => {
+    const box = makeBox();
+    write(path.join(box.config, PLUGIN, "index.js"), "export default {};\n");
+    const { code, out } = run(box, []);
+    expect(code).toBe(1);
+    expect(out).toContain(path.join(box.config, PLUGIN));
+    expect(readFileSync(path.join(box.config, PLUGIN, "index.js"), "utf8")).toBe("export default {};\n");
+    expect(readFileSync(path.join(box.config, NAME, "installed.txt"), "utf8")).not.toContain(`${PLUGIN}/`);
+  });
+});
+
+describe("doctor asks opencode through the plugin's RPC", () => {
+  const apiLog = (box: Box) => readFileSync(path.join(box.dir, "api.log"), "utf8");
+
+  test("from the folder it checks, with a private server", () => {
+    const box = makeBox();
+    run(box, []);
+    const project = path.join(box.dir, "proj");
+    mkdirSync(project);
+    expect(run(box, ["doctor"], project).code).toBe(0);
+    expect(apiLog(box).trim()).toBe(`${project} | api --standalone POST /api/rpc/${NAME}/doctor -d {"input":{}} -H x-opencode-directory:${project}`);
+  });
+
+  test("an unavailable RPC means the plugin is not active: FAIL with advice", () => {
+    const box = makeBox();
+    run(box, []);
+    answer(box, UNAVAILABLE, 1);
+    const { code, out } = run(box, ["doctor"]);
+    expect(code).toBe(1);
+    expect(out).toContain(`FAIL  the ${NAME} plugin is not active in ${box.dir}, so opencode has no lead there.`);
+  });
+
+  test("problems, another default agent, lead from files, and no lead", () => {
+    const box = makeBox();
+    run(box, []);
+    answer(box, {
+      output: {
+        ...GOOD_DOCTOR.output,
+        defaultAgent: "build",
+        leadSource: "files",
+        leadFiles: ["/x/agents/lead.md"],
+        problems: [
+          { problem: `${NAME}: ignoring /x/${NAME}.jsonc: "review" must be auto, ask, always or never, not "often"`, notify: true },
+          { problem: "second problem", notify: false },
+        ],
+      },
+    });
+    const { code, out } = run(box, ["doctor"]);
+    expect(code).toBe(0);
+    expect(out).toContain("OK    lead is loaded from files (/x/agents/lead.md), with the plugin 9.9.9 active");
+    expect(out).toContain("WARN  the default agent is build, not lead");
+    expect(out).toContain(`WARN  ${NAME}: ignoring /x/${NAME}.jsonc: "review" must be auto, ask, always or never, not "often"`);
+    expect(out).toContain("WARN  second problem");
+    answer(box, { output: { ...GOOD_DOCTOR.output, leadLoaded: false, leadSource: null, reviewLine: null } });
+    const missing = run(box, ["doctor"]);
+    expect(missing.code).toBe(1);
+    expect(missing.out).toContain("FAIL  opencode has no lead in");
+    expect(missing.out).toContain("WARN  lead's prompt has no \"Review policy:\" line");
+  });
+
+  test("a global install masks a project's plugins line: a warning", () => {
+    const box = makeBox();
+    run(box, []);
+    const project = path.join(box.dir, "proj");
+    write(path.join(project, "opencode.jsonc"), `{\n  // the harness\n  "plugins": [\n    "${NPM}@0.6.0",\n  ],\n}\n`);
+    for (const args of [["doctor"], ["doctor", "--project", project]]) {
+      const { code, out } = run(box, args, project);
+      expect(code).toBe(0);
+      expect(out).toContain(`WARN  the harness installed in ${box.config} masks the one named in ${path.join(project, "opencode.jsonc")} (${NPM}@0.6.0)`);
+      expect(out).toContain("Duplicate plugin ID");
+    }
+  });
+});
+
+describe("doctor --project for a project switched on by a plugins line", () => {
+  function project(box: Box, config: unknown, where = "opencode.json"): string {
+    const dir = path.join(box.dir, "proj");
+    write(path.join(dir, where), `${JSON.stringify(config)}\n`);
+    return dir;
+  }
+
+  test("the npm package: opencode resolves it, the RPC answers", () => {
+    const box = makeBox();
+    const dir = project(box, { plugins: [`${NPM}@1.2.3`] });
+    const { code, out } = run(box, ["doctor", "--project", dir]);
+    expect(code).toBe(0);
+    expect(out).toContain(`OK    switched on by the plugins line in ${path.join(dir, "opencode.json")}: ${NPM}@1.2.3`);
+    expect(out).toContain("OK    lead is loaded from the plugin 9.9.9");
+    expect(out).not.toContain("not installed");
+  });
+
+  test("a checkout, named with {env:HOME} or as a package entry in .opencode/opencode.json", () => {
+    const box = makeBox();
+    const checkout = path.join(box.home, ".local", "share", NAME);
+    write(path.join(checkout, "package.json"), `{ "name": "${NPM}", "version": "1.0.0" }\n`);
+    write(path.join(checkout, "server.js"), "export { default } from './x.js';\n");
+    const dir = project(box, { plugins: [{ package: `{env:HOME}/.local/share/${NAME}`, options: {} }] }, ".opencode/opencode.json");
+    const missing = run(box, ["doctor", "--project", dir]);
+    expect(missing.code).toBe(1);
+    expect(missing.out).toContain(`FAIL  the checkout ${checkout} has no plugin folder`);
+    write(path.join(checkout, "dist", "opencode-v2", PLUGIN, "index.js"), `${MARKER_JS}\n`);
+    write(path.join(checkout, "dist", "opencode-v2", PLUGIN, "tui.js"), `${MARKER_JS}\n`);
+    const { code, out } = run(box, ["doctor", "--project", dir]);
+    expect(code).toBe(0);
+    expect(out).toContain(`OK    the checkout ${checkout} has the plugin folder`);
+  });
+
+  test("a relative path to a checkout that is not one", () => {
+    const box = makeBox();
+    write(path.join(box.dir, NAME, "README.md"), "not a checkout\n");
+    const dir = project(box, { plugins: [`../${NAME}`] });
+    const { code, out } = run(box, ["doctor", "--project", dir]);
+    expect(code).toBe(1);
+    expect(out).toContain(`FAIL  ${path.join(dir, "..", NAME)} is not a checkout of ${NAME}`);
+  });
+
+  test("no line and no files: not switched on", () => {
+    const box = makeBox();
+    const dir = project(box, { plugins: ["some-other-plugin@1.0.0"] });
+    const { code, out } = run(box, ["doctor", "--project", dir]);
+    expect(code).toBe(1);
+    expect(out).toContain(`FAIL  ${NAME} is not switched on here`);
   });
 });
 
