@@ -215,7 +215,7 @@ describe.skipIf(!v2Available)(`a project's plugins line in opencode ${V2_VERSION
   let stderr = "";
   let model: ReturnType<typeof standIn>;
   let embedded: EmbeddedHarness;
-  const projects = { line: "", files: "", both: "", none: "", run: "", runFiles: "", packed: "" };
+  const projects = { line: "", files: "", both: "", changed: "", none: "", run: "", runFiles: "", packed: "" };
 
   const call = async <T = unknown>(method: string, route: string, project: string, body?: unknown): Promise<{ status: number; data: T }> => {
     const target = new URL(route, url);
@@ -299,6 +299,7 @@ describe.skipIf(!v2Available)(`a project's plugins line in opencode ${V2_VERSION
     writeAll(path.join(projects.files, ".opencode"), generated);
     projects.both = gitProject(path.join(box, "both"), { plugins: [line] });
     writeAll(path.join(projects.both, ".opencode"), generated.map((file) => (file.path === "agents/scout.md" ? { ...file, content: file.content.replace(/^steps: \d+$/m, "steps: 7") } : file)));
+    projects.changed = gitProject(path.join(box, "changed"), { plugins: [line], agents: { lead: { description: "The project's own lead." } } });
     projects.none = gitProject(path.join(box, "none"));
     projects.run = gitProject(path.join(box, "run"), { plugins: [line], model: "mock/m1", provider: { mock: provider } });
     // Every agent on the stand-in's session model.
@@ -453,12 +454,43 @@ describe.skipIf(!v2Available)(`a project's plugins line in opencode ${V2_VERSION
     await active(projects.line);
     const doctor = await call<{ output?: Record<string, unknown> }>("POST", `/api/rpc/${NAME}/doctor`, projects.line, { input: {} });
     expect(doctor.status).toBe(200);
-    expect(doctor.data.output).toMatchObject({ name: NAME, defaultAgent: "lead", leadLoaded: true, leadSource: "plugin", reviewLine: "Review policy: auto", problems: [] });
+    expect(doctor.data.output).toMatchObject({
+      name: NAME,
+      defaultAgent: "lead",
+      leadLoaded: true,
+      leadDefinition: "harness",
+      leadChanged: [],
+      leadCandidateFiles: [],
+      leadConfigFiles: [],
+      reviewLine: "Review policy: auto",
+      problems: [],
+    });
     const problems = await call<{ output?: unknown }>("POST", `/api/rpc/${NAME}/problems`, projects.line, { input: {} });
     expect(problems.data.output).toEqual({ problems: [] });
     const none = await call<{ type?: string }>("POST", `/api/rpc/${NAME}/doctor`, projects.none, { input: {} });
     expect(none.status).not.toBe(200);
     expect(none.data.type).toBe("rpc.unavailable");
+  }, 120_000);
+
+  test("doctor judges lead from the definition opencode loaded: the harness's files change nothing, a config entry does", async () => {
+    await active(projects.both);
+    const both = await call<{ output?: Record<string, unknown> }>("POST", `/api/rpc/${NAME}/doctor`, projects.both, { input: {} });
+    expect(both.data.output).toMatchObject({
+      leadDefinition: "harness",
+      leadChanged: [],
+      leadCandidateFiles: [path.join(projects.both, ".opencode", "agents", "lead.md")],
+      leadConfigFiles: [],
+    });
+    await active(projects.changed);
+    const changed = await call<{ output?: Record<string, unknown> }>("POST", `/api/rpc/${NAME}/doctor`, projects.changed, { input: {} });
+    expect(changed.status).toBe(200);
+    expect(changed.data.output).toMatchObject({
+      leadLoaded: true,
+      leadDefinition: "changed",
+      leadChanged: ["description"],
+      leadCandidateFiles: [],
+      leadConfigFiles: [path.join(projects.changed, "opencode.json")],
+    });
   }, 120_000);
 
   test.skipIf(!npmAvailable)("the packed npm package, named in plugins, installs into the cache and brings the whole harness", async () => {
@@ -502,7 +534,7 @@ describe.skipIf(!v2Available)(`a project's plugins line in opencode ${V2_VERSION
 
     const doctor = await call<{ output?: Record<string, unknown> }>("POST", `/api/rpc/${NAME}/doctor`, projects.packed, { input: {} });
     expect(doctor.status).toBe(200);
-    expect(doctor.data.output).toMatchObject({ name: NAME, version: pkg.version, defaultAgent: "lead", leadLoaded: true, leadSource: "plugin", problems: [] });
+    expect(doctor.data.output).toMatchObject({ name: NAME, version: pkg.version, defaultAgent: "lead", leadLoaded: true, leadDefinition: "harness", problems: [] });
   }, 300_000);
 
   test("/review, registered by the plugin, is answered by the reviewer in the user's session, and a later report wakes lead", async () => {

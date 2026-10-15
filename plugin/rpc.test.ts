@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, test } from "bun:test";
-import { ProblemLog, agentFiles, doctorReport, registerRpc, type DoctorInput } from "./rpc.ts";
+import { applyToV2Agents, planAgents } from "./apply.ts";
+import { applyAgent } from "./register.ts";
+import { ProblemLog, agentConfigFiles, agentFiles, doctorReport, registerRpc, type DoctorInput } from "./rpc.ts";
 import { loadSettings } from "./settings.ts";
 import { embeddedFixture, fakeEnvironment } from "./testing.ts";
-import type { V2Context, V2RpcDefinition } from "./types.ts";
+import type { V2AgentInfo, V2Context, V2RpcDefinition } from "./types.ts";
 import { createTui, type TuiContext } from "./tui.ts";
 
 const harness = embeddedFixture();
@@ -20,31 +22,51 @@ function input(files: Record<string, string>, agents: unknown, plugins: unknown 
   return { harness, ctx, loaded: loadSettings(harness, environment, "/repo"), problems: new ProblemLog(), environment, directory: "/repo/sub", projectRoot: "/repo" };
 }
 
+const DEFAULT_RULES = [{ action: "*", resource: "*", effect: "allow" }];
+const GLOBAL_ALLOW = { action: "shell", resource: "*", effect: "allow" };
+
+/** lead as opencode loads it from the plugin: created with opencode's defaults, the config's rules, then the settings. */
+function loadedLead(files: Record<string, string>, change: (agent: V2AgentInfo) => void = () => {}): V2AgentInfo {
+  const environment = fakeEnvironment(files);
+  const { settings } = loadSettings(harness, environment, "/repo");
+  const agent: V2AgentInfo = { id: "lead", mode: "primary", hidden: false, permissions: [...DEFAULT_RULES] };
+  applyAgent(agent, harness.agents.find((item) => item.id === "lead")!, environment.home);
+  // The user's global rule, moved before the harness's own as the rule order does.
+  agent.permissions!.splice(DEFAULT_RULES.length, 0, GLOBAL_ALLOW);
+  change(agent);
+  const editor = { list: () => [agent], get: (id: string) => (id === "lead" ? agent : undefined), default: () => {}, update: (_: string, update: (agent: V2AgentInfo) => void) => update(agent) };
+  applyToV2Agents(editor, harness, settings, planAgents(harness, settings).plans);
+  return agent;
+}
+
+const ALWAYS = { [`${GLOBAL}/ecmwf-multi-agents.jsonc`]: '{ "review": "always", "profile": "copilot", "agents": { "scout": { "steps": 9 }, "lead": { "steps": 40 } } }' };
+
 describe("doctor", () => {
-  test("reports lead from the plugin, its review line, the settings with their files, problems and plugins", async () => {
-    const doctor = input(
-      { [`${GLOBAL}/ecmwf-multi-agents.jsonc`]: '{ "review": "always", "agents": { "scout": { "steps": 9 } } }' },
-      { data: [{ id: "lead", system: "Hi.\nReview policy: always\nBye.", model: { providerID: "p", id: "m", variant: "high" } }, { id: "build" }] },
-      [
-        { id: "opencode.agent", state: { status: "active" } },
-        { id: "opencode.broken", state: { status: "failed", error: "boom" } },
-        { id: "ecmwf-multi-agents", state: { status: "active" } },
-        { id: "ecmwf-multi-agents", state: { status: "failed", error: "Duplicate plugin ID: ecmwf-multi-agents" } },
-      ],
-    );
+  test("reports the harness's lead, its review line, the settings with their files, problems and plugins", async () => {
+    const lead = loadedLead(ALWAYS);
+    expect(lead.model).toEqual({ providerID: "github-copilot", id: "claude-opus-5.5", variant: "xhigh" });
+    const doctor = input(ALWAYS, { data: [lead, { id: "build" }] }, [
+      { id: "opencode.agent", state: { status: "active" } },
+      { id: "opencode.broken", state: { status: "failed", error: "boom" } },
+      { id: "ecmwf-multi-agents", state: { status: "active" } },
+      { id: "ecmwf-multi-agents", state: { status: "failed", error: "Duplicate plugin ID: ecmwf-multi-agents" } },
+    ]);
     doctor.problems.add({ message: "x: something", notify: true });
+    const file = `${GLOBAL}/ecmwf-multi-agents.jsonc`;
     expect(await doctorReport(doctor)).toEqual({
       name: "ecmwf-multi-agents",
       version: harness.version,
       defaultAgent: "lead",
       leadLoaded: true,
-      leadSource: "plugin",
-      leadFiles: [],
+      leadDefinition: "harness",
+      leadChanged: [],
+      leadCandidateFiles: [],
+      leadConfigFiles: [],
       reviewLine: "Review policy: always",
-      leadModel: "p/m#high",
-      settings: { review: "always", profile: "default", default_agent: true, agents: { scout: { steps: 9 } } },
-      settingsFiles: [`${GLOBAL}/ecmwf-multi-agents.jsonc`],
-      settingsSources: { review: `${GLOBAL}/ecmwf-multi-agents.jsonc`, "agents.scout.steps": `${GLOBAL}/ecmwf-multi-agents.jsonc` },
+      leadModel: "github-copilot/claude-opus-5.5#xhigh",
+      settings: { review: "always", profile: "copilot", default_agent: true, agents: { scout: { steps: 9 }, lead: { steps: 40 } } },
+      settingsFiles: [file],
+      settingsSources: { review: file, profile: file, "agents.scout.steps": file, "agents.lead.steps": file },
       problems: [{ problem: "x: something", notify: true }],
       plugins: [
         { id: "opencode.broken", status: "failed", error: "boom" },
@@ -67,12 +89,56 @@ describe("doctor", () => {
     expect(await doctorReport(doctor)).toMatchObject({ leadLoaded: true });
   });
 
-  test("lead from files, and lead missing", async () => {
-    const files = { "/repo/.opencode/agents/lead.md": "---\n---\nx", [`${GLOBAL}/agent/lead.md`]: "x" };
-    const fromFiles = await doctorReport(input(files, [{ id: "lead", system: "x" }]));
-    expect(fromFiles).toMatchObject({ leadLoaded: true, leadSource: "files", reviewLine: null, leadModel: null });
-    expect(fromFiles.leadFiles).toEqual([`${GLOBAL}/agent/lead.md`, "/repo/.opencode/agents/lead.md"]);
-    expect(await doctorReport(input({}, [{ id: "build" }]))).toMatchObject({ defaultAgent: "build", leadLoaded: false, leadSource: null });
+  test("lead changed through a config entry, with no agent file", async () => {
+    const files = { ...ALWAYS, "/repo/opencode.jsonc": '{ // mine\n "agents": { "lead": { "description": "Mine." } } }' };
+    const lead = loadedLead(files, (agent) => (agent.description = "Mine."));
+    expect(await doctorReport(input(files, [lead]))).toMatchObject({
+      leadDefinition: "changed",
+      leadChanged: ["description"],
+      leadCandidateFiles: [],
+      leadConfigFiles: ["/repo/opencode.jsonc"],
+    });
+  });
+
+  test("a lead.md that changes nothing: the harness's lead, the file a candidate only", async () => {
+    const files = { ...ALWAYS, "/repo/.opencode/agents/lead.md": "---\n---\nx" };
+    expect(await doctorReport(input(files, [loadedLead(files)]))).toMatchObject({
+      leadDefinition: "harness",
+      leadChanged: [],
+      leadCandidateFiles: ["/repo/.opencode/agents/lead.md"],
+      leadConfigFiles: [],
+    });
+  });
+
+  test("each field that differs is named", async () => {
+    const changed = async (change: (agent: V2AgentInfo) => void) => (await doctorReport(input(ALWAYS, [loadedLead(ALWAYS, change)]))).leadChanged;
+    expect(await changed((agent) => (agent.system = `${agent.system}\nMore.`))).toEqual(["system"]);
+    expect(await changed((agent) => (agent.mode = "all"))).toEqual(["mode"]);
+    expect(await changed((agent) => (agent.hidden = true))).toEqual(["hidden"]);
+    expect(await changed((agent) => (agent.color = "red"))).toEqual(["color"]);
+    // A missing or reordered rule; extra rules around the harness's own are the user's.
+    expect(await changed((agent) => agent.permissions!.splice(-1, 1))).toEqual(["permissions"]);
+    expect(await changed((agent) => agent.permissions!.splice(-2, 0, GLOBAL_ALLOW))).toEqual(["permissions"]);
+    expect(await changed((agent) => agent.permissions!.push(GLOBAL_ALLOW))).toEqual([]);
+    // The settings decide model, effort and steps, so only something after them changes these.
+    const lead = loadedLead(ALWAYS);
+    const after = async (change: (agent: V2AgentInfo) => void) => {
+      const copy = structuredClone(lead);
+      change(copy);
+      return (await doctorReport(input(ALWAYS, [copy]))).leadChanged;
+    };
+    expect(await after((agent) => (agent.model = { providerID: "p", id: "m", variant: "xhigh" }))).toEqual(["model"]);
+    expect(await after((agent) => (agent.model = { ...agent.model!, variant: "low" }))).toEqual(["effort"]);
+    expect(await after((agent) => (agent.steps = 3))).toEqual(["steps"]);
+    expect(await after((agent) => delete agent.system)).toEqual(["system"]);
+  });
+
+  test("the review policy the settings choose is not a change; with no settings, the harness's own lead", async () => {
+    expect(await doctorReport(input({}, [loadedLead({})]))).toMatchObject({ leadDefinition: "harness", reviewLine: "Review policy: auto", leadModel: "anthropic/claude-opus-5-5#xhigh" });
+  });
+
+  test("lead missing", async () => {
+    expect(await doctorReport(input({}, [{ id: "build" }]))).toMatchObject({ defaultAgent: "build", leadLoaded: false, leadDefinition: null, leadChanged: [] });
   });
 
   test("agent files are looked for in the global folder opencode uses and in .opencode up to the project root", () => {
@@ -83,9 +149,31 @@ describe("doctor", () => {
     expect(agentFiles("lead", fakeEnvironment(files), "/repo/sub", "/repo")).toEqual([`${GLOBAL}/agents/lead.md`, "/repo/sub/.opencode/modes/lead.md"]);
   });
 
-  test("lead registered by the plugin is not reported as from files because of a lead.md opencode ignores", async () => {
-    const ignored = await doctorReport(input({ [`${GLOBAL}/agents/lead.md`]: "x" }, [{ id: "lead", system: "x" }], [], { OPENCODE_CONFIG_DIR: "/site" }));
-    expect(ignored).toMatchObject({ leadLoaded: true, leadSource: "plugin", leadFiles: [] });
+  test("configs with a lead entry: the global folder, OPENCODE_CONFIG, the project up to its root, OPENCODE_CONFIG_CONTENT", () => {
+    const lead = '{ "agents": { "lead": {} } }';
+    const files = {
+      [`${GLOBAL}/opencode.json`]: '{ "agent": { "lead": { "steps": 3 } } }',
+      [`${GLOBAL}/opencode.jsonc`]: '{ "agents": { "scout": {} } }',
+      "/site/central.json": lead,
+      "/repo/sub/.opencode/opencode.jsonc": lead,
+      "/repo/opencode.json": "{ not json",
+      "/repo/.opencode/opencode.json": lead,
+      "/opencode.json": lead,
+    };
+    const environment = fakeEnvironment(files, { OPENCODE_CONFIG: "/site/central.json", OPENCODE_CONFIG_CONTENT: lead });
+    expect(agentConfigFiles("lead", environment, "/repo/sub", "/repo")).toEqual([
+      `${GLOBAL}/opencode.json`,
+      "/site/central.json",
+      "/repo/sub/.opencode/opencode.jsonc",
+      "/repo/.opencode/opencode.json",
+      "OPENCODE_CONFIG_CONTENT",
+    ]);
+    expect(agentConfigFiles("lead", fakeEnvironment({}), undefined, undefined)).toEqual([]);
+  });
+
+  test("lead registered by the plugin: a lead.md opencode ignores is no candidate", async () => {
+    const ignored = await doctorReport(input({ [`${GLOBAL}/agents/lead.md`]: "x" }, [loadedLead({})], [], { OPENCODE_CONFIG_DIR: "/site" }));
+    expect(ignored).toMatchObject({ leadLoaded: true, leadDefinition: "harness", leadCandidateFiles: [] });
   });
 });
 

@@ -39,8 +39,10 @@ const GOOD_DOCTOR = {
     version: "9.9.9",
     defaultAgent: "lead",
     leadLoaded: true,
-    leadSource: "plugin",
-    leadFiles: [],
+    leadDefinition: "harness",
+    leadChanged: [],
+    leadCandidateFiles: [],
+    leadConfigFiles: [],
     reviewLine: "Review policy: auto",
     leadModel: "anthropic/claude-opus-5-5#xhigh",
     settings: { review: "auto", profile: "default", default_agent: true, agents: {} },
@@ -569,7 +571,7 @@ describe("doctor", () => {
     expect(out).toContain(`OK    opencode ${V2_PINNED}`);
     expect(out).toContain("OK    12 files installed (link)");
     expect(out).toContain("WARN  profile default: not available: github-copilot/gpt-6.1-sol");
-    expect(out).toContain("OK    lead is loaded from the plugin 9.9.9");
+    expect(out).toContain("OK    lead is the harness's, with the plugin 9.9.9 active");
     expect(out).toContain("OK    lead's Review policy: auto");
     expect(out).toContain("OK    lead is the default agent");
   });
@@ -670,15 +672,14 @@ describe("doctor asks opencode through the plugin's RPC", () => {
     expect(out).toContain(`FAIL  the ${NAME} plugin is not active in ${box.dir}, so opencode has no lead there.`);
   });
 
-  test("problems, another default agent, lead from files, and no lead", () => {
+  test("problems, another default agent, a lead.md that changes nothing, a changed lead, and no lead", () => {
     const box = makeBox();
     run(box, []);
     answer(box, {
       output: {
         ...GOOD_DOCTOR.output,
         defaultAgent: "build",
-        leadSource: "files",
-        leadFiles: ["/x/agents/lead.md"],
+        leadCandidateFiles: ["/x/agents/lead.md"],
         problems: [
           { problem: `${NAME}: ignoring /x/${NAME}.jsonc: "review" must be auto, ask, always or never, not "often"`, notify: true },
           { problem: "second problem", notify: false },
@@ -687,11 +688,27 @@ describe("doctor asks opencode through the plugin's RPC", () => {
     });
     const { code, out } = run(box, ["doctor"]);
     expect(code).toBe(0);
-    expect(out).toContain("OK    lead is loaded from files (/x/agents/lead.md), with the plugin 9.9.9 active");
+    expect(out).toContain("OK    lead is the harness's, with the plugin 9.9.9 active");
     expect(out).toContain("WARN  the default agent is build, not lead");
     expect(out).toContain(`WARN  ${NAME}: ignoring /x/${NAME}.jsonc: "review" must be auto, ask, always or never, not "often"`);
     expect(out).toContain("WARN  second problem");
-    answer(box, { output: { ...GOOD_DOCTOR.output, leadLoaded: false, leadSource: null, reviewLine: null } });
+    answer(box, {
+      output: {
+        ...GOOD_DOCTOR.output,
+        leadDefinition: "changed",
+        leadChanged: ["system", "description"],
+        leadCandidateFiles: ["/x/agents/lead.md", "/p/.opencode/agents/lead.md"],
+        leadConfigFiles: ["/p/opencode.json"],
+      },
+    });
+    const changed = run(box, ["doctor"]);
+    expect(changed.code).toBe(0);
+    expect(changed.out).toContain("WARN  lead was changed: system, description; it may come from: /x/agents/lead.md, /p/.opencode/agents/lead.md, /p/opencode.json\n");
+    answer(box, { output: { ...GOOD_DOCTOR.output, leadDefinition: "changed", leadChanged: ["model"] } });
+    expect(run(box, ["doctor"]).out).toContain(
+      "WARN  lead was changed: model; no lead.md file or opencode config with a lead entry was found, so another plugin may have changed it",
+    );
+    answer(box, { output: { ...GOOD_DOCTOR.output, leadLoaded: false, leadDefinition: null, reviewLine: null } });
     const missing = run(box, ["doctor"]);
     expect(missing.code).toBe(1);
     expect(missing.out).toContain("FAIL  opencode has no lead in");
@@ -725,7 +742,7 @@ describe("doctor --project for a project switched on by a plugins line", () => {
     const { code, out } = run(box, ["doctor", "--project", dir]);
     expect(code).toBe(0);
     expect(out).toContain(`OK    switched on by the plugins line in ${path.join(dir, "opencode.json")}: ${NPM}@1.2.3`);
-    expect(out).toContain("OK    lead is loaded from the plugin 9.9.9");
+    expect(out).toContain("OK    lead is the harness's, with the plugin 9.9.9 active");
     expect(out).not.toContain("not installed");
   });
 
@@ -910,7 +927,7 @@ describe("central install", () => {
     expect(out).toContain(`OK    your opencode service starts with OPENCODE_CONFIG=${config(box)}`);
     expect(out).toContain("OK    port 49374 for your opencode service is free");
     expect(out).toContain(`OK    settings ${path.join(central(box), `${NAME}.jsonc`)} (profile not set, review ask)`);
-    expect(out).toContain("OK    lead is loaded from the central install, with the plugin 9.9.9 active");
+    expect(out).toContain("OK    lead is the harness's, from the central install, with the plugin 9.9.9 active");
     expect(out).not.toContain("is not installed here");
     expect(code).toBe(0);
     expect(readFileSync(path.join(box.dir, "api-env.log"), "utf8").trim()).toBe(config(box));

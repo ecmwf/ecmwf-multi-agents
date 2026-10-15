@@ -22,3 +22,30 @@ export interface ProblemView {
   problem: string;
   notify: boolean;
 }
+
+/** What `doctor` answers; `install.sh doctor` reads it without a JSON tool, so keep it flat. */
+export interface DoctorView {
+  name: string;
+  version: string;
+  /** The first agent opencode lists, which is its default agent. */
+  defaultAgent: string | null;
+  leadLoaded: boolean;
+  /**
+   * "harness" when the lead opencode loaded is the harness's own, as the settings make it;
+   * "changed" when a field differs (named in `leadChanged`); null when lead is not loaded.
+   */
+  leadDefinition: "harness" | "changed" | null;
+  /** The fields that differ: system, description, mode, hidden, color, permissions, model, effort, steps. */
+  leadChanged: string[];
+  /** lead.md files where opencode reads agent files: they may explain a change, they do not prove one. */
+  leadCandidateFiles: string[];
+  /** opencode configs with an `agents.lead` (or `agent.lead`) entry, which may also explain a change. */
+  leadConfigFiles: string[];
+  reviewLine: string | null;
+  leadModel: string | null;
+  settings: { review: string; profile: string; default_agent: boolean; agents: Record<string, unknown> };
+  settingsFiles: string[];
+  settingsSources: Record<string, string>;
+  problems: ProblemView[];
+  plugins: Array<{ id: string | null; status: string | null; error?: string }>;
+}

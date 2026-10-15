@@ -283,7 +283,7 @@ describe.skipIf(!v2Available)(`a central install in opencode ${V2_VERSION}`, () 
 
   test("the agents come from the central config, with the harness's prompts, rules and settings", async () => {
     const report = await doctor(projects.plain);
-    expect(report).toMatchObject({ defaultAgent: "lead", leadLoaded: true, leadSource: "plugin", reviewLine: "Review policy: never" });
+    expect(report).toMatchObject({ defaultAgent: "lead", leadLoaded: true, leadDefinition: "harness", reviewLine: "Review policy: never" });
     expect(report.settingsFiles).toEqual([path.join(central, `${NAME}.jsonc`), path.join(user, "home", ".config", "opencode", `${NAME}.jsonc`)]);
     const list = await agents(projects.plain);
     expect(list[0]?.id).toBe("lead");
@@ -391,7 +391,7 @@ describe.skipIf(!v2Available)(`a central install in opencode ${V2_VERSION}`, () 
     expect(checked.out).toContain(`OK    central install in ${central}`);
     expect(checked.out).toContain("OK    OPENCODE_CONFIG in this shell names it");
     expect(checked.out).toContain(`OK    your opencode service starts with OPENCODE_CONFIG=${config}`);
-    expect(checked.out).toContain("OK    lead is loaded from the central install, with the plugin");
+    expect(checked.out).toContain("OK    lead is the harness's, from the central install, with the plugin");
     expect(checked.out).toContain("OK    lead's Review policy: never");
     expect(checked.out).toContain("OK    lead is the default agent");
     expect(asUser(["sh", INSTALL, "central-disable"], projects.plain).code).toBe(0);

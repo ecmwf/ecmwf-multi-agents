@@ -99,7 +99,7 @@ run_("install.sh with real opencode", () => {
     expect(readlinkSync(path.join(box.config, "plugins", NAME))).toBe(path.join(REPO, "dist", "opencode-v2", "plugins", NAME));
     const doctor = install(box, ["doctor"], box.project);
     expect(doctor.code).toBe(0);
-    expect(doctor.out).toContain(`OK    lead is loaded from files (${path.join(box.config, "agents", "lead.md")}), with the plugin`);
+    expect(doctor.out).toContain("OK    lead is the harness's, with the plugin");
     expect(doctor.out).toContain("OK    lead's Review policy: auto");
     expect(doctor.out).toContain("OK    lead is the default agent");
     expect(install(box, ["uninstall"]).code).toBe(0);
@@ -113,7 +113,7 @@ run_("install.sh with real opencode", () => {
     const doctor = install(box, ["doctor", "--project", box.project], box.project);
     expect(doctor.out).toContain(`OK    switched on by the plugins line in ${path.join(box.project, "opencode.json")}: ${REPO}`);
     expect(doctor.out).toContain(`OK    the checkout ${REPO} has the plugin folder`);
-    expect(doctor.out).toContain("OK    lead is loaded from the plugin");
+    expect(doctor.out).toContain("OK    lead is the harness's, with the plugin");
     expect(doctor.out).toContain("OK    lead is the default agent");
     expect(doctor.code).toBe(0);
     // A project without the line: the plugin is not active there.

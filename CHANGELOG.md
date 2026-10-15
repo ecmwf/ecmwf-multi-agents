@@ -26,8 +26,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
   win, except over `/review` and `/progress`, which the plugin answers in your session, and the
   model, effort and step limit of the harness agents, which the settings decide.
 - Problems with the settings files show as a warning in the opencode TUI.
-- `install.sh doctor` asks opencode what it loaded: whether `lead` is there and from where,
-  its review line, the default agent and the plugin's problems. `doctor --project` checks a
+- `install.sh doctor` asks opencode what it loaded: whether `lead` is there and is the
+  harness's own, and if not, which fields differ and the `lead.md` files and opencode configs
+  that may have changed it, its review line, the default agent and the plugin's problems. `doctor --project` checks a
   project switched on by a `plugins` line, and `doctor` warns when an install in
   `~/.config/opencode/` masks a project's line.
 - Central install on opencode 2, for shared machines such as HPC login nodes:

@@ -1171,9 +1171,35 @@ check_plugin_line() {
 # ---------------------------------------------------------------- doctor: asking opencode
 
 # The values of a key in JSON on standard input, one per line: strings unescaped, other values as
-# written.
+# written. Of a list, the first item; with "all" as the second argument, every item.
 json_values() {
-	awk -v key="$1" '
+	awk -v key="$1" -v all="${2-}" '
+	function skip() { while (index(" \t\n\r", substr(s, i, 1)) > 0 && i <= n) i++ }
+	function value(out, c, d) {
+		if (substr(s, i, 1) == "\"") {
+			out = ""
+			i++
+			while (i <= n) {
+				c = substr(s, i, 1)
+				if (c == "\\") {
+					d = substr(s, i + 1, 1)
+					if (d == "n") out = out "\n"
+					else if (d == "t") out = out "\t"
+					else if (d == "u") { out = out "?"; i += 4 }
+					else out = out d
+					i += 2
+					continue
+				}
+				if (c == "\"") { i++; break }
+				out = out c
+				i++
+			}
+			return out
+		}
+		out = ""
+		while (i <= n && index(",}] \n", substr(s, i, 1)) == 0) { out = out substr(s, i, 1); i++ }
+		return out
+	}
 	{ s = s $0 "\n" }
 	END {
 		n = length(s)
@@ -1181,35 +1207,18 @@ json_values() {
 		i = 1
 		while ((p = index(substr(s, i), pattern)) > 0) {
 			i = i + p - 1 + length(pattern)
-			while (substr(s, i, 1) == " ") i++
-			# A list: its first item.
-			if (substr(s, i, 1) == "[") {
-				i++
-				while (substr(s, i, 1) == " ") i++
-			}
-			if (substr(s, i, 1) == "\"") {
-				out = ""
-				i++
-				while (i <= n) {
-					c = substr(s, i, 1)
-					if (c == "\\") {
-						d = substr(s, i + 1, 1)
-						if (d == "n") out = out "\n"
-						else if (d == "t") out = out "\t"
-						else if (d == "u") { out = out "?"; i += 4 }
-						else out = out d
-						i += 2
-						continue
-					}
-					if (c == "\"") break
-					out = out c
-					i++
-				}
-				print out
-			} else {
-				out = ""
-				while (i <= n && index(",}] \n", substr(s, i, 1)) == 0) { out = out substr(s, i, 1); i++ }
-				print out
+			skip()
+			if (substr(s, i, 1) != "[") { print value(); continue }
+			i++
+			skip()
+			if (all != "all") { print value(); continue }
+			while (i <= n && substr(s, i, 1) != "]") {
+				start = i
+				print value()
+				if (i == start) break
+				skip()
+				if (substr(s, i, 1) == ",") i++
+				skip()
 			}
 		}
 	}'
@@ -1217,6 +1226,11 @@ json_values() {
 
 json_value() {
 	json_values "$1" <"$DOCTOR_TMP/live" | sed -n '1p'
+}
+
+# Every item of a list in the answer, separated by commas.
+json_list() {
+	json_values "$1" all <"$DOCTOR_TMP/live" | awk 'NF { printf "%s%s", (n++ ? ", " : ""), $0 }'
 }
 
 # Ask opencode, through the plugin's RPC, how it sees the project: a private server waits until
@@ -1243,17 +1257,28 @@ doctor_live() {
 		return 0
 	fi
 	live_version=$(json_value version)
-	live_source=$(json_value leadSource)
 	if [ "$(json_value leadLoaded)" = true ]; then
-		case $live_source in
-		files) ok "lead is loaded from files ($(json_value leadFiles)), with the plugin $live_version active" ;;
-		*)
-			if [ -n "${CENTRAL_DIR-}" ]; then
-				ok "lead is loaded from the central install, with the plugin $live_version active"
+		if [ -n "${CENTRAL_DIR-}" ]; then
+			live_from="from the central install, with the plugin $live_version active"
+		else
+			live_from="with the plugin $live_version active"
+		fi
+		case $(json_value leadDefinition) in
+		changed)
+			live_where=$(json_list leadCandidateFiles)
+			live_configs=$(json_list leadConfigFiles)
+			if [ -n "$live_where" ] && [ -n "$live_configs" ]; then
+				live_where="$live_where, $live_configs"
 			else
-				ok "lead is loaded from the plugin $live_version"
+				live_where="$live_where$live_configs"
+			fi
+			if [ -n "$live_where" ]; then
+				note "lead was changed: $(json_list leadChanged); it may come from: $live_where"
+			else
+				note "lead was changed: $(json_list leadChanged); no lead.md file or opencode config with a lead entry was found, so another plugin may have changed it"
 			fi
 			;;
+		*) ok "lead is the harness's, $live_from" ;;
 		esac
 	else
 		fail "opencode has no lead in $LIVE_DIR although the plugin $live_version is active; an opencode config there may disable it"
