@@ -281,8 +281,8 @@ export interface CommandResult {
 export interface CheckContext {
   variant: Variant;
   project: string;
-  /** HEAD after setup, and the bare remote when the case has one. */
-  setup: { head: string; remote?: string };
+  /** HEAD after setup, the bare remote when the case has one, and the sandbox's home folder. */
+  setup: { head: string; remote?: string; home?: string };
   /** Final answer of the last turn. */
   answer: string;
   /** Final answer of every turn, in order. */

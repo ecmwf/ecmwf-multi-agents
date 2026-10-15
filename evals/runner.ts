@@ -223,7 +223,7 @@ export async function runCase(item: EvalCase, options: RunOptions): Promise<RunR
     const ctx: CheckContext = {
       variant: options.variant,
       project,
-      setup: { head, ...(box.remote ? { remote: box.remote } : {}) },
+      setup: { head, home: box.home, ...(box.remote ? { remote: box.remote } : {}) },
       answer: answers.at(-1) ?? "",
       answers,
       reports: sessions.map((session) => ({ agent: record.transcript.find((item) => item.id === session.id)?.agent ?? "unknown", sessionID: session.id, text: finalText(session) })),
