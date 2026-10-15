@@ -660,6 +660,17 @@ is_central_dir() {
 	[ -f "$1/$NAME/installed.txt" ] && grep -qx 'mode=central' "$1/$NAME/installed.txt"
 }
 
+# Earlier releases made a central install for opencode 1: an ordinary install into the folder,
+# which users switched on with OPENCODE_CONFIG_DIR. Its record says platform=v1.
+is_earlier_central_dir() {
+	[ -f "$1/$NAME/installed.txt" ] && grep -qx 'platform=v1' "$1/$NAME/installed.txt"
+}
+
+# What changes for the users of such a folder once it holds a central install for opencode 2.
+earlier_advice() {
+	say "change the module to set OPENCODE_CONFIG=$1/opencode.json instead of OPENCODE_CONFIG_DIR, and to drop OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS; each user then runs once: $PROG central-enable $1"
+}
+
 # The files of the central folder, as "source<TAB>path in the folder": the plugin, skills and
 # support files of an install, and the config template with its prompts.
 central_sources() {
@@ -687,8 +698,11 @@ cmd_central() {
 	if [ -n "$PROFILE_OPT" ] && [ ! -f "$SRC_DIR/$NAME/profiles/$PROFILE_OPT.json" ]; then
 		die "unknown profile: $PROFILE_OPT. Choose one of: $(profile_names)"
 	fi
+	EARLIER=0
 	if [ -e "$CENTRAL" ] && ! is_central_dir "$CENTRAL"; then
-		if [ ! -d "$CENTRAL" ] || [ -n "$(ls -A -- "$CENTRAL")" ]; then
+		if is_earlier_central_dir "$CENTRAL"; then
+			EARLIER=1
+		elif [ ! -d "$CENTRAL" ] || [ -n "$(ls -A -- "$CENTRAL")" ]; then
 			die "$CENTRAL is not empty and holds no central install of $NAME; choose a new or empty folder."
 		fi
 	fi
@@ -702,6 +716,22 @@ cmd_central() {
 	NEW_LIST=$(mktemp)
 	trap cleanup EXIT
 	central_sources >"$NEW_LIST.sources" || exit 1
+	if [ "$EARLIER" = 1 ]; then
+		# The earlier install's own files are replaced; anything else in the way, such as an
+		# opencode.json the administrator wrote, stops the run.
+		recorded_files >"$NEW_LIST.stale"
+		central_foreign=
+		while IFS="$(printf '\t')" read -r central_src rel; do
+			if [ -L "$CENTRAL/$rel" ] || [ -e "$CENTRAL/$rel" ]; then
+				grep -qxF -- "$rel" "$NEW_LIST.stale" || central_foreign="$central_foreign
+  $CENTRAL/$rel"
+			fi
+		done <"$NEW_LIST.sources"
+		rm -f -- "$NEW_LIST.stale"
+		[ -z "$central_foreign" ] || die "$CENTRAL holds a central install from an earlier release, and these files, which are not from $NAME, are where the new one goes:$central_foreign
+Move them away, then run this again."
+		say "$CENTRAL holds a central install from an earlier release, for opencode 1; it is replaced, and the site settings file is kept."
+	fi
 	if [ "$DRY_RUN" = 1 ]; then
 		say "Dry run: nothing will be changed."
 		say "Would write the central install of $NAME into $CENTRAL ($(wc -l <"$NEW_LIST.sources" | tr -d ' ') files), and make it read-only."
@@ -732,6 +762,12 @@ cmd_central() {
 		recorded_files | while IFS= read -r rel; do
 			valid_rel "$rel" || continue
 			grep -qxF -- "$rel" "$NEW_LIST" && continue
+			[ -L "$CENTRAL/$rel" ] || [ -e "$CENTRAL/$rel" ] || continue
+			# The earlier install was an ordinary one, whose files an administrator may have changed.
+			if [ "$EARLIER" = 1 ] && ! is_ours "$CENTRAL/$rel" "$rel"; then
+				warn "left in place, because it was changed by hand: $CENTRAL/$rel"
+				continue
+			fi
 			rm -f -- "${CENTRAL:?}/$rel"
 			prune_dirs "$(dirname -- "$CENTRAL/$rel")"
 			say "  removed $CENTRAL/$rel"
@@ -743,6 +779,12 @@ cmd_central() {
 	say ""
 	say "Done: $ADDED files written; $CENTRAL is read-only now."
 	central_advice
+	if [ "$EARLIER" = 1 ]; then
+		say ""
+		say "Its users switched the earlier install on with OPENCODE_CONFIG_DIR=$CENTRAL. opencode 2's"
+		say "background service writes into that folder, so it cannot start from this read-only one:"
+		say "$(earlier_advice "$CENTRAL")."
+	fi
 }
 
 central_advice() {
@@ -780,6 +822,9 @@ cmd_central_enable() {
 		enable_dir=$(dirname -- "$OPENCODE_CONFIG")
 	else
 		die "name the central folder: $PROG central-enable DIR, or load its module first, which sets OPENCODE_CONFIG."
+	fi
+	if is_earlier_central_dir "$enable_dir"; then
+		die "$enable_dir holds a central install from an earlier release, for opencode 1, which opencode 2 cannot use. Ask the administrator to replace it with: $PROG --central $enable_dir"
 	fi
 	if ! is_central_dir "$enable_dir" || [ ! -f "$enable_dir/opencode.json" ]; then
 		die "$enable_dir is not a central install of $NAME (no opencode.json, or no $NAME/installed.txt from --central)."
@@ -910,6 +955,7 @@ cmd_doctor() {
 	# The project whose opencode config is checked for a plugins line, and that opencode is asked about.
 	LIVE_DIR=${PROJECT:-$PWD}
 	find_plugin_line "$LIVE_DIR"
+	doctor_config_dir
 	find_central
 	if [ -n "$CENTRAL_DIR" ]; then
 		doctor_central
@@ -918,6 +964,8 @@ cmd_doctor() {
 		doctor_summary
 	fi
 	if [ ! -f "$RECORD" ]; then
+		# The advice for OPENCODE_CONFIG_DIR replaces the advice to install.
+		[ "$TARGET" != global ] || [ "$CONFIG_DIR_CENTRAL" = 0 ] || doctor_summary
 		if [ "$TARGET" = project ] && [ -n "$LINE_KIND" ]; then
 			check_plugin_line
 			doctor_masking
@@ -950,6 +998,23 @@ cmd_doctor() {
 
 # ---------------------------------------------------------------- doctor: a central install
 
+# OPENCODE_CONFIG_DIR naming a central install, as the modules of earlier releases did: opencode
+# 2's background service writes service.json into that folder, so it cannot start from a
+# read-only one.
+CONFIG_DIR_CENTRAL=0
+doctor_config_dir() {
+	[ -n "${OPENCODE_CONFIG_DIR-}" ] || return 0
+	config_dir=${OPENCODE_CONFIG_DIR%/}
+	if is_earlier_central_dir "$config_dir"; then
+		fail "OPENCODE_CONFIG_DIR names $config_dir, a central install from an earlier release, for opencode 1. opencode 2's background service writes service.json into OPENCODE_CONFIG_DIR, so it cannot start from that folder. Ask the administrator to run $PROG --central $config_dir and to $(earlier_advice "$config_dir")"
+	elif is_central_dir "$config_dir"; then
+		fail "OPENCODE_CONFIG_DIR names the central install $config_dir. opencode 2's background service writes service.json into OPENCODE_CONFIG_DIR, so it cannot start from that read-only folder. Unset OPENCODE_CONFIG_DIR and set OPENCODE_CONFIG=$config_dir/opencode.json instead (the module may need changing), then run once: $PROG central-enable $config_dir"
+	else
+		return 0
+	fi
+	CONFIG_DIR_CENTRAL=1
+}
+
 # The central install this user's opencode reads: the one doctor --central names, else the
 # folder of OPENCODE_CONFIG in this shell, else the one the opencode service starts with.
 find_central() {
@@ -971,6 +1036,10 @@ find_central() {
 
 doctor_central() {
 	central_config=$CENTRAL_DIR/opencode.json
+	if is_earlier_central_dir "$CENTRAL_DIR"; then
+		fail "$CENTRAL_DIR holds a central install from an earlier release, for opencode 1, which opencode 2 cannot use; run $PROG --central $CENTRAL_DIR to replace it (the site settings file is kept), then $(earlier_advice "$CENTRAL_DIR")"
+		doctor_summary
+	fi
 	if ! is_central_dir "$CENTRAL_DIR"; then
 		fail "there is no central install of $NAME in $CENTRAL_DIR ($CENTRAL_DIR/$NAME/installed.txt is missing); run $PROG --central $CENTRAL_DIR"
 		doctor_summary
@@ -1450,6 +1519,7 @@ install)
 doctor) cmd_doctor ;;
 uninstall)
 	if [ "$TARGET" = central ]; then
+		! is_earlier_central_dir "$CENTRAL" || die "$CENTRAL holds a central install from an earlier release, for opencode 1; replace it with: $PROG --central $CENTRAL"
 		is_central_dir "$CENTRAL" || die "$CENTRAL holds no central install of $NAME, so there is nothing to remove there."
 		die "to remove a central install, delete its folder: chmod -R u+w $CENTRAL && rm -rf $CENTRAL"
 	fi

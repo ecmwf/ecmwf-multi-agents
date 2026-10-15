@@ -891,6 +891,89 @@ describe("central install", () => {
     expect(typo.out).not.toContain("rm -rf");
   });
 
+  /**
+   * What --central made in 0.5.x: an ordinary copy install for opencode 1 that users switched on
+   * with OPENCODE_CONFIG_DIR, with a site settings file, made read-only by the administrator.
+   */
+  function earlierCentral(box: Box): string[] {
+    const dir = central(box);
+    writePlatform(box.dist, "v1");
+    const v1 = path.join(box.dist, "opencode-v1");
+    const files = readFileSync(path.join(v1, NAME, "files.txt"), "utf8").trim().split("\n");
+    for (const rel of files) write(path.join(dir, rel), readFileSync(path.join(v1, rel), "utf8"));
+    const record = [`# ${NAME} install record, written by install.sh. Do not edit.`, "platform=v1", "mode=copy", "version=0.5.3", ...files.map((rel) => `file=${rel}`)];
+    write(path.join(dir, NAME, "installed.txt"), `${record.join("\n")}\n`);
+    write(path.join(dir, `${NAME}.jsonc`), '{\n  "review": "ask"\n}\n');
+    rmSync(v1, { recursive: true });
+    Bun.spawnSync(["chmod", "-R", "a-w", dir]);
+    return files;
+  }
+
+  test("--central replaces a central install from 0.5.x in place, keeping the site settings", () => {
+    const box = makeBox();
+    const files = earlierCentral(box);
+    const { code, out } = run(box, ["--central", central(box)]);
+    expect(code).toBe(0);
+    expect(out).toContain(`${central(box)} holds a central install from an earlier release, for opencode 1; it is replaced, and the site settings file is kept.`);
+    for (const rel of files.filter((rel) => rel.startsWith("agents/") || rel.startsWith("commands/") || rel.startsWith("plugins/"))) {
+      expect(existsSync(path.join(central(box), rel))).toBe(false);
+    }
+    expect(existsSync(path.join(central(box), "agents"))).toBe(false);
+    expect(existsSync(path.join(central(box), PLUGIN, "index.js"))).toBe(true);
+    expect(JSON.parse(readFileSync(config(box), "utf8")).skills).toEqual([path.join(central(box), "skills")]);
+    const record = readFileSync(path.join(central(box), NAME, "installed.txt"), "utf8");
+    expect(record).toContain("platform=v2\nmode=central\n");
+    expect(record).not.toContain("file=agents/");
+    expect(settingsJson(path.join(central(box), `${NAME}.jsonc`))).toEqual({ review: "ask" });
+    expect(writable(central(box))).toBe(false);
+    expect(out).toContain(`Its users switched the earlier install on with OPENCODE_CONFIG_DIR=${central(box)}.`);
+    expect(out).toContain(
+      `change the module to set OPENCODE_CONFIG=${config(box)} instead of OPENCODE_CONFIG_DIR, and to drop OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS; each user then runs once: ${INSTALL} central-enable ${central(box)}.`,
+    );
+    expect(out).not.toContain("Warning");
+    expect(run(box, ["doctor", "--central", central(box)]).out).toContain(`OK    central install in ${central(box)}`);
+  });
+
+  test("--central stops when a file the new install needs is not from the earlier one", () => {
+    const box = makeBox();
+    earlierCentral(box);
+    Bun.spawnSync(["chmod", "u+w", central(box)]);
+    write(config(box), '{ "provider": {} }\n');
+    const before = listing(central(box));
+    const { code, out } = run(box, ["--central", central(box)]);
+    expect(code).toBe(1);
+    expect(out).toContain(`holds a central install from an earlier release, and these files, which are not from ${NAME}, are where the new one goes:\n  ${config(box)}\n`);
+    expect(listing(central(box))).toEqual(before);
+  });
+
+  test("doctor and central-enable send a central install from 0.5.x to the rerun and the new module", () => {
+    const box = makeBox();
+    fakeSs(box);
+    earlierCentral(box);
+    const named = run(box, ["doctor", "--central", central(box)]);
+    expect(named.code).toBe(1);
+    expect(named.out).toContain(`FAIL  ${central(box)} holds a central install from an earlier release, for opencode 1, which opencode 2 cannot use; run ${INSTALL} --central ${central(box)} to replace it`);
+    expect(named.out).not.toContain("installed.txt is missing");
+    const viaDir = run(box, ["doctor"], box.dir, { OPENCODE_CONFIG_DIR: `${central(box)}/` });
+    expect(viaDir.code).toBe(1);
+    expect(viaDir.out).toContain(`FAIL  OPENCODE_CONFIG_DIR names ${central(box)}, a central install from an earlier release, for opencode 1.`);
+    expect(viaDir.out).toContain(`instead of OPENCODE_CONFIG_DIR, and to drop OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS; each user then runs once: ${INSTALL} central-enable ${central(box)}`);
+    expect(viaDir.out).not.toContain("is not installed here");
+    const enable = run(box, ["central-enable", central(box)]);
+    expect(enable.code).toBe(1);
+    expect(enable.out).toContain(`holds a central install from an earlier release, for opencode 1, which opencode 2 cannot use. Ask the administrator to replace it with: ${INSTALL} --central ${central(box)}`);
+    expect(readFileSync(path.join(box.dir, "service.log"), "utf8")).not.toContain("set env");
+    const uninstall = run(box, ["uninstall", "--central", central(box)]);
+    expect(uninstall.out).toContain(`holds a central install from an earlier release, for opencode 1; replace it with: ${INSTALL} --central ${central(box)}`);
+    expect(uninstall.out).not.toContain("rm -rf");
+    // Replaced, but the module still sets OPENCODE_CONFIG_DIR.
+    expect(run(box, ["--central", central(box)]).code).toBe(0);
+    const stale = run(box, ["doctor"], box.dir, { OPENCODE_CONFIG_DIR: central(box), OPENCODE_CONFIG: config(box) });
+    expect(stale.code).toBe(1);
+    expect(stale.out).toContain(`FAIL  OPENCODE_CONFIG_DIR names the central install ${central(box)}.`);
+    expect(stale.out).toContain(`Unset OPENCODE_CONFIG_DIR and set OPENCODE_CONFIG=${config(box)} instead`);
+  });
+
   test("--dry-run writes nothing", () => {
     const box = makeBox();
     const { code, out } = run(box, ["--central", central(box), "--review", "ask", "--dry-run"]);
