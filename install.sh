@@ -131,6 +131,7 @@ while [ "$#" -gt 0 ]; do
 		shift 2
 		;;
 	--project=*)
+		need_value "--project" "${1#*=}"
 		PROJECT=${1#*=}
 		shift
 		;;
@@ -140,6 +141,7 @@ while [ "$#" -gt 0 ]; do
 		shift 2
 		;;
 	--central=*)
+		need_value "--central" "${1#*=}"
 		CENTRAL=${1#*=}
 		shift
 		;;
@@ -149,6 +151,7 @@ while [ "$#" -gt 0 ]; do
 		shift 2
 		;;
 	--profile=*)
+		need_value "--profile" "${1#*=}"
 		PROFILE_OPT=${1#*=}
 		shift
 		;;
@@ -158,6 +161,7 @@ while [ "$#" -gt 0 ]; do
 		shift 2
 		;;
 	--review=*)
+		need_value "--review" "${1#*=}"
 		REVIEW_OPT=${1#*=}
 		shift
 		;;

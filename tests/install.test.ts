@@ -378,6 +378,18 @@ describe("install", () => {
     expect(existsSync(box.config)).toBe(false);
   });
 
+  test("an empty value is refused, also after =, instead of falling back to a global install", () => {
+    const box = makeBox();
+    for (const option of ["--project", "--central", "--profile", "--review"]) {
+      for (const args of [[`${option}=`], [option, ""], ["uninstall", `${option}=`]]) {
+        const { code, out } = run(box, args);
+        expect(code).toBe(1);
+        expect(out).toContain(`Error: ${option} needs a value (see ${INSTALL} --help)`);
+      }
+    }
+    expect(existsSync(box.config)).toBe(false);
+  });
+
   test("messages name the command that was run: its path, or the npm package's command", () => {
     const box = makeBox();
     expect(run(box, ["--bogus"]).out).toContain(`unknown option: --bogus (see ${INSTALL} --help)`);
