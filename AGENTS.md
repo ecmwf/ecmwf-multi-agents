@@ -37,8 +37,9 @@ symlink to this file.
   `allow` or `ask` rules only with a stated reason (see `docs/architecture.md`). Push, PR and
   merge always need the user's approval.
 - Tests never touch the real `~/.config/opencode`, `~/.local/share/opencode` or the user's
-  sessions: use temporary `XDG_*` directories. Evals link the user's opencode login file into
-  their sandbox and never read, copy or print it.
+  sessions: use temporary `XDG_*` directories. Evals never touch the user's own opencode data
+  either: they use an eval-only login made with `make eval-login`, which opencode itself pipes
+  into each sandbox; the runner never reads, stores or prints a credential.
 - Phase numbers and other process history stay in `PLAN.md`; code, prompts, docs and commit
   messages name what a thing is or does.
 - Docs use plain prose without em dashes; diagrams use mermaid.
