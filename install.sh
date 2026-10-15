@@ -21,6 +21,14 @@ LEGACY_PLUGIN=plugins/$NAME.js
 
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
 
+# The command the user ran, for messages: the npm package's command sets it, otherwise the path
+# this script was run by.
+case $0 in
+*/*) PROG=$0 ;;
+*) PROG="sh $0" ;;
+esac
+PROG=${ECMWF_MULTI_AGENTS_COMMAND:-$PROG}
+
 say() { printf '%s\n' "$*"; }
 warn() { printf 'Warning: %s\n' "$*" >&2; }
 die() {
@@ -29,8 +37,8 @@ die() {
 }
 
 usage() {
-	cat <<'EOF'
-Usage: ./install.sh [command] [options]
+	cat <<EOF
+Usage: $PROG [command] [options]
 
 Commands:
   install     Install or update the harness (the default).
@@ -49,11 +57,11 @@ Options:
   -h, --help        Show this help.
 
 Examples:
-  ./install.sh
-  ./install.sh --profile anthropic --review always
-  ./install.sh --project ~/code/my-repo
-  ./install.sh doctor
-  ./install.sh doctor --project ~/code/my-repo
+  $PROG
+  $PROG --profile anthropic --review always
+  $PROG --project ~/code/my-repo
+  $PROG doctor
+  $PROG doctor --project ~/code/my-repo
 
 A project can also switch the harness on without installing files, with one line in its
 opencode.json: "plugins": ["@ecmwf.int/multi-agents@VERSION"] or the path of a checkout.
@@ -80,7 +88,7 @@ DRY_RUN=0
 PURGE=0
 
 need_value() {
-	[ -n "${2-}" ] || die "$1 needs a value (see ./install.sh --help)"
+	[ -n "${2-}" ] || die "$1 needs a value (see $PROG --help)"
 }
 
 while [ "$#" -gt 0 ]; do
@@ -132,7 +140,7 @@ while [ "$#" -gt 0 ]; do
 		usage
 		exit 0
 		;;
-	*) die "unknown option: $1 (see ./install.sh --help)" ;;
+	*) die "unknown option: $1 (see $PROG --help)" ;;
 	esac
 done
 
@@ -579,7 +587,7 @@ cmd_install() {
 	if [ -n "$CONFLICTS" ]; then
 		say ""
 		say "These files were left alone, because they are not from $NAME:$CONFLICTS"
-		say "Move or rename them, then run ./install.sh again."
+		say "Move or rename them, then run $PROG again."
 	fi
 	if [ "$DRY_RUN" = 1 ]; then
 		[ -z "$CONFLICTS" ] || exit 1
@@ -588,7 +596,7 @@ cmd_install() {
 	say ""
 	say "Next: restart opencode. lead becomes the default agent, unless your opencode"
 	say "config names another default_agent; press Tab to switch agents. Type /guide to"
-	say "learn more, and run ./install.sh doctor to check the installation."
+	say "learn more, and run $PROG doctor to check the installation."
 	[ -z "$CONFLICTS" ] || exit 1
 }
 
@@ -676,9 +684,9 @@ cmd_doctor() {
 			doctor_summary
 		fi
 		if [ "$TARGET" = project ]; then
-			fail "$NAME is not switched on here: no plugins line names it in the project's opencode config, and no files are installed ($RECORD is missing). Add the line, or run ./install.sh --project $PROJECT"
+			fail "$NAME is not switched on here: no plugins line names it in the project's opencode config, and no files are installed ($RECORD is missing). Add the line, or run $PROG --project $PROJECT"
 		else
-			fail "$NAME is not installed here ($RECORD is missing); run ./install.sh"
+			fail "$NAME is not installed here ($RECORD is missing); run $PROG"
 		fi
 		doctor_summary
 	fi
@@ -687,7 +695,7 @@ cmd_doctor() {
 	PROFILES_DIR=$CONFIG_DIR/$NAME/profiles
 	[ -d "$PROFILES_DIR" ] || PROFILES_DIR=$SRC_DIR/$NAME/profiles
 	if [ "$(recorded_value platform)" = v1 ]; then
-		fail "the files installed here are for opencode 1, which is no longer supported; run ./install.sh to install the opencode 2 files"
+		fail "the files installed here are for opencode 1, which is no longer supported; run $PROG to install the opencode 2 files"
 	fi
 
 	check_installed_files
@@ -706,7 +714,7 @@ doctor_masking() {
 	fi
 	if [ -f "$GLOBAL_DIR/$NAME/installed.txt" ]; then
 		MASKED=1
-		note "the harness installed in $GLOBAL_DIR masks the one named in $LINE_FILE ($LINE_ENTRY): opencode loads the installed copy and reports the project's as \"Duplicate plugin ID\". Remove the line, or remove the global install with ./install.sh uninstall"
+		note "the harness installed in $GLOBAL_DIR masks the one named in $LINE_FILE ($LINE_ENTRY): opencode loads the installed copy and reports the project's as \"Duplicate plugin ID\". Remove the line, or remove the global install with $PROG uninstall"
 	fi
 }
 
@@ -917,7 +925,7 @@ doctor_live() {
 	fi
 	if [ "$live_ok" = 0 ] || ! grep -q '"output"' "$DOCTOR_TMP/live"; then
 		if grep -q 'rpc.unavailable' "$DOCTOR_TMP/live"; then
-			fail "the $NAME plugin is not active in $LIVE_DIR, so opencode has no lead there. Run ./install.sh again or check the plugins line, then look for errors in: opencode debug config, or opencode --print-logs"
+			fail "the $NAME plugin is not active in $LIVE_DIR, so opencode has no lead there. Run $PROG again or check the plugins line, then look for errors in: opencode debug config, or opencode --print-logs"
 		else
 			fail "could not ask opencode about $LIVE_DIR: $(sed -n '1p' "$DOCTOR_TMP/live")"
 		fi
@@ -964,16 +972,16 @@ check_installed_files() {
 		doctor_files=$((doctor_files + 1))
 		doctor_path=$CONFIG_DIR/$rel
 		if [ -L "$doctor_path" ] && [ ! -e "$doctor_path" ]; then
-			fail "broken link: $doctor_path (was the checkout moved? run ./install.sh)"
+			fail "broken link: $doctor_path (was the checkout moved? run $PROG)"
 			doctor_bad=$((doctor_bad + 1))
 		elif [ ! -e "$doctor_path" ]; then
-			fail "missing: $doctor_path (run ./install.sh)"
+			fail "missing: $doctor_path (run $PROG)"
 			doctor_bad=$((doctor_bad + 1))
 		elif ! is_ours "$doctor_path" "$rel"; then
 			note "changed by hand, not from $NAME: $doctor_path"
 			doctor_bad=$((doctor_bad + 1))
 		elif [ "$MODE" = copy ] && [ -f "$SRC_DIR/$rel" ] && ! cmp -s -- "$SRC_DIR/$rel" "$doctor_path"; then
-			note "older than this checkout: $doctor_path (run ./install.sh to update)"
+			note "older than this checkout: $doctor_path (run $PROG to update)"
 			doctor_bad=$((doctor_bad + 1))
 		fi
 	done <"$DOCTOR_TMP/recorded"
@@ -984,7 +992,7 @@ check_installed_files() {
 		sort -u "$DOCTOR_TMP/recorded" >"$DOCTOR_TMP/recorded.sorted"
 		sort -u "$SRC_DIR/$NAME/files.txt" >"$DOCTOR_TMP/dist.sorted"
 		if ! cmp -s "$DOCTOR_TMP/recorded.sorted" "$DOCTOR_TMP/dist.sorted"; then
-			note "this checkout has a different set of files; run ./install.sh to bring the installation up to date"
+			note "this checkout has a different set of files; run $PROG to bring the installation up to date"
 		fi
 	fi
 }

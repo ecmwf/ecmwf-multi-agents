@@ -44,6 +44,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 - On opencode 2, the note opencode adds to continue a response that was cut off (interrupted,
   over the output limit, or stopped by a server restart) no longer counts as a new question
   from you: a task report is held back only while `lead` is still answering your own question.
+- The installer's messages name the command you ran, such as `ecmwf-multi-agents doctor` for
+  the npm package's command, instead of always `./install.sh`.
 
 ### Removed
 

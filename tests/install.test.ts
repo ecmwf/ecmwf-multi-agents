@@ -347,6 +347,21 @@ describe("install", () => {
     expect(existsSync(box.config)).toBe(false);
   });
 
+  test("messages name the command that was run: its path, or the npm package's command", () => {
+    const box = makeBox();
+    expect(run(box, ["--bogus"]).out).toContain(`unknown option: --bogus (see ${INSTALL} --help)`);
+    expect(run(box, []).out).toContain(`run ${INSTALL} doctor to check the installation`);
+    rmSync(box.config, { recursive: true, force: true });
+    const npm = run(box, ["doctor"], box.dir, { ECMWF_MULTI_AGENTS_COMMAND: "ecmwf-multi-agents" });
+    expect(npm.out).toContain("is missing); run ecmwf-multi-agents\n");
+    const help = run(box, ["--help"], box.dir, { ECMWF_MULTI_AGENTS_COMMAND: "ecmwf-multi-agents" }).out;
+    expect(help).toStartWith("Usage: ecmwf-multi-agents [command] [options]");
+    expect(help).not.toContain("install.sh");
+    // Run by its name in the current folder.
+    const bare = Bun.spawnSync(["sh", "install.sh", "--bogus"], { cwd: REPO, env: { PATH: SYSTEM_BIN, HOME: box.home }, stderr: "pipe" });
+    expect(bare.stderr.toString()).toContain("(see sh install.sh --help)");
+  });
+
   test("--dry-run changes nothing, for install and uninstall", () => {
     const box = makeBox();
     const dry = run(box, ["--dry-run"]);
@@ -434,7 +449,7 @@ describe("an install for opencode 1", () => {
     oldInstall(box);
     const { code, out } = run(box, ["doctor"]);
     expect(code).toBe(1);
-    expect(out).toContain("FAIL  the files installed here are for opencode 1, which is no longer supported; run ./install.sh");
+    expect(out).toContain(`FAIL  the files installed here are for opencode 1, which is no longer supported; run ${INSTALL} to install the opencode 2 files`);
   });
 
   test("running the installer again replaces it with the opencode 2 files", () => {
