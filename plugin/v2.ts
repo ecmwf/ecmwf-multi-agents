@@ -78,6 +78,12 @@ export function v2ProjectRoot(ctx: V2Context | undefined): string | undefined {
   return typeof directory === "string" && directory !== "" ? directory : undefined;
 }
 
+/** The site settings file a central install names in the plugin's `site` option. */
+export function siteSettings(ctx: V2Context | undefined): string | undefined {
+  const site = ctx?.options?.site;
+  return typeof site === "string" && site !== "" ? site : undefined;
+}
+
 /** One transform kept at the end of the list by registering it again. */
 class LateTransform<E> {
   private current: V2Registration | undefined;
@@ -154,7 +160,7 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
       let loaded: LoadedSettings = { settings: mergeSettings([], harness), problems: [], applied: [], sources: {} };
       try {
         environment = (options.environment ?? processEnvironment)();
-        loaded = loadSettings(harness, environment, v2ProjectRoot(ctx));
+        loaded = loadSettings(harness, environment, v2ProjectRoot(ctx), siteSettings(ctx));
       } catch (error) {
         reporter.internal("reading the settings", error);
       }

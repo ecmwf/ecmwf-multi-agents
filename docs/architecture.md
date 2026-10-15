@@ -365,12 +365,14 @@ and its findings are added to the existing sections.
 
 ## Settings
 
-`ecmwf-multi-agents.jsonc`, read at startup from up to three places, each overriding the one
+`ecmwf-multi-agents.jsonc`, read at startup from up to four places, each overriding the one
 before, with `agents` entries merged per agent and per field:
 
-1. `$OPENCODE_CONFIG_DIR/ecmwf-multi-agents.jsonc`, when the variable is set (site defaults);
-2. `${XDG_CONFIG_HOME:-$HOME/.config}/opencode/ecmwf-multi-agents.jsonc` (the user's own);
-3. `<project root>/.opencode/ecmwf-multi-agents.jsonc` (the project's).
+1. the site file a central install names in the plugin's `site` option
+   (`DIR/ecmwf-multi-agents.jsonc`, site defaults; see "Central install");
+2. `$OPENCODE_CONFIG_DIR/ecmwf-multi-agents.jsonc`, when the variable is set;
+3. `${XDG_CONFIG_HOME:-$HOME/.config}/opencode/ecmwf-multi-agents.jsonc` (the user's own);
+4. `<project root>/.opencode/ecmwf-multi-agents.jsonc` (the project's).
 
 Changes take effect when opencode restarts.
 

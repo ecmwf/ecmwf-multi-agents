@@ -296,6 +296,8 @@ export interface V2CommandEditor {
 
 export interface V2Context {
   location?: { directory?: string; project?: { directory?: string } };
+  /** The `options` of the plugin's entry in a config's `plugins` list. */
+  options?: Readonly<Record<string, unknown>>;
   agent: {
     transform: (callback: (editor: V2AgentEditor) => void) => Promise<V2Registration>;
     /** The agent as opencode resolved it; some versions wrap the answer in `data`. */

@@ -1340,16 +1340,19 @@ function isObject(value) {
 function has(value, key) {
   return Object.prototype.hasOwnProperty.call(value, key);
 }
-function settingsPaths(environment, projectRoot) {
+function settingsPaths(environment, projectRoot, site) {
   const { env, home } = environment;
   const out = [];
-  const add = (dir) => {
-    if (!dir)
-      return;
-    const file = path2.resolve(dir, SETTINGS_FILE);
+  const addFile = (file) => {
     if (!out.includes(file))
       out.push(file);
   };
+  const add = (dir) => {
+    if (dir)
+      addFile(path2.resolve(dir, SETTINGS_FILE));
+  };
+  if (site)
+    addFile(path2.resolve(site));
   add(env.OPENCODE_CONFIG_DIR);
   const xdg = env.XDG_CONFIG_HOME;
   add(path2.join(xdg ? xdg : path2.join(home, ".config"), "opencode"));
@@ -1489,11 +1492,11 @@ function settingSources(files, applied) {
   });
   return sources;
 }
-function loadSettings(harness, environment, projectRoot) {
+function loadSettings(harness, environment, projectRoot, site) {
   const files = [];
   const problems = [];
   const applied = [];
-  for (const file of settingsPaths(environment, projectRoot)) {
+  for (const file of settingsPaths(environment, projectRoot, site)) {
     let text;
     try {
       text = environment.readFile(file);
@@ -1876,6 +1879,10 @@ function v2ProjectRoot(ctx) {
   const directory = ctx?.location?.directory;
   return typeof directory === "string" && directory !== "" ? directory : undefined;
 }
+function siteSettings(ctx) {
+  const site = ctx?.options?.site;
+  return typeof site === "string" && site !== "" ? site : undefined;
+}
 
 class LateTransform {
   transform;
@@ -1956,7 +1963,7 @@ function createSetup(harness, options = {}) {
       let loaded = { settings: mergeSettings([], harness), problems: [], applied: [], sources: {} };
       try {
         environment = (options.environment ?? processEnvironment)();
-        loaded = loadSettings(harness, environment, v2ProjectRoot(ctx));
+        loaded = loadSettings(harness, environment, v2ProjectRoot(ctx), siteSettings(ctx));
       } catch (error) {
         reporter.internal("reading the settings", error);
       }
