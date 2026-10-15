@@ -1577,6 +1577,9 @@ function modelText(agent) {
 }
 async function doctorReport(input) {
   const { harness, ctx, loaded } = input;
+  await input.ready?.().catch(() => {
+    return;
+  });
   const agents = await Promise.resolve(ctx.agent.list?.()).then((value) => unwrap(value), () => {
     return;
   }) ?? [];
@@ -1898,6 +1901,9 @@ class LateTransform {
     this.reporter = reporter;
     this.what = what;
   }
+  ensure() {
+    return this.current === undefined ? this.register() : this.queue;
+  }
   register() {
     this.queue = this.queue.then(async () => {
       if (this.stopped)
@@ -1969,6 +1975,7 @@ function createSetup(harness, options = {}) {
       }
       const settings = loaded.settings;
       const ruleOrder = new RuleOrder(harness, environment?.home ?? "");
+      let late;
       await registerHarness(ctx, harness, {
         home: environment?.home ?? "",
         ruleOrder,
@@ -1985,7 +1992,13 @@ function createSetup(harness, options = {}) {
             problems,
             environment,
             directory: ctx.location?.directory,
-            projectRoot: v2ProjectRoot(ctx)
+            projectRoot: v2ProjectRoot(ctx),
+            ready: async () => {
+              if (late === undefined)
+                return;
+              ruleOrder.start();
+              await late.ensure();
+            }
           });
         } catch (error) {
           reporter.internal("registering the RPC", error);
@@ -2062,7 +2075,7 @@ ${found.reply}`;
           }
         });
       }
-      const late = new LateTransform((callback) => ctx.agent.transform(callback), (editor) => {
+      late = new LateTransform((callback) => ctx.agent.transform(callback), (editor) => {
         try {
           ruleOrder.apply(editor);
         } catch (error) {
@@ -2083,15 +2096,16 @@ ${found.reply}`;
           reporter.internal("the command transform", error);
         }
       }, reporter, "command") : undefined;
+      const agentTransform = late;
       const onActivation = () => {
         ruleOrder.start();
-        late.register();
+        agentTransform.register();
         lateCommands?.register();
       };
       const stopWatching = watchEvents(ctx, onActivation, (event) => tracker.observe(event), reporter, options.fallbackMs ?? FALLBACK_MS);
       return async () => {
         stopWatching();
-        late.stop();
+        agentTransform.stop();
         lateCommands?.stop();
       };
     } catch (error) {

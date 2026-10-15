@@ -79,6 +79,8 @@ export interface DoctorInput {
   environment: Environment;
   directory: string | undefined;
   projectRoot: string | undefined;
+  /** Resolves once the agents show the settings; awaited before the agents are read. */
+  ready?: () => Promise<void>;
 }
 
 function modelText(agent: V2AgentInfo | undefined): string | null {
@@ -89,6 +91,7 @@ function modelText(agent: V2AgentInfo | undefined): string | null {
 
 export async function doctorReport(input: DoctorInput): Promise<Record<string, unknown>> {
   const { harness, ctx, loaded } = input;
+  await input.ready?.().catch(() => undefined);
   const agents = (await Promise.resolve(ctx.agent.list?.()).then((value) => unwrap<V2AgentInfo[]>(value), () => undefined)) ?? [];
   const lead = agents.find((agent) => agent.id === harness.defaultAgent);
   const files = agentFiles(harness.defaultAgent, input.environment, input.directory, input.projectRoot);

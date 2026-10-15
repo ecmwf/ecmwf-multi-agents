@@ -46,6 +46,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
   from you: a task report is held back only while `lead` is still answering your own question.
 - The installer's messages name the command you ran, such as `ecmwf-multi-agents doctor` for
   the npm package's command, instead of always `./install.sh`.
+- `doctor` reports `lead`'s review line as your settings make it: the plugin's RPC no longer
+  answers before the settings reach the agents.
 
 ### Removed
 
