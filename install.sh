@@ -1449,7 +1449,10 @@ install)
 	;;
 doctor) cmd_doctor ;;
 uninstall)
-	[ "$TARGET" != central ] || die "to remove a central install, delete its folder: chmod -R u+w $CENTRAL && rm -rf $CENTRAL"
+	if [ "$TARGET" = central ]; then
+		is_central_dir "$CENTRAL" || die "$CENTRAL holds no central install of $NAME, so there is nothing to remove there."
+		die "to remove a central install, delete its folder: chmod -R u+w $CENTRAL && rm -rf $CENTRAL"
+	fi
 	cmd_uninstall
 	;;
 central-enable) cmd_central_enable ;;

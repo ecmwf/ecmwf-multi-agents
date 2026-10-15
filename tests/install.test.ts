@@ -870,8 +870,25 @@ describe("central install", () => {
     expect(run(box, ["--central", path.join(box.dir, "new"), "--link"]).out).toContain("always copied");
     expect(run(box, ["--central", path.join(box.dir, "new"), "--project", box.dir]).out).toContain("use --project or --central, not both");
     expect(run(box, ["--central", path.join(box.dir, "a b")]).out).toContain("may only contain letters");
-    expect(run(box, ["uninstall", "--central", central(box)]).out).toContain(`delete its folder: chmod -R u+w ${central(box)} && rm -rf ${central(box)}`);
+    const uninstall = run(box, ["uninstall", "--central", central(box)]);
+    expect(uninstall.code).toBe(1);
+    expect(uninstall.out).toContain(`${central(box)} holds no central install of ${NAME}, so there is nothing to remove there.`);
+    expect(uninstall.out).not.toContain("rm -rf");
     expect(existsSync(path.join(box.dir, "new"))).toBe(false);
+  });
+
+  test("uninstall --central advises deleting the folder only when it holds a central install", () => {
+    const box = makeBox();
+    expect(run(box, ["--central", central(box)]).code).toBe(0);
+    const ours = run(box, ["uninstall", "--central", central(box)]);
+    expect(ours.code).toBe(1);
+    expect(ours.out).toContain(`delete its folder: chmod -R u+w ${central(box)} && rm -rf ${central(box)}`);
+    expect(existsSync(config(box))).toBe(true);
+    // A typo that names a system folder.
+    const typo = run(box, ["uninstall", "--central", "/usr"]);
+    expect(typo.code).toBe(1);
+    expect(typo.out).toContain(`/usr holds no central install of ${NAME}`);
+    expect(typo.out).not.toContain("rm -rf");
   });
 
   test("--dry-run writes nothing", () => {
