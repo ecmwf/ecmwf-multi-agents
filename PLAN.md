@@ -39,8 +39,8 @@ support waits in `TODO.md` until approved.
 | Built-in agents | Kept and reachable by the user. `lead` cannot delegate to them |
 | Work files | `.ecmwf-multi-agents/{plans,context,notes}/`, excluded through `.git/info/exclude` |
 | Settings | `ecmwf-multi-agents.jsonc`, global in `~/.config/opencode/`, per project in `.opencode/`; applied by the optional plugin |
-| opencode v1 | Main, stable target: 1.18.35 and later 1.x. Tested on 1.18.35 and 1.19.0 |
-| opencode v2 | Pinned to 2.0.16, the version weave's v2 adapter uses. Moves only after a deliberate re-test |
+| opencode v1 | Dropped (Phase 9). Supported up to 0.5.x on 1.18.35 and later 1.x |
+| opencode v2 | The only platform from Phase 9. Pinned (2.0.28, moving to 2.0.29); moves only after a deliberate re-test |
 | Tooling | TypeScript on Bun for the generator and plugin; POSIX sh installer; generated `dist/` is committed |
 | Distribution | git clone + `install.sh`; central install through environment variables; npm plugin |
 | Evals | Scenario suite against real models; results feed 0.2.0 (0.1.0 released before the first eval run, at the owner's choice) |
@@ -591,9 +591,56 @@ hand-off is recorded only, since a plan may have none. Measured on 1.18.35; the 
 Exit: `execute-chat` and `plan-execute` pass on 1.18.35 (the evals run on 1.x only); the eval summary
 shows the wall clock and cost against 0.1.0; `/guide` says what the user will see.
 
+## Phase 9: opencode 2 only
+
+The project supports opencode 2 only. It is a young project, so there is no deprecation
+release and no migration notice: the release that lands this phase says "opencode 2 only".
+Every feature that works on 1.x today works on 2 before that release. Research behind each
+row: `docs/research/opencode-v2.md` (sections added in this phase), ADR 0004.
+
+| Feature | On opencode 2 |
+|---|---|
+| Per-project line, npm package | `"plugins": ["@ecmwf.int/multi-agents@X.Y.Z"]` or a checkout path in a project's config; the plugin registers agents (`agent.transform`, `update`), skills (`skill.transform`, `add`), commands (`command.transform`, `add`) and the default agent. User and project files still win. `exports` points at the v2 bundle |
+| Inline `/review` and `/progress` | The plugin owns both commands: switch the session to the helper, prompt, wait, switch back, wake `lead` if reports were held; the `context` hook hides the earlier conversation from the helper. The file commands stay `subagent: true`, the fallback without the plugin |
+| Settings problems on screen | A plugin RPC (`problems`, and an event), shown as a toast by a TUI entry; the plugin becomes a folder (`index.js`, `tui.js`) |
+| `doctor` live checks | `opencode api --standalone POST /api/rpc/ecmwf-multi-agents/doctor` (the plain agent list does not wait for plugins) |
+| Central install | The module file sets `OPENCODE_CONFIG` to a generated read-only `opencode.json` (agents and commands inline through `{file:}`, absolute `skills` and `plugins`); the installer offers `opencode service set env`, since the per-user service reads the variable at start; `doctor` warns about the shared service port on login nodes |
+| Eval runner | `serve --stdio --port 0`, Basic auth with `OPENCODE_PASSWORD`, `/api/...` routes, a 2.x to 1.x message adapter so the checks barely change. Login: an eval-only database (`make eval-login`), piped per run with `opencode auth export` into `opencode auth import --server`; the runner never reads a credential |
+| Not needed on 2 | Shell guard after "Allow always", child pinning, the background flag, `todo` and `list` rules |
+
+Order: research and ADR, eval runner, removal of v1, plugin features, installer, docs and
+release. The removal comes early so the new work is built for one platform.
+
+- [~] Samet: Research addendum (`docs/research/opencode-v2.md`) and ADR 0004 "opencode 2
+  only", superseding ADR 0003 and amending ADR 0001 and 0002
+- [~] Samet: Eval runner on opencode 2: server, routes, permissions and forms, message
+  adapter, tool names (`shell`, `subagent`), the eval login (`make eval-login`) and the
+  `AGENTS.md` rule for it; `evals/run.integration.test.ts` on the stand-in model
+- [~] Samet: Remove opencode 1.x: plugin core (`plugin.ts` to `{ id, setup }`, guard helpers
+  moved, pinning and v1 modules deleted), the embedded `v1` block, `emit-v1`,
+  `dist/opencode-v1`, installer (`--platform`, version detection, background flag; old
+  `opencode-v1` links still count as ours), tests, prompt lines, Makefile, `exports`
+- [~] Samet: Plugin registers agents, skills, commands and the default agent, so a project's
+  `plugins` line or the npm package brings the harness; a test compares registered agents with
+  agents loaded from files; `doctor` warns when a global install masks a project line
+- [~] Samet: Inline `/review` and `/progress` owned by the plugin, with the `context` hook
+  isolation and the switch back; integration tests on the stand-in (idle, busy, report during
+  the review)
+- [~] Samet: Plugin RPC `doctor` and `problems`, the TUI toast entry, the plugin as a folder;
+  `install.sh doctor` through the RPC
+- [~] Samet: Central install on opencode 2 through `OPENCODE_CONFIG`, module file lines (Lmod,
+  Tcl), the service step and the port check
+- [~] Samet: Answer-first ignores the 2.0.29 output-limit and incomplete-stream notes; pin
+  2.0.29
+- [~] Samet: Docs for opencode 2 only (README, install, architecture, guide skill), changelog
+- [~] Samet: Real-model evals on opencode 2 (`plan-execute`, `execute-chat`,
+  `review-background`, inline `/review` cost against the 1.x numbers)
+
+Exit: `make check` and the integration suites pass on 2.0.29 with no 1.x code left; every row
+above works on the stand-in; the real-model evals pass on opencode 2.
+
 ## Open questions
 
-- npm scope for the plugin package (the repository is github.com/ecmwf/ecmwf-multi-agents).
 - Prompt budgets are ceilings raised only to a measured change (see Phase 7, Budgets). The
   evals after Phase 7 show whether the `lead` additions cost more than their size explains.
 - `/onboard` is shadowed in projects that define their own `onboard` command (some local
