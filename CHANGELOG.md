@@ -13,91 +13,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ## [0.6.0] - 2026-10-15
 
+This release supports opencode 2 only.
+
 ### Upgrading from 0.5.x
 
-- This release needs opencode 2. To stay on opencode 1.x, keep 0.5.3: `git checkout 0.5.3` in
-  the checkout, or `npm install -g @ecmwf.int/multi-agents@0.5.3`.
-- After `git pull`, run `./install.sh` again (with npm, `npm install -g
-  @ecmwf.int/multi-agents`, then `ecmwf-multi-agents`): until then a linked install points at
-  files this release deleted, and `doctor` reports the install made for opencode 1 as a FAIL.
-- In a project switched on by a line in its `opencode.json`, rename the `"plugin"` key to
-  `"plugins"`.
-- Central install: run the same `install.sh --central DIR` again on the folder, which
-  replaces the 0.5.x install in place. In the module file, replace the `OPENCODE_CONFIG_DIR`
-  line with `OPENCODE_CONFIG` set to `DIR/opencode.json`, and drop the
-  `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS` line. Each user then loads the new module and
-  runs `opencode service set env OPENCODE_CONFIG DIR/opencode.json` once (or
-  `install.sh central-enable DIR`). While `OPENCODE_CONFIG_DIR` still names the
-  folder, a user's opencode 2 service does not start, and `doctor` reports a FAIL. The steps
-  are in `docs/install.md`.
+- To stay on opencode 1.x, keep 0.5.3 (`git checkout 0.5.3`, or
+  `npm install -g @ecmwf.int/multi-agents@0.5.3`).
+- After updating, run the installer again (`./install.sh`, or `ecmwf-multi-agents` with npm).
+- In a project's `opencode.json`, rename `"plugin"` to `"plugins"`.
+- Central installs: see "Shared machines" in `docs/install.md`.
 
 ### Added
 
-- On opencode 2, `/review` and `/progress` answer in your own session again: the reviewer or a
-  scout replies there from the command's text alone, and the session goes back to `lead`, which
-  no longer takes a turn to relay the report. Background reports that arrive meanwhile are held
-  back from the helper and wake `lead` after it, and so does a message you send while the
-  command runs, even as it starts: the helper does not answer it, `lead` does, after the
-  command. A command sent while `lead` is answering waits until it has answered. With the
-  harness installed as files but without the plugin, the commands still run in a child
-  session.
-- Switch the harness on per project with one line in the project's `opencode.json`:
-  `"plugins": ["@ecmwf.int/multi-agents@X.Y.Z"]`, or the path of a checkout such as
-  `"{env:HOME}/.local/share/ecmwf-multi-agents"`. The plugin registers the agents, commands,
-  skills and `lead` as the default agent in that project only; your own files and config still
-  win, except over `/review` and `/progress`, which the plugin answers in your session, and the
-  model, effort and step limit of the harness agents, which the settings decide.
-- Problems with the settings files show as a warning in the opencode TUI.
-- `install.sh doctor` asks opencode what it loaded: whether `lead` is there and is the
-  harness's own (if not, which fields differ, and the `lead.md` files and opencode configs that
-  may have changed it), its review line, the default agent and the plugin's problems.
-  `doctor --project` checks a project switched on by a `plugins` line, and `doctor` warns when
-  an install in `~/.config/opencode/` masks a project's line.
-- Central install on opencode 2, for shared machines such as HPC login nodes:
-  `install.sh --central DIR` writes a read-only folder with an `opencode.json` that users
-  switch on with `OPENCODE_CONFIG=DIR/opencode.json`, typically from a module file whose Lmod
-  and Tcl lines the installer prints. `--profile` and `--review` write the site settings,
-  which your own and a project's settings override. `install.sh central-enable DIR` (and
-  `central-disable`) keeps the variable in your opencode service's settings, since the service
-  reads it only when it starts. `doctor` checks the folder, the variable in your shell and in
-  the service, and warns when another user holds your service's port. A project's own agent
-  files now win over the central ones.
+- Switch the harness on for one project, with nothing to install:
+  `"plugins": ["@ecmwf.int/multi-agents@0.6.0"]` in its `opencode.json`.
+- `/review` and `/progress` answer in your own session again.
+- Central install for shared machines: `install.sh --central DIR`.
+- `doctor` checks what opencode actually loaded, and settings problems show in the TUI.
 
 ### Changed
 
-- opencode 2 is tested on 2.0.29, the version in use now; 2.0.28 still works and now gets the
-  installer's warning for an untested version.
-- The npm package's `./server` export names the opencode 2 plugin, and `./tui` its TUI entry.
-- The plugin is a folder, `plugins/ecmwf-multi-agents/`, with `index.js` and `tui.js`; an
-  install links the folder as a whole and removes the single-file plugin of earlier releases.
-- The installer's unit tests no longer find an opencode installed in a system folder.
-
-### Fixed
-
-- On opencode 2, the note opencode adds to continue a response that was cut off (interrupted,
-  over the output limit, or stopped by a server restart) no longer counts as a new question
-  from you: a task report is held back only while `lead` is still answering your own question.
-- The installer's messages name the command you ran, such as `ecmwf-multi-agents doctor` for
-  the npm package's command, instead of always `./install.sh`.
-- `doctor` reports `lead`'s review line as your settings make it: the plugin's RPC no longer
-  answers before the settings reach the agents.
-- `npx @ecmwf.int/multi-agents` copies the files instead of linking them into npm's cache,
-  which npm may clear.
-- An empty `--project=` or `--central=` is refused instead of falling back to an install in
-  your own opencode config.
+- Tested with opencode 2.0.29.
 
 ### Removed
 
-- opencode 1.x is no longer supported; the harness supports opencode 2 only. With only
-  opencode 1 installed, the installer stops and asks you to upgrade with
-  `opencode upgrade --major`. Running `./install.sh` again replaces an install made for
-  opencode 1, and `doctor` reports one until then.
-- With it go the installer's `--platform` option, the per-project plugin line for opencode
-  1.x, the background flag advice in the installer and `doctor`, `doctor`'s checks
-  that started opencode 1.x, the files in `dist/opencode-v1/`, and the plugin parts that only
-  opencode 1.x used: the shell guard after "Allow always" (on opencode 2 a configured deny
-  always holds) and the pinning of messages in a helper's session (on opencode 2 you cannot
-  type in one).
+- Support for opencode 1.x, and the installer's `--platform` option.
 
 ## [0.5.3] - 2026-10-15
 
