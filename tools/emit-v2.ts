@@ -9,12 +9,19 @@
 //   commands/<id>.md      command: frontmatter, then the template
 //   skills/<id>/SKILL.md  skill: name and description, plus metadata when hidden
 //
+// and, apart from that layout, the central install's template (v2CentralFiles):
+//
+//   central/opencode.json             agents and commands inline, for OPENCODE_CONFIG
+//   central/prompts/<id>.md           an agent's prompt, without frontmatter
+//   central/prompts/commands/<id>.md  a command's template, without frontmatter
+//
 // opencode 2.0.16 silently drops an agent file whose frontmatter fails validation, and reads a
 // file with any unknown frontmatter key as a legacy v1 agent. So this emitter writes only
 // native keys and checks every value against the 2.0.16 rules before writing. Evidence for
 // each choice is in docs/research/opencode-v2.md.
 
 import { withFrontmatter, type YamlValue } from "./frontmatter.ts";
+import { compareBytes } from "./util.ts";
 import type {
   AgentMode,
   Emitter,
@@ -155,6 +162,47 @@ export function v2SkillFrontmatter(skill: ResolvedSkill): { [key: string]: YamlV
 
 export function v2SkillFile(skill: ResolvedSkill, marker: string): OutputFile {
   return { path: `skills/${skill.id}/SKILL.md`, content: withFrontmatter(v2SkillFrontmatter(skill), skill.body, [marker]) };
+}
+
+/** The folder of the central install's template; the installer does not install it as it is. */
+export const CENTRAL_DIR = "central";
+/** Stands for the central folder's absolute path in the template; the installer fills it in. */
+export const CENTRAL_PLACEHOLDER = "@ECMWF_MULTI_AGENTS_DIR@";
+
+/**
+ * The central install's template (docs/research/opencode-v2.md, section 13): an `opencode.json`
+ * that `OPENCODE_CONFIG` names, with every agent and command inline and their text in prompt
+ * files through `{file:}`, which opencode reads relative to the config file and trims. Agents
+ * from config files merge field by field, so each agent sets every field the harness defines,
+ * and `hidden`, over a user's own agent of the same name. The default agent is left to the
+ * plugin, so a user's own `default_agent` and the `default_agent` setting keep working.
+ */
+export function v2CentralFiles(harness: ResolvedHarness): OutputFile[] {
+  const modes = new Map(harness.agents.map((agent) => [agent.id, agent.mode] as const));
+  const prompts: OutputFile[] = [];
+  const agents: { [id: string]: { [key: string]: YamlValue } } = {};
+  for (const agent of [...harness.agents].sort((a, b) => compareBytes(a.id, b.id))) {
+    const data = v2AgentFrontmatter(agent);
+    agents[agent.id] = {
+      ...data,
+      permissions: data.permissions ?? [],
+      hidden: false,
+      system: `{file:./prompts/${agent.id}.md}`,
+    };
+    prompts.push({ path: `${CENTRAL_DIR}/prompts/${agent.id}.md`, content: agent.prompt.trim() });
+  }
+  const commands: { [id: string]: { [key: string]: YamlValue } } = {};
+  for (const command of [...harness.commands].sort((a, b) => compareBytes(a.id, b.id))) {
+    commands[command.id] = { ...v2CommandFrontmatter(command, modes), template: `{file:./prompts/commands/${command.id}.md}` };
+    prompts.push({ path: `${CENTRAL_DIR}/prompts/commands/${command.id}.md`, content: command.template.trim() });
+  }
+  const config = {
+    agents,
+    commands,
+    skills: [`${CENTRAL_PLACEHOLDER}/skills`],
+    plugins: [{ package: `${CENTRAL_PLACEHOLDER}/plugins/${harness.name}`, options: { site: `${CENTRAL_PLACEHOLDER}/${harness.name}.jsonc` } }],
+  };
+  return [{ path: `${CENTRAL_DIR}/opencode.json`, content: JSON.stringify(config, null, 2) }, ...prompts].sort((a, b) => compareBytes(a.path, b.path));
 }
 
 export const emitV2: Emitter = (harness: ResolvedHarness): OutputFile[] => {

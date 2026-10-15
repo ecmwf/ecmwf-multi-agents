@@ -8,7 +8,7 @@
 
 import { lstat, mkdir, readdir, readFile, rm, rmdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { emitV2 } from "./emit-v2.ts";
+import { CENTRAL_DIR, emitV2, v2CentralFiles } from "./emit-v2.ts";
 import { load } from "./load.ts";
 import { checkHarness, resolveHarness, type SizeRow, sizeTable } from "./resolve.ts";
 import { settingsSchema } from "./schema.ts";
@@ -143,7 +143,9 @@ export function platformFiles(platform: string, groups: readonly FileGroup[]): O
   const files = entries
     .filter(({ file }) => file.path !== FILES_LIST)
     .map(({ file }) => ({ path: file.path, content: normalizeContent(file.content) }));
-  const paths = [...files.map((file) => file.path), FILES_LIST].sort(compareBytes);
+  // files.txt lists what an install puts into a config folder; a central install builds its
+  // folder from the template in central/ instead.
+  const paths = [...files.map((file) => file.path).filter((file) => !file.startsWith(`${CENTRAL_DIR}/`)), FILES_LIST].sort(compareBytes);
   files.push({ path: FILES_LIST, content: `${paths.join("\n")}\n` });
   return files.sort((a, b) => compareBytes(a.path, b.path));
 }
@@ -329,7 +331,7 @@ async function main(args: readonly string[]): Promise<number> {
     const { pluginFiles } = await import("./bundle-plugin.ts");
     await build({
       root,
-      emitters: { "opencode-v2": emitV2 },
+      emitters: { "opencode-v2": (harness) => [...emitV2(harness), ...v2CentralFiles(harness)] },
       extras: (harness) => pluginFiles(root, harness),
       check,
     });
