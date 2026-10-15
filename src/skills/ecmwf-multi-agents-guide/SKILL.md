@@ -24,7 +24,7 @@ You talk to one agent, `lead`. It works out what you need, asks when something i
 - `/review [target]`: independent review, under any policy, of your uncommitted changes (no target), a branch, a pull request (number or URL) or a plan file. It replaces opencode's own `/review`.
 - `/guide [question]`: this guide.
 
-A project's own command or agent with the same name, such as its own `/onboard`, takes precedence in that project.
+A project's own command or agent with the same name, such as its own `/onboard`, takes precedence in that project, except `/review` and `/progress`. The settings, not an agent file, decide a harness agent's model, effort and steps, and the review policy.
 
 ## Review policy
 
@@ -64,7 +64,7 @@ Profiles give each agent a model and an effort:
 
 `lead` usually waits for a helper. When it has other work meanwhile, or you may want to keep talking, it hands off in the background and the report arrives later in your conversation.
 
-If a helper is doing something you do not want, tell `lead`: "redirect the scout: stay in src/" or "stop the builder". `lead` can list its helpers, send one an amendment it reads at its next step, keeping what it has read, or stop one. You can also open the helper's session and type to it. A stopped helper reports nothing; its changes stay on disk.
+If a helper is doing something you do not want, tell `lead`: "redirect the scout: stay in src/" or "stop the builder". `lead` can list its helpers, send one an amendment it reads at its next step, keeping what it has read, or stop one. You cannot type in a helper's session yourself. A stopped helper reports nothing; its changes stay on disk.
 
 ## Work files
 

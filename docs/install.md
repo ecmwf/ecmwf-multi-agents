@@ -109,7 +109,10 @@ project. A path is either absolute, relative to the config file (`./` or `../`),
 The plugin registers the agents, commands and skills and makes `lead` the default agent, in
 that project only; other projects served by the same opencode are not affected. Agent files,
 commands and skills of your own or of the project, and a `default_agent` in a config, still
-win, as they do over installed files. Settings come from the same files as for an install:
+win, as they do over installed files, with the two exceptions the README names under "Switch
+it on per project": the plugin's `/review` and `/progress` replace command files with those
+names, and the settings decide the model, effort and step limit of the harness agents and
+`lead`'s review line. Settings come from the same files as for an install:
 `~/.config/opencode/ecmwf-multi-agents.jsonc` and the project's
 `.opencode/ecmwf-multi-agents.jsonc`.
 
@@ -214,7 +217,8 @@ Agents merge field by field, so the central agents set every field the harness d
 replace those of an agent of the same name in your global folder, while a project's own agent
 file (`.opencode/agents/scout.md`) or command still wins over the central one. The exceptions
 are as with a project's line (see the README): `/review` and `/progress` are the plugin's, and
-the settings decide the harness agents' model, effort and step limit. The agents' own
+the settings decide the harness agents' model, effort and step limit and `lead`'s review line.
+The agents' own
 permission rules come after your global `permissions`, so a global "allow every shell command"
 does not loosen `scout`'s read-only rules, and `/review` and `/progress` answer in your own
 session, as with any other install. With opencode 1

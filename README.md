@@ -54,7 +54,9 @@ Only `lead` talks to you. Helpers never ask you questions and never hand work on
 | `/guide [question]` | Explains how the harness works, in plain words |
 
 `/review` replaces opencode's own review command with one that uses the independent reviewer.
-A command defined in a project's `.opencode/commands/` takes precedence over these.
+A command defined in a project's `.opencode/commands/` takes precedence over these, except
+`/review` and `/progress`, which the plugin answers in your session (see
+[Switch it on per project](#switch-it-on-per-project) for this and the other exception).
 
 Plans, notes and summaries live in `.ecmwf-multi-agents/` inside your project. That folder is
 kept out of git through `.git/info/exclude`, so nothing extra appears in your commits.
@@ -65,7 +67,8 @@ kept out of git through `.git/info/exclude`, so nothing extra appears in your co
 talking, it hands off in the background and the helper's report arrives later in your
 conversation. If a helper is doing something you do not want, tell `lead` to redirect it
 ("stay in `src/`") or to stop it: a redirected helper keeps everything it has read and done
-instead of starting over. You can also open the helper's session and type to it.
+instead of starting over. `lead` steers it with `helpers_steer`; you cannot type in a helper's
+session yourself.
 
 ## Requirements
 

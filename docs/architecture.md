@@ -168,7 +168,8 @@ ran for a reason shows a helper off its brief; it never polls, because each stat
 each steer is a turn of the most expensive agent. `lead` reaches a running helper only through
 `helpers_steer`, never through `sessionID` on the delegation tool.
 
-The user may also open a helper's session and type into it.
+The user cannot type into a helper's session on opencode 2; they ask `lead`, which steers the
+helper with `helpers_steer`.
 
 ## Hand-off brief
 

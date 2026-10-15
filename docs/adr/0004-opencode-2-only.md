@@ -41,7 +41,7 @@ migration notice: the release that lands this change says "opencode 2 only".
 
 | Feature | On opencode 2 |
 |---|---|
-| Per-project line, npm package | `"plugins": ["@ecmwf.int/multi-agents@X.Y.Z"]` or a checkout path in a project's config; the plugin registers agents, skills, commands and the default agent. User and project files still win |
+| Per-project line, npm package | `"plugins": ["@ecmwf.int/multi-agents@X.Y.Z"]` or a checkout path in a project's config; the plugin registers agents, skills, commands and the default agent. User and project files still win, except over `/review` and `/progress` and over the harness agents' model, effort, step limit and review line, which the settings decide |
 | Inline `/review` and `/progress` | Owned by the plugin: switch the session to the helper, prompt, wait, switch back, wake `lead` if reports were held; the `context` hook hides the earlier conversation from the helper. The file commands stay `subagent: true`, the fallback without the plugin |
 | Settings problems on screen | A plugin RPC (`problems`, and an event), shown as a toast by a TUI entry; the plugin becomes a folder (`index.js`, `tui.js`) |
 | `doctor` live checks | `opencode api --standalone POST /api/rpc/ecmwf-multi-agents/doctor`, which waits for plugins where the agent list does not |
@@ -59,7 +59,9 @@ This supersedes ADR 0003, which used the 1.x `config` hook and the `plugin` key.
   `update`, skills with `skill.transform` and `add`, commands with `command.transform` and
   `add`, and `lead` as the default agent with `editor.default`. opencode's file and config
   loaders run after user plugins, so a user's or project's own agent file, command, skill or
-  `default_agent` still wins, as over installed files.
+  `default_agent` still wins, as over installed files, with two exceptions: the plugin
+  registers `/review` and `/progress` again after the command files, and the settings decide
+  the model, effort and step limit of the harness agents and `lead`'s review line.
 - Commands registered by a plugin are code, with no template: each harness command is an
   `execute` that sends its generated template to the session as the command's agent would
   receive it.
