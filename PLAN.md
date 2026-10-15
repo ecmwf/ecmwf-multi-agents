@@ -40,7 +40,7 @@ support waits in `TODO.md` until approved.
 | Work files | `.ecmwf-multi-agents/{plans,context,notes}/`, excluded through `.git/info/exclude` |
 | Settings | `ecmwf-multi-agents.jsonc`, global in `~/.config/opencode/`, per project in `.opencode/`; applied by the optional plugin |
 | opencode v1 | Dropped (Phase 9). Supported up to 0.5.x on 1.18.35 and later 1.x |
-| opencode v2 | The only platform from Phase 9. Pinned (2.0.28, moving to 2.0.29); moves only after a deliberate re-test |
+| opencode v2 | The only platform from Phase 9. Pinned (2.0.29); moves only after a deliberate re-test |
 | Tooling | TypeScript on Bun for the generator and plugin; POSIX sh installer; generated `dist/` is committed |
 | Distribution | git clone + `install.sh`; central install through environment variables; npm plugin |
 | Evals | Scenario suite against real models; results feed 0.2.0 (0.1.0 released before the first eval run, at the owner's choice) |
@@ -548,7 +548,8 @@ hand-off is recorded only, since a plan may have none. Measured on 1.18.35; the 
   this file and in `evals/results/` keeps the old name
 - [ ] `/execute` is also the name of opencode 2's Code Mode tool; a command and a tool are
   different namespaces and nothing clashed on 2.0.16, but watch for a built-in `/execute`
-  command in later versions (the clash note lists where to look)
+  command in later versions (the clash note lists where to look). Checked on 2.0.29: no clash,
+  the built-in commands are still `init` and `review` (`docs/research/command-clashes.md`)
 
 8c. Follow-ups from the review of #3, and release
 
@@ -639,8 +640,9 @@ release. The removal comes early so the new work is built for one platform.
   `install.sh doctor` through the RPC
 - [~] Samet: Central install on opencode 2 through `OPENCODE_CONFIG`, module file lines (Lmod,
   Tcl), the service step and the port check
-- [~] Samet: Answer-first ignores the 2.0.29 output-limit and incomplete-stream notes; pin
-  2.0.29
+- [x] Samet: Answer-first ignores the 2.0.29 output-limit and incomplete-stream notes; pin
+  2.0.29: the notes (and the server-restart note) are no request and the cut-off step before
+  one ends no turn; pinned to 2.0.29, integration suites pass on it
 - [~] Samet: Docs for opencode 2 only (README, install, architecture, guide skill), changelog
 - [~] Samet: Real-model evals on opencode 2 (`plan-execute`, `execute-chat`,
   `review-background`, inline `/review` cost against the 1.x numbers)

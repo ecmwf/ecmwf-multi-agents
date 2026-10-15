@@ -261,8 +261,8 @@ describe("emitV2 agents", () => {
     const scout = file(emitV2(fixture()), "agents/scout.md");
     expect(scout.comments).toEqual([
       MARKER,
-      '# no todo action in opencode 2.0.28, rule left out: todo "*" deny',
-      '# no list action in opencode 2.0.28, rule left out: list "*" allow',
+      '# no todo action in opencode 2.0.29, rule left out: todo "*" deny',
+      '# no list action in opencode 2.0.29, rule left out: list "*" allow',
     ]);
     const actions = (scout.data.permissions as { action: string }[]).map((rule) => rule.action);
     expect(actions).not.toContain("todo");

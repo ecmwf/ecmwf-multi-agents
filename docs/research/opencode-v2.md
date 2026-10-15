@@ -599,3 +599,25 @@ the `@opencode/cli@2.0.28` binary.
   (`v2.0.28: plugin-browser/src/connection.ts:25-53`, `core/src/plugin/internal.ts:255-256`).
   The harness's agents do not use them; the emitter's integration test expects the rule.
 - The emitter, plugin, background helper and installer integration suites pass on 2.0.28.
+
+## Addendum: 2.0.29
+
+The harness moved its opencode 2 pin from 2.0.28 to 2.0.29 after 0.5.3. Checked with
+`git diff v2.0.28 v2.0.29` over `packages/schema`, `packages/core/src` and `packages/plugin`,
+cited as `v2.0.29:`, and the `@opencode/cli@2.0.29` binary.
+
+- Agent, model, command and skill files: their schemas, the permission action names and the
+  agents' default rules are unchanged; there is still no `todo` or `list` action. Policies
+  moved from `experimental.policies` to a top-level `policies` key (`v2.0.29:
+  schema/src/config.ts:58-60`), which the harness does not use.
+- Plugin API: a rejection from an `execute.before` tool hook now fails that one call with the
+  reason as its result (`v2.0.29: plugin/src/promise/adapter.ts:637-643`), which is what the
+  plugin's refusal of a helper's call to the helper tools expects. Plugins also gain
+  `permission.assert`, which the plugin does not use.
+- A response cut off by the output limit is now continued: opencode adds a note as a user
+  message, as it already did after an interrupted response and after a server restart
+  (`v2.0.29: core/src/session/runner/llm.ts:35-39` and `:287-319`,
+  `core/src/session/execution/restart.ts:15-16`). The plugin's answer-first rule treats these
+  notes as no request from the user and the cut-off step before one as no end of a turn.
+- The emitter, plugin, background helper and installer integration suites pass on 2.0.29,
+  with 1.18.35 and 1.19.0 beside it: 96 pass.

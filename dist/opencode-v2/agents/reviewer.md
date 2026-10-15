@@ -1,6 +1,6 @@
 ---
 # managed by ecmwf-multi-agents
-# no todo action in opencode 2.0.28, rule left out: todo "*" deny
+# no todo action in opencode 2.0.29, rule left out: todo "*" deny
 description: "Independent review of a plan or a change. Answers APPROVE or REJECT with at most three blockers."
 mode: subagent
 model: "github-copilot/gpt-6.1-sol#medium"

@@ -629,3 +629,22 @@ the built-in commands are `init` and `review`, and no slash command is named `ex
 version that adds a
 built-in `/execute` command would be replaced by the harness's file on 1.x (as `review` is)
 and would need the same decision as `review`.
+
+## Addendum: opencode 2.0.29 (2026-10-15)
+
+opencode 2.0.29 still has no built-in `execute` command. Its built-in command plugin registers
+`init` and `review` and nothing else besides one command per MCP prompt
+(`v2.0.29: core/src/plugin/command.ts:30` and `:43`). A sandboxed `opencode serve` of the
+`2.0.29` binary, with no config of its own, lists exactly those two from `GET /api/command`;
+with the harness's v2 files in the sandbox's global config folder it lists `init`, the harness's
+`review`, `execute`, `guide`, `onboard`, `plan` and `progress`, so `review` is replaced as on
+earlier versions and `execute` clashes with nothing. The TUI's own slash commands at v2.0.29
+(`grep -rn -E 'slash: \{' packages/tui/src`) are `agents`, `btw`, `cd`, `clear`, `compact`,
+`connect`, `copy`, `debug`, `diff`, `editor`, `exit` (also `quit`, `q`), `export`, `fork`,
+`help`, `highlights`, `mcps`, `models`, `new`, `open` (also `projects`, `project`), `pair` (also
+`web`), `plugins`, `redo`, `reload`, `rename`, `restart`, `sessions` (also `resume`,
+`continue`), `settings`, `share`, `skills`, `stats`, `status`, `terminal`, `themes`,
+`timeline`, `undo`, `update`, `variants` (also `thinking`, `effort`) and `worktrees`; none is
+`execute`. `execute` remains the name of the Code Mode tool (`core/src/codemode/tool.ts:76`), a
+separate namespace. The server creates a folder's command list when the folder is first asked
+for, so the first `GET /api/command` can return an empty list; ask again after a second.

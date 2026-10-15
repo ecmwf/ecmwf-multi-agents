@@ -1,6 +1,6 @@
 ---
 # managed by ecmwf-multi-agents
-# no todo action in opencode 2.0.28, rule left out: todo "*" deny
+# no todo action in opencode 2.0.29, rule left out: todo "*" deny
 description: "Read-only lookups and investigations in code, docs or the web. Returns a short answer with file:line evidence; long findings go to a notes file."
 mode: subagent
 model: "anthropic/claude-sonnet-5-5#medium"

@@ -12,7 +12,7 @@ set -eu
 NAME=ecmwf-multi-agents
 MARKER_MD="# managed by $NAME"
 MARKER_JS="// managed by $NAME"
-V2_PINNED=2.0.28
+V2_PINNED=2.0.29
 
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
 

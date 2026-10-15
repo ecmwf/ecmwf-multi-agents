@@ -11,6 +11,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ## [Unreleased]
 
+### Changed
+
+- opencode 2 is tested on 2.0.29, the version in use now; 2.0.28 still works and now gets the
+  installer's warning for an untested version.
+
 ### Fixed
 
 - On opencode 2, the note opencode adds to continue a response that was cut off (interrupted,
