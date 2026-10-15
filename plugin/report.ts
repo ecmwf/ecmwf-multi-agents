@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
 // SPDX-License-Identifier: Apache-2.0
 
-// Telling the user about problems. opencode 2.0.16 gives promise plugins no logger and no
-// toasts (toasts exist only for TUI plugins), so problems go to the server's standard error,
-// which `opencode serve` prints and the TUI passes on only with OPENCODE_PRINT_LOGS=1. Each
-// message is reported once, and reporting never throws.
+// Telling the user about problems. opencode 2 gives promise plugins no logger and no toasts
+// (toasts exist only for TUI plugins), so problems go to the server's standard error, which
+// `opencode serve` prints and the TUI passes on only with OPENCODE_PRINT_LOGS=1. A listener also
+// receives each one, for the plugin's RPC and through it the TUI entry's toasts (rpc.ts,
+// tui.ts). Each message is reported once, and reporting never throws.
 
 import type { Problem } from "./types.ts";
 
@@ -27,23 +28,28 @@ function internalMessage(name: string, where: string, error: unknown): string {
   return `${name}: internal error in ${where}, settings left unchanged: ${describe(error)}`;
 }
 
-export function v2Reporter(name: string, write: (line: string) => void = (line) => console.warn(line)): Reporter {
+export function v2Reporter(
+  name: string,
+  write: (line: string) => void = (line) => console.warn(line),
+  listener?: (problem: Problem) => void,
+): Reporter {
   const seen = new Set<string>();
-  const once = (message: string) => {
-    if (seen.has(message)) return;
-    seen.add(message);
+  const once = (problem: Problem) => {
+    if (seen.has(problem.message)) return;
+    seen.add(problem.message);
     try {
-      write(message);
+      write(problem.message);
+      listener?.(problem);
     } catch {
       // Reporting is best effort.
     }
   };
   return {
     report(problems) {
-      for (const problem of problems) once(problem.message);
+      for (const problem of problems) once(problem);
     },
     internal(where, error) {
-      once(internalMessage(name, where, error));
+      once({ message: internalMessage(name, where, error), notify: true });
     },
   };
 }

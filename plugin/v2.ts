@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
 // SPDX-License-Identifier: Apache-2.0
 
-// opencode 2.0.16 entry: `setup(ctx)`. Agents come from transforms that run in registration
+// opencode 2 entry: `setup(ctx)`. It first registers the harness itself (register.ts): agents,
+// skills, commands and lead as the default agent, which opencode's loaders for files and config
+// then override, and the RPC (rpc.ts). The rest adjusts and extends what is registered.
+//
+// Agents come from transforms that run in registration
 // order on every rebuild. User plugins activate before opencode's own loader for agent files and
 // config, and a transform registered during setup therefore runs before the agent files load and
 // loses every field they set (docs/research/opencode-v2.md, section 6).
@@ -16,8 +20,8 @@
 // in between. Agent file and config changes rerun the transforms in place and keep the order
 // (core/src/config/plugin/agent.ts:55-58).
 //
-// The default agent is the opposite case: it is set by a transform registered during setup, so
-// opencode's loader, which runs later, applies a `default_agent` from a config file over it.
+// The default agent is the opposite case: it is set by the registration transform during setup,
+// so opencode's loader, which runs later, applies a `default_agent` from a config file over it.
 //
 // The helper tools (tools-v2.ts) are added by a tool transform registered during setup, which
 // is enough: nothing later removes a tool another plugin added. The `execute.before` hook
@@ -28,12 +32,16 @@
 // replying to the user out of lead's requests until the reply has ended, and a message queued for
 // after the turn wakes lead to act on it; see answer-first.ts.
 
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { heldReportsV2, WAKE_TEXT } from "./answer-first.ts";
 import { applyToV2Agents, planAgents, type AgentPlan } from "./apply.ts";
 import { processEnvironment } from "./environment.ts";
 import { Activity, helperIds, toolCallBlock } from "./helpers.ts";
+import { registerHarness } from "./register.ts";
 import { v2Reporter, type Reporter } from "./report.ts";
-import { loadSettings, mergeSettings } from "./settings.ts";
+import { ProblemLog, registerRpc } from "./rpc.ts";
+import { loadSettings, mergeSettings, type LoadedSettings } from "./settings.ts";
 import { SessionTracker, v2Tools } from "./tools-v2.ts";
 import type { EmbeddedHarness, Environment, Settings, V2AgentEditor, V2Cleanup, V2Context, V2Event, V2Registration } from "./types.ts";
 
@@ -44,6 +52,13 @@ export interface V2Options {
   environment?: () => Environment;
   write?: (line: string) => void;
   fallbackMs?: number;
+  /** The folder of the plugin's entry file; skills are registered at their files next to it. */
+  pluginDir?: string;
+}
+
+/** The folder this module runs from: the plugin folder once bundled. */
+function moduleDir(): string {
+  return path.dirname(fileURLToPath(import.meta.url));
 }
 
 /** The project root: the worktree of the project opencode resolved, else the directory it runs in. */
@@ -122,30 +137,45 @@ function watchEvents(ctx: V2Context, onActivation: () => void, onEvent: (event: 
 
 export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
   return async function setup(ctx: V2Context): Promise<V2Cleanup | undefined> {
-    const reporter = v2Reporter(harness.name, options.write);
+    const problems = new ProblemLog();
+    const reporter = v2Reporter(harness.name, options.write, (problem) => problems.add(problem));
     try {
-      let settings: Settings = mergeSettings([], harness);
+      let environment: Environment | undefined;
+      let loaded: LoadedSettings = { settings: mergeSettings([], harness), problems: [], applied: [], sources: {} };
       try {
-        const environment = (options.environment ?? processEnvironment)();
-        const loaded = loadSettings(harness, environment, v2ProjectRoot(ctx));
-        settings = loaded.settings;
-        reporter.report(loaded.problems);
+        environment = (options.environment ?? processEnvironment)();
+        loaded = loadSettings(harness, environment, v2ProjectRoot(ctx));
       } catch (error) {
         reporter.internal("reading the settings", error);
       }
+      const settings: Settings = loaded.settings;
+
+      await registerHarness(ctx, harness, {
+        home: environment?.home ?? "",
+        pluginDir: options.pluginDir ?? moduleDir(),
+        defaultAgent: settings.defaultAgent,
+        reporter,
+      });
+      if (environment !== undefined) {
+        try {
+          await registerRpc({
+            harness,
+            ctx,
+            loaded,
+            problems,
+            environment,
+            directory: ctx.location?.directory,
+            projectRoot: v2ProjectRoot(ctx),
+          });
+        } catch (error) {
+          reporter.internal("registering the RPC", error);
+        }
+      }
+
+      reporter.report(loaded.problems);
       const planned = planAgents(harness, settings);
       const plans: AgentPlan[] = planned.plans;
       reporter.report(planned.problems);
-
-      if (settings.defaultAgent) {
-        await ctx.agent.transform((editor) => {
-          try {
-            editor.default(harness.defaultAgent);
-          } catch (error) {
-            reporter.internal("the default agent transform", error);
-          }
-        });
-      }
 
       const helpers = helperIds(harness);
       const tracker = new SessionTracker();

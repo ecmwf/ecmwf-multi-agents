@@ -12,13 +12,21 @@
 //     a folder that git does not track.
 //   - Each "files" entry names something git tracks, and npm packs the "exports" targets and
 //     what the package cannot work without: its command runs install.sh, which reads VERSION
-//     and links the files under dist/opencode-v2/.
+//     and links the files under dist/opencode-v2/, and a project's `plugins` line loads the
+//     plugin folder's server and TUI entries.
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 /** Files, and folders ending in "/", that the package cannot work without. */
-export const REQUIRED = ["package.json", "install.sh", "VERSION", "dist/opencode-v2/"];
+export const REQUIRED = [
+  "package.json",
+  "install.sh",
+  "VERSION",
+  "dist/opencode-v2/",
+  "dist/opencode-v2/plugins/ecmwf-multi-agents/index.js",
+  "dist/opencode-v2/plugins/ecmwf-multi-agents/tui.js",
+];
 
 export class PackError extends Error {}
 

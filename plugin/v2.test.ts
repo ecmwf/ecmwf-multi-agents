@@ -281,8 +281,10 @@ describe("v2 setup", () => {
         },
       },
     } as unknown as V2Context;
-    expect(await plugin.setup(ctx)).toBeUndefined();
-    expect(write[0]).toContain("internal error in setup");
+    expect(await plugin.setup(ctx)).toBeDefined();
+    expect(write[0]).toContain("internal error in registering the agents");
+    expect(await plugin.setup(null as unknown as V2Context)).toBeUndefined();
+    expect(write.at(-1)).toContain("internal error in setup");
   });
 
   test("cleanup stops listening for activations", async () => {

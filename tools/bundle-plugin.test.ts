@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resolvedFixture } from "../plugin/testing.ts";
-import { HARNESS_CONSTANT, bundlePlugin, embedHarness, pluginMarker, runtimeImports } from "./bundle-plugin.ts";
+import { HARNESS_CONSTANT, bundlePlugin, embedHarness, matterContent, pluginMarker, runtimeImports } from "./bundle-plugin.ts";
 import { load } from "./load.ts";
 import { resolveHarness } from "./resolve.ts";
 
@@ -98,7 +98,7 @@ describe("bundlePlugin", () => {
         default: (id) => { selected = id; },
         update: (id, change) => { const agent = agents.get(id) ?? { id }; agents.set(id, agent); change(agent); },
       };
-      // The default agent transform comes first, then opencode's loader for the agent files, then the late transform.
+      // The registration transform comes first, then opencode's loader for the agent files, then the late transform.
       transforms[0](editor);
       editor.update("lead", (agent) => Object.assign(agent, { mode: "primary", system: "x\\nReview policy: auto\\ny" }));
       editor.update("scout", (agent) => Object.assign(agent, { mode: "subagent", steps: 15, model: { id: "claude-sonnet-5-5", providerID: "anthropic", variant: "medium" } }));
@@ -120,8 +120,9 @@ describe("bundlePlugin", () => {
       blocked: string;
     };
     expect(selected).toBe("lead");
-    expect(agents.reviewer).toEqual({ id: "reviewer", mode: "subagent", model: { id: "claude-opus-5-5", providerID: "anthropic", variant: "high" } });
-    expect(agents.scout).toEqual({ id: "scout", mode: "subagent", steps: 9, model: { id: "claude-sonnet-5-5", providerID: "anthropic", variant: "high" } });
+    expect(agents.reviewer).toMatchObject({ id: "reviewer", mode: "subagent", model: { id: "claude-opus-5-5", providerID: "anthropic", variant: "high" } });
+    expect(agents.scout).toMatchObject({ id: "scout", mode: "subagent", steps: 9, model: { id: "claude-sonnet-5-5", providerID: "anthropic", variant: "high" } });
+    expect(agents.builder).toMatchObject({ id: "builder", mode: "subagent", system: "You are builder.", steps: 60 });
     expect(agents.lead!.system).toBe("x\nReview policy: never\ny");
     expect(blocked).toContain("helpers may not use helpers_status");
   });
@@ -130,7 +131,7 @@ describe("bundlePlugin", () => {
 describe("embedHarness", () => {
   test("keeps what the plugin needs: profiles and agents with their mode", () => {
     const data = embedHarness(resolvedFixture());
-    expect(Object.keys(data)).toEqual(["name", "version", "defaultAgent", "defaultProfile", "profiles", "agents"]);
+    expect(Object.keys(data)).toEqual(["name", "version", "defaultAgent", "defaultProfile", "profiles", "agents", "commands", "skills"]);
     expect(data.profiles.map((profile) => profile.id)).toEqual(["anthropic", "copilot", "default", "inherit"]);
     expect(data.profiles.find((profile) => profile.id === "default")!.agents).toEqual({
       lead: { model: "anthropic/claude-opus-5-5", effort: "xhigh" },
@@ -148,12 +149,36 @@ describe("embedHarness", () => {
 
   test("from src/: lead and three helpers", async () => {
     const data = embedHarness(resolveHarness(await load(root)));
-    expect(data.agents).toEqual([
-      { id: "lead", mode: "primary" },
-      { id: "scout", mode: "subagent" },
-      { id: "builder", mode: "subagent" },
-      { id: "reviewer", mode: "subagent" },
+    expect(data.agents.map((agent) => [agent.id, agent.mode])).toEqual([
+      ["lead", "primary"],
+      ["scout", "subagent"],
+      ["builder", "subagent"],
+      ["reviewer", "subagent"],
     ]);
+  });
+
+  test("agents, commands and skills are what the generated files say, as opencode reads them", () => {
+    const data = embedHarness(resolvedFixture());
+    const scout = data.agents.find((agent) => agent.id === "scout")!;
+    expect(scout).toMatchObject({ description: "Read-only lookups and investigations in code, docs or the web.", model: "anthropic/claude-sonnet-5-5#medium", steps: 30, system: "You are scout." });
+    expect(scout.permissions![0]).toEqual({ action: "edit", resource: "*", effect: "deny" });
+    expect(scout.permissions).toContainEqual({ action: "subagent", resource: "*", effect: "deny" });
+    expect(scout.permissions).toContainEqual({ action: "helpers_status", resource: "*", effect: "deny" });
+    expect(data.agents.find((agent) => agent.id === "lead")).toMatchObject({ color: "#0b5394", model: "anthropic/claude-opus-5-5#xhigh" });
+    expect(data.commands).toEqual([
+      { name: "plan", description: "Plan a piece of work with you", agent: "lead", template: "Plan: $ARGUMENTS" },
+      { name: "review", description: "Independent review of your changes", agent: "reviewer", subagent: true, template: "Review $ARGUMENTS" },
+    ]);
+    expect(data.skills).toEqual([
+      { id: "ecmwf-multi-agents-plan", name: "ecmwf-multi-agents-plan", description: "Plan file format and rules.", autoinvoke: false, content: "\n# Plan\n\nRules.\n" },
+    ]);
+  });
+
+  test("matterContent keeps what gray-matter keeps after the frontmatter", () => {
+    expect(matterContent("---\na: 1\n---\n\nBody\n")).toBe("\nBody\n");
+    expect(matterContent("---\na: 1\n---\r\nBody")).toBe("Body");
+    expect(matterContent("---\na: 1\n")).toBe("");
+    expect(matterContent("No frontmatter")).toBe("No frontmatter");
   });
 
   test("orders profile entries by agent, whatever the order in the profile file", () => {
@@ -172,6 +197,7 @@ describe("embedHarness", () => {
       ["profile inherit names unknown agents: build", (h) => (h.profiles[3]!.agents = { build: { model: "a/b" } })],
       ["profile inherit: lead has an effort but no model", (h) => (h.profiles[3]!.agents = { lead: { effort: "high" } })],
       ['command review names unknown agent "auditor"', (h) => (h.commands[1]!.agent = "auditor")],
+      ["command plan: the template runs a shell command", (h) => (h.commands[0]!.template = "Branch: !`git branch`")],
     ];
     for (const [message, change] of cases) {
       const harness = resolvedFixture();

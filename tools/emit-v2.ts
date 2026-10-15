@@ -87,7 +87,8 @@ export function v2Permissions(rules: readonly Rule[]): V2Rule[] {
   );
 }
 
-export function v2AgentFile(agent: ResolvedAgent, marker: string): OutputFile {
+/** The frontmatter of an agent file; the plugin embeds the same data (tools/bundle-plugin.ts). */
+export function v2AgentFrontmatter(agent: ResolvedAgent): { [key: string]: YamlValue } {
   checkId("agent", agent.id);
   const owner = `agent ${agent.id}`;
   // An empty body leaves the agent without a system prompt, and 2.0.16 then uses its own.
@@ -108,10 +109,15 @@ export function v2AgentFile(agent: ResolvedAgent, marker: string): OutputFile {
   }
   const permissions = v2Permissions(agent.permissions);
   if (permissions.length > 0) data.permissions = permissions;
-  return { path: `agents/${agent.id}.md`, content: withFrontmatter(data, agent.prompt, [marker]) };
+  return data;
 }
 
-export function v2CommandFile(command: ResolvedCommand, marker: string, modes: ReadonlyMap<string, AgentMode>): OutputFile {
+export function v2AgentFile(agent: ResolvedAgent, marker: string): OutputFile {
+  return { path: `agents/${agent.id}.md`, content: withFrontmatter(v2AgentFrontmatter(agent), agent.prompt, [marker]) };
+}
+
+/** The frontmatter of a command file. */
+export function v2CommandFrontmatter(command: ResolvedCommand, modes: ReadonlyMap<string, AgentMode>): { [key: string]: YamlValue } {
   checkId("command", command.id);
   const data: { [key: string]: YamlValue } = {
     description: command.description,
@@ -124,10 +130,15 @@ export function v2CommandFile(command: ResolvedCommand, marker: string, modes: R
   // helper instead of lead. A helper's command therefore always runs in a child session here,
   // whatever `subtask` says; the parent agent then gets a turn to relay the result.
   if (command.subtask || modes.get(command.agent) === "subagent") data.subagent = true;
-  return { path: `commands/${command.id}.md`, content: withFrontmatter(data, command.template, [marker]) };
+  return data;
 }
 
-export function v2SkillFile(skill: ResolvedSkill, marker: string): OutputFile {
+export function v2CommandFile(command: ResolvedCommand, marker: string, modes: ReadonlyMap<string, AgentMode>): OutputFile {
+  return { path: `commands/${command.id}.md`, content: withFrontmatter(v2CommandFrontmatter(command, modes), command.template, [marker]) };
+}
+
+/** The frontmatter of a skill file. */
+export function v2SkillFrontmatter(skill: ResolvedSkill): { [key: string]: YamlValue } {
   checkId("skill", skill.id);
   // The directory name is the skill id in 2.0.16; `name` is only a display label.
   const data: { [key: string]: YamlValue } = {
@@ -138,7 +149,11 @@ export function v2SkillFile(skill: ResolvedSkill, marker: string): OutputFile {
   // strings "true" and "false" here; the string keeps metadata a string map, as the Agent Skills
   // format asks.
   if (skill.hidden) data.metadata = { "opencode/autoinvoke": "false" };
-  return { path: `skills/${skill.id}/SKILL.md`, content: withFrontmatter(data, skill.body, [marker]) };
+  return data;
+}
+
+export function v2SkillFile(skill: ResolvedSkill, marker: string): OutputFile {
+  return { path: `skills/${skill.id}/SKILL.md`, content: withFrontmatter(v2SkillFrontmatter(skill), skill.body, [marker]) };
 }
 
 export const emitV2: Emitter = (harness: ResolvedHarness): OutputFile[] => {

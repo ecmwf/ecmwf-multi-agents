@@ -10,7 +10,7 @@ import { type Manifest, checkPackage, packProblems } from "./pack.ts";
 const MANIFEST: Manifest = {
   files: ["dist", "install.sh", "VERSION"],
   bin: { tool: "bin/tool.js" },
-  exports: { "./server": "./dist/opencode-v2/plugins/tool.js" },
+  exports: { "./server": "./dist/opencode-v2/plugins/ecmwf-multi-agents/index.js", "./tui": "./dist/opencode-v2/plugins/ecmwf-multi-agents/tui.js" },
 };
 
 const TRACKED = [
@@ -19,7 +19,8 @@ const TRACKED = [
   "VERSION",
   "bin/tool.js",
   "dist/opencode-v2/agents/lead.md",
-  "dist/opencode-v2/plugins/tool.js",
+  "dist/opencode-v2/plugins/ecmwf-multi-agents/index.js",
+  "dist/opencode-v2/plugins/ecmwf-multi-agents/tui.js",
   "dist/opencode-v2/skills/plan/SKILL.md",
   "install.sh",
   "package.json",
@@ -30,7 +31,8 @@ const PACKED = [
   "VERSION",
   "bin/tool.js",
   "dist/opencode-v2/agents/lead.md",
-  "dist/opencode-v2/plugins/tool.js",
+  "dist/opencode-v2/plugins/ecmwf-multi-agents/index.js",
+  "dist/opencode-v2/plugins/ecmwf-multi-agents/tui.js",
   "dist/opencode-v2/skills/plan/SKILL.md",
   "install.sh",
   "package.json",
@@ -112,9 +114,12 @@ describe.skipIf(Bun.which("npm") === null || Bun.which("git") === null)("npm pac
     try {
       expect(checkPackage(box).problems).toEqual([
         "npm would leave out dist/opencode-v2/agents/lead.md",
-        "npm would leave out dist/opencode-v2/plugins/tool.js",
+        "npm would leave out dist/opencode-v2/plugins/ecmwf-multi-agents/index.js",
+        "npm would leave out dist/opencode-v2/plugins/ecmwf-multi-agents/tui.js",
         "npm would leave out dist/opencode-v2/skills/plan/SKILL.md",
         "npm would not pack dist/opencode-v2/, which the package needs",
+        "npm would not pack dist/opencode-v2/plugins/ecmwf-multi-agents/index.js, which the package needs",
+        "npm would not pack dist/opencode-v2/plugins/ecmwf-multi-agents/tui.js, which the package needs",
       ]);
     } finally {
       rmSync(path.join(box, "dist/opencode-v2/.gitignore"));

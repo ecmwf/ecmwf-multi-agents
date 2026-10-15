@@ -23,7 +23,7 @@ import { randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { bundlePlugin } from "../tools/bundle-plugin.ts";
+import { pluginFiles } from "../tools/bundle-plugin.ts";
 import { V2_VERSION, emitV2 } from "../tools/emit-v2.ts";
 import type { OutputFile, ResolvedHarness } from "../tools/types.ts";
 import { WAKE_TEXT } from "./answer-first.ts";
@@ -448,9 +448,10 @@ describe.skipIf(!v2Available)(`background helpers in opencode ${V2_VERSION}`, ()
 
     beforeAll(async () => {
       await server.stop();
-      const plugin = await bundlePlugin(root, modelLessFixture());
-      mkdirSync(path.join(box.config, "plugins"), { recursive: true });
-      writeFileSync(path.join(box.config, "plugins", "ecmwf-multi-agents.js"), plugin);
+      for (const file of await pluginFiles(root, modelLessFixture())) {
+        mkdirSync(path.dirname(path.join(box.config, file.path)), { recursive: true });
+        writeFileSync(path.join(box.config, file.path), file.content);
+      }
       writeFileSync(path.join(box.config, "ecmwf-multi-agents.jsonc"), '{ "profile": "inherit" }\n');
       const password = randomBytes(16).toString("hex");
       auth = `Basic ${btoa(`opencode:${password}`)}`;
