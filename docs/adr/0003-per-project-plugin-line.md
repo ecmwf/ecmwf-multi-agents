@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # 0003. Switching the harness on per project with a plugin line
 
-Status: accepted. Date: 2026-10-13.
+Status: Superseded by ADR 0004. Date: 2026-10-13.
 
 ## Context
 
