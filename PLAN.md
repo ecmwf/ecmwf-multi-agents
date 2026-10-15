@@ -647,12 +647,14 @@ merges.
   done here: the plugin as a folder (`index.js`, `tui.js`; `server.js` and `tui.js` at the
   checkout root re-export them), the RPC (`doctor`, `problems`) and the toast entry, and
   `install.sh doctor` through the RPC (the task "Plugin RPC `doctor` and `problems`" below)
-- [~] Samet: Agents brought by a `plugins` line keep their own rules over the user's global
+- [x] Samet: Agents brought by a `plugins` line keep their own rules over the user's global
   `permissions`: opencode appends a config's top-level `permissions` after a
   plugin-registered agent's rules but before an agent file's, so a global "allow all shell"
   would loosen `scout`'s read-only shell rules only when the harness comes from the line.
-  Candidate: the plugin's `permission` `evaluate` hook (it sees allow and ask decisions)
-  re-applies the agent's own rules; integration test with a global allow-all
+  Done: a hidden probe agent receives every rule opencode adds to all agents; the late
+  settings transform reads them, removes the probe and moves each agent's own rules after
+  them, so the order equals an installed-files setup (`plugin/rule-order.ts`); a global
+  allow-all no longer loosens `scout`, and a user's stricter deny still holds
 - [x] Samet: Inline `/review` and `/progress` owned by the plugin, with the `context` hook
   isolation and the switch back; integration tests on the stand-in (idle, busy, report during
   the review); also in a project switched on by a `plugins` line
