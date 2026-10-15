@@ -73,8 +73,16 @@ Tiago Quintino and Samet Demir develop this repository together, each with their
 - Versions are `MAJOR.MINOR.MICRO` without a `v`; the tag is exactly the version. The
   `VERSION` file is the single source; `package.json` and the generated plugin carry copies.
 - Record user-visible changes under `## [Unreleased]` in `CHANGELOG.md` as you make them.
-- Release only when your user asks: `make release X.Y.Z` runs the gate, sets the version, moves
-  the `[Unreleased]` entries under it, rebuilds `dist/`, runs the gate again, commits
+- Release only when your user asks: `make release X.Y.Z` checks the files npm would publish
+  (`make pack-check`, which needs npm), runs the gate, sets the version, moves the
+  `[Unreleased]` entries under it, rebuilds `dist/`, runs the gate again, commits
   `chore: release X.Y.Z`, pushes, tags and publishes the GitHub release. Asking for the release
   is the approval for its push. `DRY_RUN=1` previews; after a failure, fix the cause and run the
   same command again, and it continues where it stopped.
+- Pushing the tag also publishes `@ecmwf.int/multi-agents` to npm:
+  `.github/workflows/release.yml` checks the tag against `VERSION`, runs the gate and
+  `make pack-check`, skips a version npm already has, and runs `npm publish` through npm
+  trusted publishing, with no token. After `make release`, follow that run
+  (`gh run list --workflow release.yml`, then `gh run watch <id> --exit-status`) and confirm
+  with `npm view @ecmwf.int/multi-agents version`. npm's trusted publisher names `release.yml`,
+  so keep that file name.

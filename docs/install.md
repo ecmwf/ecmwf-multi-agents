@@ -26,6 +26,17 @@ cd ~/.local/share/ecmwf-multi-agents
 ./install.sh
 ```
 
+Or with npm, which needs Node.js:
+
+```sh
+npm install -g @ecmwf.int/multi-agents
+ecmwf-multi-agents
+```
+
+`ecmwf-multi-agents` runs `install.sh` from the installed package with the same commands and
+options, so everywhere below `./install.sh` can be `ecmwf-multi-agents`, for example
+`ecmwf-multi-agents doctor`. The files are then linked from the package folder.
+
 This links the agents, commands, skills and plugin into `~/.config/opencode/` (or
 `$XDG_CONFIG_HOME/opencode/`), records what it installed in
 `~/.config/opencode/ecmwf-multi-agents/installed.txt`, and creates your settings file
@@ -144,6 +155,8 @@ opencode to load them. Run `./install.sh` again when files were added or removed
 `doctor` reports, and always for copied installs (projects and central installs). Re-running
 is safe: unchanged files stay as they are. Projects switched on by a plugin line need nothing:
 they follow the checkout, whatever files a version adds or removes.
+
+With npm, run `npm install -g @ecmwf.int/multi-agents`, then `ecmwf-multi-agents`.
 
 ## Checking an installation
 

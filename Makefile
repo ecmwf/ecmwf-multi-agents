@@ -30,7 +30,7 @@ endif
 endif
 
 .PHONY: help setup build dist-check lint test check all integration evals version version-check \
-        release clean
+        pack-check release clean
 
 help: ## Show this help
 	@if [ -t 1 ]; then c='\033[36m'; r='\033[0m'; else c=''; r=''; fi; \
@@ -86,13 +86,17 @@ endif
 version-check: ## Verify VERSION, package.json and CHANGELOG.md agree
 	$(BUN) tools/version.ts --check
 
-release: ## Release in one step: gate, set version, changelog, dist/, commit, push, tag, publish. make release X.Y.Z [DRY_RUN=1]
+pack-check: ## Compare the files npm would publish with those git tracks (needs npm)
+	$(BUN) tools/pack.ts
+
+release: ## Release in one step: package check, gate, set version, changelog, dist/, commit, push, tag, publish. make release X.Y.Z [DRY_RUN=1]
 ifeq ($(VERSION),)
 	@echo "error: name the version: make release X.Y.Z (DRY_RUN=1 previews)" >&2; exit 2
 else
 	@[[ "$(VERSION)" =~ ^[0-9]+\.[0-9]+\.[0-9]+$$ ]] || { \
 		echo "error: version must be MAJOR.MINOR.MICRO without a 'v' prefix, got '$(VERSION)'" >&2; \
 		exit 2; }
+	$(BUN) tools/pack.ts
 	$(BUN) tools/release.ts $(VERSION) $(if $(DRY_RUN),--dry-run)
 endif
 

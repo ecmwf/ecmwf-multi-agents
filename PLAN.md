@@ -233,7 +233,29 @@ Findings to act on for 0.2.0:
   model, opencode writes nothing into the checkout, and a project without the line sees none
   of it. opencode 2.0.16 ignores the line. ADR 0003
 - [x] Tiago: Release 0.4.0
-- [~] Tiago: npm package (plugin that also carries agents, commands and skills)
+- [x] Tiago: npm package (plugin that also carries agents, commands and skills):
+  `@ecmwf.int/multi-agents`, public, in ECMWF's npm organisation `ecmwf.int` from the account
+  `ecmwf` (software@ecmwf.int), with `dist/`, `install.sh` and `VERSION` (the installer
+  records the version from it). Its command `ecmwf-multi-agents` (`bin/ecmwf-multi-agents.js`)
+  runs `install.sh` from the package's real folder, since npm installs it as a symlink.
+  `.github/workflows/release.yml` publishes from each version tag through npm trusted
+  publishing (GitHub OIDC, no token, with provenance) after the gate and `make pack-check`
+  (the files npm would pack against those git tracks, also run by `make release` before it
+  pushes), and skips a version npm already has; run by hand it is a dry run that fails unless
+  npm got a token for the OIDC token
+- [ ] Tiago: once #4 is merged, in a terminal on the server (npm prints each login and
+  approval link; open it in a browser elsewhere): `npm login --browser=false`; publish once by
+  hand from a clean `main`, `npm publish --access public --provenance=false` (npm sets up
+  trusted publishing only for a package that exists, and provenance needs CI); add the trusted
+  publisher, `npx -y npm@11 trust github --file release.yml --repo ecmwf/ecmwf-multi-agents
+  --allow-publish` (or on npmjs.com with "npm publish" ticked under "Allowed actions"); the
+  first `make release` within 2 days, since a new trusted publisher expires unless it has
+  published by then; then `npm access set mfa=publish` (require two-factor authentication,
+  disallow tokens) and `npm logout`
+- [ ] `install.sh` names itself `./install.sh` in its help and advice, also when run as the npm
+  command `ecmwf-multi-agents`; name the command it was run as
+- [ ] A project's plugin line naming the npm package (`"plugin": ["@ecmwf.int/multi-agents"]`)
+  on opencode 1.x: test that the plugin brings the agents, commands and skills from the package
 - [ ] Central install on opencode 2 (generated `opencode.json` through `OPENCODE_CONFIG`)
 - [x] Tiago: opencode 2.0.28 (on Tiago's machine since 2026-10-14, with no 1.x beside it): the
   pin moved from 2.0.16 to 2.0.28 (`V2_VERSION`, the installer's `V2_PINNED`, tests and docs;
@@ -670,3 +692,12 @@ shows the wall clock and cost against 0.1.0; `/guide` says what the user will se
   0.5.2 keeps its 19 files, opencode 1.18.35 shows `lead` and the six commands, and `doctor`
   finds no problems; on opencode 2.0.28 the install gives no warning and `doctor` reports
   `OK opencode 2.0.28`.
+- 2026-10-15: The npm package merged as #4: `@ecmwf.int/multi-agents`, in ECMWF's npm
+  organisation `ecmwf.int` like `@ecmwf.int/tensogram` (`ecmwf` is the account that publishes
+  them, not an organisation). Version tags publish it through npm trusted publishing once
+  Tiago has published 0.5.2 by hand and added the trusted publisher. tensogram still publishes
+  with a token from a self-hosted runner, which trusted publishing does not support; its skip
+  of published versions and its package contents check were borrowed, the check as
+  `make pack-check`, which `make release` runs too. Checked: gate 617 pass; `npm install -g`
+  of the packed tarball with npm 11.21.0 installs 19 files and `doctor` finds no problems;
+  integration on 1.18.35, 1.19.0 and 2.0.28: 120 pass.

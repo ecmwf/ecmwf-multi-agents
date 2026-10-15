@@ -11,6 +11,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ## [Unreleased]
 
+### Added
+
+- npm package `@ecmwf.int/multi-agents`: `npm install -g @ecmwf.int/multi-agents`, then
+  `ecmwf-multi-agents`, which runs the installer from the package with the same commands and
+  options. Each release is published to npm from its tag by GitHub Actions, through npm
+  trusted publishing and with provenance.
+
 ## [0.5.2] - 2026-10-14
 
 ### Changed
