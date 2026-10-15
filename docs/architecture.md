@@ -558,9 +558,12 @@ do. The template names `skills` and the plugin folder in `plugins` with the fold
 files into DIR, fills in DIR's absolute path, records the files with `mode=central`, writes
 the site settings only for `--profile` or `--review`, and makes the folder read-only. The
 plugin loads through the central config and registers the harness as it does from a `plugins`
-line; the config's loader runs after it, so the central agents and commands win, as files do:
-the same content, with each agent's rules listed twice to the same effect. The plugin reads the site file from its `site` option, before
-the user's and the project's settings files.
+line; the config's loader runs after it, so the central agents and commands win, as files do,
+with the same content. Two things still come from the plugin's late transforms, which run after
+that loader: `/review` and `/progress` are registered again and answer inline, and each agent's
+own rules end up after the user's global `permissions` (the central config's rules already come
+after them, and the plugin's copy is moved there too). The plugin reads the site file from its
+`site` option, before the user's and the project's settings files.
 
 Because the user's background service reads `OPENCODE_CONFIG` only when it starts,
 `install.sh central-enable DIR` runs `opencode service set env OPENCODE_CONFIG
