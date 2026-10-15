@@ -19,27 +19,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
   back from the helper and wake `lead` after it. A command sent while `lead` is answering waits
   until it has answered. With the harness installed as files but without the plugin, the
   commands still run in a child session.
-
-### Changed
-
-- opencode 2 is tested on 2.0.29, the version in use now; 2.0.28 still works and now gets the
-  installer's warning for an untested version.
-
-### Fixed
-
-- On opencode 2, the note opencode adds to continue a response that was cut off (interrupted,
-  over the output limit, or stopped by a server restart) no longer counts as a new question
-  from you: a task report is held back only while `lead` is still answering your own question.
-
-## [0.5.3] - 2026-10-15
-
-### Added
-
-- npm package `@ecmwf.int/multi-agents`: `npm install -g @ecmwf.int/multi-agents`, then
-  `ecmwf-multi-agents`, which runs the installer from the package with the same commands and
-  options. Each release is published to npm from its tag by GitHub Actions, through npm
-  trusted publishing and with provenance.
-- Every push and pull request runs `make check` and `make pack-check` on GitHub Actions.
 - Switch the harness on per project with one line in the project's `opencode.json`:
   `"plugins": ["@ecmwf.int/multi-agents@X.Y.Z"]`, or the path of a checkout such as
   `"{env:HOME}/.local/share/ecmwf-multi-agents"`. The plugin registers the agents, commands,
@@ -53,10 +32,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ### Changed
 
+- opencode 2 is tested on 2.0.29, the version in use now; 2.0.28 still works and now gets the
+  installer's warning for an untested version.
 - The npm package's `./server` export names the opencode 2 plugin, and `./tui` its TUI entry.
 - The plugin is a folder, `plugins/ecmwf-multi-agents/`, with `index.js` and `tui.js`; an
   install links the folder as a whole and removes the single-file plugin of earlier releases.
 - The installer's unit tests no longer find an opencode installed in a system folder.
+
+### Fixed
+
+- On opencode 2, the note opencode adds to continue a response that was cut off (interrupted,
+  over the output limit, or stopped by a server restart) no longer counts as a new question
+  from you: a task report is held back only while `lead` is still answering your own question.
 
 ### Removed
 
@@ -67,9 +54,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 - With it go the installer's `--platform` and `--central` options, the per-project plugin line
   for opencode 1.x, the background flag advice in the installer and `doctor`, `doctor`'s checks
   that started opencode 1.x, the files in `dist/opencode-v1/`, and the plugin parts that only
-  opencode 1.x used: the shell guard after "Allow always", `/review` and `/progress` answering
-  in your own session, the pinning of messages in a helper's session, and settings problems
-  shown on screen.
+  opencode 1.x used: the shell guard after "Allow always" (on opencode 2 a configured deny
+  always holds) and the pinning of messages in a helper's session (on opencode 2 you cannot
+  type in one).
+
+## [0.5.3] - 2026-10-15
+
+### Added
+
+- npm package `@ecmwf.int/multi-agents`: `npm install -g @ecmwf.int/multi-agents`, then
+  `ecmwf-multi-agents`, which runs the installer from the package with the same commands and
+  options. Each release is published to npm from its tag by GitHub Actions, through npm
+  trusted publishing and with provenance.
+- Every push and pull request runs `make check` and `make pack-check` on GitHub Actions.
 
 ## [0.5.2] - 2026-10-14
 
