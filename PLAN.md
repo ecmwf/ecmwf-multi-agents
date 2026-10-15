@@ -255,11 +255,14 @@ Findings to act on for 0.2.0:
   two-factor authentication, which npm now offers as a security key only; Tiago set one up on
   npmjs.com. 0.5.2 was published by hand on 2026-10-15, and 0.5.3 validated the trusted
   publisher. npm added a placeholder version `0.0.0-stage` itself, not tagged `latest`
-- [ ] `install.sh` names itself `./install.sh` in its help and advice, also when run as the npm
-  command `ecmwf-multi-agents`; name the command it was run as
-- [ ] A project's plugin line naming the npm package (`"plugin": ["@ecmwf.int/multi-agents"]`)
-  on opencode 1.x: test that the plugin brings the agents, commands and skills from the package
-- [ ] Central install on opencode 2 (generated `opencode.json` through `OPENCODE_CONFIG`)
+- [x] Samet: `install.sh` names itself `./install.sh` in its help and advice, also when run as
+  the npm command `ecmwf-multi-agents`; name the command it was run as (be8f1ac, with the
+  central install)
+- [x] Superseded by Phase 9: a project's plugin line naming the npm package
+  (`"plugin": ["@ecmwf.int/multi-agents"]`) on opencode 1.x. opencode 1.x is no longer
+  supported; on opencode 2 the packed package named in `plugins` is tested instead
+- [x] Superseded by Phase 9: central install on opencode 2 (generated `opencode.json` through
+  `OPENCODE_CONFIG`), done there
 - [x] Tiago: opencode 2.0.28 (on Tiago's machine since 2026-10-14, with no 1.x beside it): the
   pin moved from 2.0.16 to 2.0.28 (`V2_VERSION`, the installer's `V2_PINNED`, tests and docs;
   ADR 0001 amended). The agent and model schemas and the plugin API are unchanged; the
@@ -539,8 +542,8 @@ hand-off is recorded only, since a plan may have none. Measured on 1.18.35; the 
   run: the runner drives the 1.x API only and refuses a 2.x binary; a 2.x eval runner is its
   own task (below), and the skill's 2.0.16 side rests on the integration suite's pinned
   facts (the `subagent` tool's `background`, each completion a wake)
-- [ ] Eval runner for opencode 2.0.16: the 2.x API routes (`/api/session`, `prompt` with
-  `text`, `location[directory]`, the password header), so the cases can run on both platforms
+- [x] Superseded by Phase 9: eval runner for opencode 2.0.16, so the cases can run on both
+  platforms. The runner now drives opencode 2 only (2.0.29)
 - [ ] `evals/checks.ts`: `recordOnly` is a list of variants on `backgroundHandoffs`,
   `remoteUnchanged` and `pushRefused`, so `backgroundHandoffs(1, ["harness"])` reads as a
   variant filter; a `recordOnly: boolean` option would say what it means
@@ -551,7 +554,8 @@ hand-off is recorded only, since a plan may have none. Measured on 1.18.35; the 
 - [ ] `/execute` is also the name of opencode 2's Code Mode tool; a command and a tool are
   different namespaces and nothing clashed on 2.0.16, but watch for a built-in `/execute`
   command in later versions (the clash note lists where to look). Checked on 2.0.29: no clash,
-  the built-in commands are still `init` and `review` (`docs/research/command-clashes.md`)
+  2.0.29 has no built-in `/execute`; its built-in commands are still `init` and `review`
+  (`docs/research/command-clashes.md`)
 
 8c. Follow-ups from the review of #3, and release
 
@@ -676,6 +680,12 @@ merges.
 - [x] Samet: Answer-first ignores the 2.0.29 output-limit and incomplete-stream notes; pin
   2.0.29: the notes (and the server-restart note) are no request and the cut-off step before
   one ends no turn; pinned to 2.0.29, integration suites pass on it
+- [~] Samet: Tiago's review of #5 (changes requested at b708cf7): evals load config from
+  folders above their sandbox, `uninstall --central` advises `rm -rf` for any folder, a
+  message typed during an inline `/review` reaches the helper, 0.5.x central installs cannot
+  be upgraded, the no-push check misses opencode 2's `write`/`edit`/`patch` input, docs that
+  contradict the code, upgrade steps, `doctor` and old `"plugin"` lines, a stray file drops
+  the plugin from the install record, and smaller items
 - [~] Samet: Docs for opencode 2 only (README, install, architecture, guide skill), changelog
 - [~] Samet: Real-model evals on opencode 2 (`plan-execute`, `execute-chat`,
   `review-background`, inline `/review` cost against the 1.x numbers)
