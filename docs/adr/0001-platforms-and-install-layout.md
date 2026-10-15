@@ -5,7 +5,8 @@ SPDX-License-Identifier: Apache-2.0
 
 # 0001. Platforms, file formats and install layout
 
-Status: accepted. Date: 2026-10-11.
+Status: accepted, amended by ADR 0004 (opencode 2 only: supported versions, the two
+outputs, the 1.x plugin items, and central install on opencode 2). Date: 2026-10-11.
 
 ## Context
 

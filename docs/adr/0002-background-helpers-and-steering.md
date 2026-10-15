@@ -5,7 +5,8 @@ SPDX-License-Identifier: Apache-2.0
 
 # 0002. Background helpers, steering and cancel
 
-Status: accepted. Date: 2026-10-12.
+Status: accepted, amended by ADR 0004 (opencode 2 only: the 1.x pinning, cancel and wake
+gaps and flag no longer apply). Date: 2026-10-12.
 
 ## Context
 
