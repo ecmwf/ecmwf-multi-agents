@@ -771,6 +771,39 @@ describe("doctor --project for a project switched on by a plugins line", () => {
     expect(out).toContain(`FAIL  ${path.join(dir, "..", NAME)} is not a checkout of ${NAME}`);
   });
 
+  test("an opencode 1 \"plugin\" line, which opencode 2 still reads: switched on, with advice to rename the key", () => {
+    const box = makeBox();
+    const checkout = path.join(box.home, ".local", "share", NAME);
+    write(path.join(checkout, "package.json"), `{ "name": "${NPM}", "version": "1.0.0" }\n`);
+    write(path.join(checkout, "server.js"), "export { default } from './x.js';\n");
+    write(path.join(checkout, "dist", "opencode-v2", PLUGIN, "index.js"), `${MARKER_JS}\n`);
+    write(path.join(checkout, "dist", "opencode-v2", PLUGIN, "tui.js"), `${MARKER_JS}\n`);
+    const dir = project(box, { $schema: "https://opencode.ai/config.json", plugin: [`{env:HOME}/.local/share/${NAME}`] });
+    const { code, out } = run(box, ["doctor", "--project", dir]);
+    expect(code).toBe(0);
+    expect(out).toContain(`OK    switched on by the plugins line in ${path.join(dir, "opencode.json")}: {env:HOME}/.local/share/${NAME}`);
+    expect(out).toContain(`WARN  ${path.join(dir, "opencode.json")} names the harness under "plugin", as opencode 1 did; opencode 2 still reads that key, but rename it to "plugins"`);
+    expect(out).toContain(`OK    the checkout ${checkout} has the plugin folder`);
+    expect(out).not.toContain("not switched on");
+  });
+
+  test("a line in a comment does not count, and a // inside a string is not a comment", () => {
+    const box = makeBox();
+    const dir = path.join(box.dir, "proj");
+    write(
+      path.join(dir, "opencode.jsonc"),
+      `{\n  "$schema": "https://opencode.ai/config.json",\n  // "plugins": ["${NPM}"],\n  /* "plugin": ["${NPM}"], */\n  "plugins": ["some-other-plugin@1.0.0"]\n}\n`,
+    );
+    const commented = run(box, ["doctor", "--project", dir]);
+    expect(commented.code).toBe(1);
+    expect(commented.out).toContain(`FAIL  ${NAME} is not switched on here`);
+    write(path.join(dir, "opencode.jsonc"), `{\n  "$schema": "https://opencode.ai/config.json", // the schema\n  "plugins": [\n    /* pinned */ "${NPM}@0.6.0", // the harness\n  ],\n}\n`);
+    const { code, out } = run(box, ["doctor", "--project", dir]);
+    expect(code).toBe(0);
+    expect(out).toContain(`OK    switched on by the plugins line in ${path.join(dir, "opencode.jsonc")}: ${NPM}@0.6.0`);
+    expect(out).not.toContain('under "plugin"');
+  });
+
   test("no line and no files: not switched on", () => {
     const box = makeBox();
     const dir = project(box, { plugins: ["some-other-plugin@1.0.0"] });

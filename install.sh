@@ -1098,26 +1098,29 @@ doctor_masking() {
 
 # ---------------------------------------------------------------- doctor: the plugins line
 
-# The entries of the "plugins" list of a JSON or JSONC config file, one per line: strings, and
-# the "package" of an object entry.
+# The entries of the list under key $2 ("plugins", or "plugin" as opencode 1 named it) of a JSON
+# or JSONC config file, one per line after the key and a tab: strings, and the "package" of an
+# object entry. Comments are dropped first, so a commented-out line does not count.
 plugin_entries() {
-	awk '
+	awk -v key="$2" '
+	function blank(c) { return c == " " || c == "\t" || c == "\n" || c == "\r" }
 	{ s = s $0 "\n" }
 	END {
 		n = length(s)
-		p = index(s, "\"plugins\"")
-		if (p == 0) exit
-		i = p + 9
-		while (i <= n && substr(s, i, 1) != "[") {
+		t = ""
+		i = 1
+		while (i <= n) {
 			c = substr(s, i, 1)
-			if (c != " " && c != "\t" && c != "\n" && c != "\r" && c != ":") exit
-			i++
-		}
-		i++
-		depth = 1
-		key = ""
-		while (i <= n && depth > 0) {
-			c = substr(s, i, 1)
+			if (c == "\"") {
+				j = i + 1
+				while (j <= n && substr(s, j, 1) != "\"") {
+					if (substr(s, j, 1) == "\\") j++
+					j++
+				}
+				t = t substr(s, i, j - i + 1)
+				i = j + 1
+				continue
+			}
 			if (c == "/" && substr(s, i + 1, 1) == "/") {
 				while (i <= n && substr(s, i, 1) != "\n") i++
 				continue
@@ -1128,6 +1131,30 @@ plugin_entries() {
 				i = i + j + 3
 				continue
 			}
+			t = t c
+			i++
+		}
+		s = t
+		n = length(s)
+		name = key
+		pattern = "\"" key "\""
+		from = 1
+		found = 0
+		while ((p = index(substr(s, from), pattern)) > 0) {
+			i = from + p - 1 + length(pattern)
+			from = i
+			while (i <= n && blank(substr(s, i, 1))) i++
+			if (substr(s, i, 1) != ":") continue
+			i++
+			while (i <= n && blank(substr(s, i, 1))) i++
+			if (substr(s, i, 1) == "[") { found = 1; break }
+		}
+		if (!found) exit
+		i++
+		depth = 1
+		key = ""
+		while (i <= n && depth > 0) {
+			c = substr(s, i, 1)
 			if (c == "[" || c == "{") depth++
 			else if (c == "]" || c == "}") depth--
 			else if (c == "\"") {
@@ -1141,10 +1168,10 @@ plugin_entries() {
 					i++
 				}
 				j = i + 1
-				while (substr(s, j, 1) == " " || substr(s, j, 1) == "\t") j++
+				while (blank(substr(s, j, 1))) j++
 				if (substr(s, j, 1) == ":") key = out
 				else {
-					if (depth == 1 || (depth == 2 && key == "package")) print out
+					if (depth == 1 || (depth == 2 && key == "package")) print name "\t" out
 					key = ""
 				}
 			}
@@ -1184,10 +1211,14 @@ find_plugin_line() {
 	LINE_ENTRY=
 	LINE_FILE=
 	LINE_DIR=
+	LINE_KEY=
 	for line_file in "$1/opencode.json" "$1/opencode.jsonc" "$1/.opencode/opencode.json" "$1/.opencode/opencode.jsonc"; do
 		[ -f "$line_file" ] || continue
-		plugin_entries "$line_file" >"$DOCTOR_TMP/entries" || continue
-		while IFS= read -r line_entry; do
+		# opencode 2 still reads opencode 1's "plugin" key as "plugins".
+		for line_key in plugins plugin; do
+			plugin_entries "$line_file" "$line_key"
+		done >"$DOCTOR_TMP/entries" || continue
+		while IFS="$(printf '\t')" read -r line_key line_entry; do
 			case $line_entry in
 			"$NPM_NAME" | "$NPM_NAME"@*)
 				LINE_KIND=npm
@@ -1211,6 +1242,7 @@ find_plugin_line() {
 			esac
 			LINE_ENTRY=$line_entry
 			LINE_FILE=$line_file
+			LINE_KEY=$line_key
 			return 0
 		done <"$DOCTOR_TMP/entries"
 	done
@@ -1218,6 +1250,9 @@ find_plugin_line() {
 
 check_plugin_line() {
 	ok "switched on by the plugins line in $LINE_FILE: $LINE_ENTRY"
+	if [ "$LINE_KEY" = plugin ]; then
+		note "$LINE_FILE names the harness under \"plugin\", as opencode 1 did; opencode 2 still reads that key, but rename it to \"plugins\""
+	fi
 	case $LINE_KIND in
 	npm)
 		ok "opencode installs the package $LINE_ENTRY itself; the check below shows whether it loaded"
