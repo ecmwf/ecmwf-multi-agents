@@ -688,7 +688,9 @@ cmd_central() {
 		die "unknown profile: $PROFILE_OPT. Choose one of: $(profile_names)"
 	fi
 	if [ -e "$CENTRAL" ] && ! is_central_dir "$CENTRAL"; then
-		[ -d "$CENTRAL" ] && [ -z "$(ls -A -- "$CENTRAL")" ] || die "$CENTRAL is not empty and holds no central install of $NAME; choose a new or empty folder."
+		if [ ! -d "$CENTRAL" ] || [ -n "$(ls -A -- "$CENTRAL")" ]; then
+			die "$CENTRAL is not empty and holds no central install of $NAME; choose a new or empty folder."
+		fi
 	fi
 	detect_versions
 	if [ -z "$V2_VERSION" ]; then
