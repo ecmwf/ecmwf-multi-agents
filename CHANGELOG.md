@@ -11,6 +11,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ## [Unreleased]
 
+### Upgrading from 0.5.x
+
+- This release needs opencode 2. To stay on opencode 1.x, keep 0.5.3: `git checkout 0.5.3` in
+  the checkout, or `npm install -g @ecmwf.int/multi-agents@0.5.3`.
+- After `git pull`, run `./install.sh` again (with npm, `npm install -g
+  @ecmwf.int/multi-agents`, then `ecmwf-multi-agents`): until then a linked install points at
+  files this release deleted, and `doctor` reports the install made for opencode 1 as a FAIL.
+- In a project switched on by a line in its `opencode.json`, rename the `"plugin"` key to
+  `"plugins"`.
+- Central install: run the same `install.sh --central DIR` again on the folder, which
+  replaces the 0.5.x install in place. In the module file, replace the `OPENCODE_CONFIG_DIR`
+  line with `OPENCODE_CONFIG` set to `DIR/opencode.json`, and drop the
+  `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS` line. Each user then loads the new module and
+  runs `install.sh central-enable DIR` once. While `OPENCODE_CONFIG_DIR` still names the
+  folder, a user's opencode 2 service does not start, and `doctor` reports a FAIL. The steps
+  are in `docs/install.md`.
+
 ### Added
 
 - On opencode 2, `/review` and `/progress` answer in your own session again: the reviewer or a
