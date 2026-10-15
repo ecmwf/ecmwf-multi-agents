@@ -19,10 +19,14 @@
 // the plugin folder loads with its TUI entry; and `/review`, which the plugin registers again
 // after activation, is answered by the reviewer in the user's own session (inline.ts), with no
 // child session, and a report that arrives later wakes lead.
+//
+// A fifth project names the npm package itself, packed from this repository with `npm pack`, as
+// `@ecmwf.int/multi-agents@file:<tarball>`: opencode installs it through its own npm path into
+// the sandbox's cache, as it would a published version. That test needs npm and skips without it.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { embedHarness, pluginFiles } from "../tools/bundle-plugin.ts";
@@ -46,6 +50,9 @@ const root = path.resolve(import.meta.dir, "..");
 const sandboxScript = path.join(root, "tools", "sandbox.sh");
 const NAME = "ecmwf-multi-agents";
 const AGENTS = ["lead", "scout", "builder", "reviewer"];
+const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as { name: string; version: string };
+const npmAvailable = Bun.which("npm") !== null;
+if (v2Available && !npmAvailable) console.warn("skipping the packed npm package test: npm was not found (it comes with Node.js)");
 
 const ISOLATION = {
   OPENCODE_DISABLE_EXTERNAL_SKILLS: "1",
@@ -91,6 +98,29 @@ const GLOBAL_PERMISSIONS = [
   { action: "edit", resource: "*", effect: "allow" },
   { action: "shell", resource: "touch user-denied*", effect: "deny" },
 ];
+
+/** The npm package of this repository, packed as `npm pack` would publish it; returns the tarball. */
+function npmPack(destination: string): string {
+  mkdirSync(destination, { recursive: true });
+  const result = Bun.spawnSync(["npm", "pack", "--json", "--ignore-scripts", "--pack-destination", destination], {
+    cwd: root,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...process.env, npm_config_update_notifier: "false", npm_config_cache: path.join(destination, ".npm") },
+  });
+  if (result.exitCode !== 0) throw new Error(`npm pack failed: ${result.stderr.toString().trim()}`);
+  const filename = (JSON.parse(result.stdout.toString()) as Array<{ filename?: string }>)[0]?.filename;
+  if (!filename) throw new Error(`npm pack did not name its tarball: ${result.stdout.toString().slice(0, 200)}`);
+  return path.join(destination, filename);
+}
+
+/** The folders, below dir, that hold an installed copy of the named package. */
+function installed(dir: string, name: string): string[] {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { recursive: true, encoding: "utf8" })
+    .filter((entry) => entry.endsWith(path.join("node_modules", name, "package.json")))
+    .map((entry) => path.dirname(path.join(dir, entry)));
+}
 
 /**
  * A stand-in model: the reviewer approves, lead says it is done, and an agent asked `TOUCH <name>`
@@ -171,7 +201,7 @@ describe.skipIf(!v2Available)(`a project's plugins line in opencode ${V2_VERSION
   let stderr = "";
   let model: ReturnType<typeof standIn>;
   let embedded: EmbeddedHarness;
-  const projects = { line: "", files: "", both: "", none: "", run: "", runFiles: "" };
+  const projects = { line: "", files: "", both: "", none: "", run: "", runFiles: "", packed: "" };
 
   const call = async <T = unknown>(method: string, route: string, project: string, body?: unknown): Promise<{ status: number; data: T }> => {
     const target = new URL(route, url);
@@ -192,8 +222,8 @@ describe.skipIf(!v2Available)(`a project's plugins line in opencode ${V2_VERSION
     if (status !== 200) throw new Error(`GET ${route}: HTTP ${status}`);
     return data;
   };
-  const active = (project: string) =>
-    within(60_000, `the plugin to be active in ${path.basename(project)}`, async () => {
+  const active = (project: string, ms = 60_000) =>
+    within(ms, `the plugin to be active in ${path.basename(project)}`, async () => {
       const plugins = await get<Array<{ id?: string; state?: { status?: string }; features?: { tui?: boolean } }>>("/api/plugin", project);
       return plugins.find((plugin) => plugin.id === NAME && plugin.state?.status === "active");
     });
@@ -267,6 +297,7 @@ describe.skipIf(!v2Available)(`a project's plugins line in opencode ${V2_VERSION
     const globalConfig = path.join(box, "home", ".config", "opencode");
     mkdirSync(globalConfig, { recursive: true });
     writeFileSync(path.join(globalConfig, "opencode.json"), `${JSON.stringify({ permissions: GLOBAL_PERMISSIONS }, null, 2)}\n`);
+    if (npmAvailable) projects.packed = gitProject(path.join(box, "packed"), { plugins: [`${pkg.name}@file:${npmPack(path.join(box, "pack"))}`] });
 
     const password = randomBytes(16).toString("hex");
     auth = `Basic ${btoa(`opencode:${password}`)}`;
@@ -413,6 +444,44 @@ describe.skipIf(!v2Available)(`a project's plugins line in opencode ${V2_VERSION
     expect(none.status).not.toBe(200);
     expect(none.data.type).toBe("rpc.unavailable");
   }, 120_000);
+
+  test.skipIf(!npmAvailable)("the packed npm package, named in plugins, installs into the cache and brings the whole harness", async () => {
+    // The package installs in the background the first time a request names the project.
+    const plugin = await active(projects.packed, 240_000);
+    expect(plugin.features?.tui).toBe(true);
+
+    const cache = path.join(box, "home", ".cache", "opencode", "npm");
+    const copies = installed(cache, pkg.name);
+    expect(copies).toHaveLength(1);
+    const copy = realpathSync(copies[0]!);
+    expect(copy.startsWith(`${realpathSync(cache)}${path.sep}`)).toBe(true);
+    expect(JSON.parse(readFileSync(path.join(copy, "package.json"), "utf8")).version).toBe(pkg.version);
+    expect(installed(root, pkg.name)).toEqual([]);
+    expect(existsSync(path.join(projects.packed, "node_modules"))).toBe(false);
+
+    await Bun.sleep(4_000);
+    const fromFiles = await withLead(projects.files);
+    const fromPackage = await agents(projects.packed);
+    expect(fromPackage[0]?.id).toBe("lead");
+    for (const id of AGENTS) {
+      const want = pick(fromFiles.find((agent) => agent.id === id));
+      expect(want?.system).toBeString();
+      expect(pick(fromPackage.find((agent) => agent.id === id))).toEqual(want);
+    }
+
+    const commands = (await get<Array<{ name: string; description?: string }>>("/api/command", projects.packed)).filter((command) => !command.name.includes(":"));
+    for (const name of ["plan", "execute", "progress", "onboard", "guide"]) expect(commands.map((command) => command.name)).toContain(name);
+    expect(commands.find((command) => command.name === "review")?.description).toContain("Independent review");
+
+    type Skill = { id: string; path?: string };
+    const skills = (await get<Skill[]>("/api/skill", projects.packed)).filter((skill) => skill.id.startsWith(NAME)).sort((a, b) => a.id.localeCompare(b.id));
+    expect(skills.map((skill) => skill.id)).toEqual([`${NAME}-guide`, `${NAME}-plan`]);
+    for (const skill of skills) expect(skill.path).toBe(path.join(copy, "dist", "opencode-v2", "skills", skill.id, "SKILL.md"));
+
+    const doctor = await call<{ output?: Record<string, unknown> }>("POST", `/api/rpc/${NAME}/doctor`, projects.packed, { input: {} });
+    expect(doctor.status).toBe(200);
+    expect(doctor.data.output).toMatchObject({ name: NAME, version: pkg.version, defaultAgent: "lead", leadLoaded: true, leadSource: "plugin", problems: [] });
+  }, 300_000);
 
   test("/review, registered by the plugin, is answered by the reviewer in the user's session, and a later report wakes lead", async () => {
     await active(projects.run);
