@@ -19,6 +19,7 @@ path = [
     "bun.lock",
     "CLAUDE.md",
     "VERSION",
+    "docs/assets/**",
 ]
 precedence = "closest"
 SPDX-FileCopyrightText = "2026 European Centre for Medium-Range Weather Forecasts (ECMWF)"
