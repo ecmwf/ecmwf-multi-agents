@@ -7,8 +7,6 @@ SPDX-License-Identifier: Apache-2.0
   <img src="docs/assets/logo.png" alt="ecmwf-multi-agents: lead and its three helpers" width="240">
 </p>
 
-# ecmwf-multi-agents
-
 A multi-agent harness for [opencode](https://opencode.ai), made for ECMWF scientists, analysts
 and developers.
 
