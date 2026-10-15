@@ -21,17 +21,20 @@ const assistant = (sessionID: string, agent: string, cost: number, parts: ApiPar
   parts,
 });
 
-const tool = (name: string, status: string, input: Record<string, unknown>, error?: string): ApiPart => ({
+const tool = (name: string, status: string, input: Record<string, unknown>, error?: string, errorType?: string): ApiPart => ({
   type: "tool",
   tool: name,
   callID: `c-${name}-${status}`,
-  state: { status, input, ...(error ? { error } : {}), time: { start: 10, end: 20 } },
+  state: { status, input, ...(error ? { error } : {}), ...(errorType ? { errorType } : {}), time: { start: 10, end: 20 } },
 });
 
 function run(): SessionData[] {
   return [
     {
       id: "root",
+      agent: "lead",
+      cost: 0.32,
+      tokens: { input: 200, output: 40, reasoning: 5, cache: { read: 4000, write: 500 } },
       messages: [
         user("root", "lead", "question"),
         assistant(
@@ -39,7 +42,7 @@ function run(): SessionData[] {
           "lead",
           0.3,
           [
-            tool("task", "completed", { subagent_type: "scout", prompt: "find it" }),
+            tool("subagent", "completed", { agent: "scout", prompt: "find it", background: true }),
             step(100, 20, 1000, 500, 5, 0.1),
             { type: "text", text: "Here is the answer." },
             { type: "text", text: "internal", synthetic: true },
@@ -55,9 +58,9 @@ function run(): SessionData[] {
       messages: [
         user("child-1", "scout", "find it"),
         assistant("child-1", "scout", 0.05, [
-          tool("bash", "completed", { command: "git log -1" }),
-          tool("bash", "error", { command: "rm -rf x" }, "The user has specified a rule which prevents you from using this specific tool call. Here are some of the relevant rules []"),
-          tool("bash", "error", { command: "git push" }, 'ecmwf-multi-agents: helpers may not run "git push"; lead handles git and GitHub.'),
+          tool("shell", "completed", { command: "git log -1" }),
+          tool("shell", "error", { command: "rm -rf x" }, "Permission denied: shell", "permission.rejected"),
+          tool("shell", "error", { command: "git push" }, 'ecmwf-multi-agents: helpers may not run "git push"; lead handles git and GitHub.', "permission.rejected"),
           step(10, 5, 200, 0, 0, 0.05),
           { type: "text", text: "ANSWER: found" },
         ]),
@@ -66,7 +69,7 @@ function run(): SessionData[] {
     {
       id: "child-2",
       parentID: "root",
-      messages: [user("child-2", "scout", "again"), assistant("child-2", "scout", 0.01, [step(1, 1), { type: "text", text: "ANSWER: again" }], { error: { name: "ProviderAuthError", data: { message: "expired" } } })],
+      messages: [user("child-2", "scout", "again"), assistant("child-2", "scout", 0.01, [step(1, 1), { type: "text", text: "ANSWER: again" }], { error: { type: "provider.auth", message: "expired" } })],
     },
   ];
 }
@@ -76,7 +79,7 @@ describe("aggregate", () => {
     run(),
     ["root"],
     "lead",
-    [{ id: "p1", sessionID: "root", agent: "lead", permission: "bash", patterns: ["git push"], reply: "reject", reason: "push", at: 1 }],
+    [{ id: "p1", sessionID: "root", agent: "lead", action: "shell", resources: ["git push"], reply: "reject", reason: "push", at: 1 }],
     [{ id: "q1", sessionID: "root", agent: "lead", questions: [{ question: "q", options: ["a"] }], answers: [["a"]], at: 1 }],
   );
 
@@ -88,6 +91,11 @@ describe("aggregate", () => {
     expect(metrics.agents.lead!.requests).toBe(2);
     expect(metrics.requests).toBe(4);
     expect(metrics.tokens.input).toBe(161);
+  });
+
+  test("opencode's session totals are kept apart", () => {
+    expect(metrics.sessionCost).toBeCloseTo(0.32);
+    expect(metrics.sessionTokens).toEqual({ input: 200, output: 40, reasoning: 5, cacheRead: 4000, cacheWrite: 500 });
   });
 
   test("peak context is the largest single request of the main agent", () => {
@@ -102,12 +110,12 @@ describe("aggregate", () => {
     expect(metrics.agents.lead!.sessions).toBe(1);
     expect(metrics.agents.scout!.sessions).toBe(2);
     expect(metrics.childSessions).toEqual({ scout: 2 });
-    expect(metrics.errors).toEqual(["scout: ProviderAuthError: expired"]);
+    expect(metrics.errors).toEqual(["scout: provider.auth: expired"]);
   });
 
   test("tool calls, denials, shell commands, questions and permissions per agent", () => {
     expect(metrics.agents.lead!.toolCalls).toBe(1);
-    expect(metrics.agents.lead!.toolsByName).toEqual({ task: 1 });
+    expect(metrics.agents.lead!.toolsByName).toEqual({ subagent: 1 });
     expect(metrics.agents.scout!.toolCalls).toBe(3);
     expect(metrics.agents.scout!.deniedToolCalls).toBe(2);
     expect(metrics.agents.scout!.shellCommands).toEqual(["git log -1", "rm -rf x", "git push"]);
@@ -127,8 +135,9 @@ describe("aggregate", () => {
 });
 
 describe("helpers", () => {
-  test("session agent from the first user message, else the assistant", () => {
+  test("session agent from the first user message, else the session, else the assistant", () => {
     expect(sessionAgent(run()[1]!)).toBe("scout");
+    expect(sessionAgent({ agent: "builder", messages: [assistant("x", "reviewer", 0, [])] })).toBe("builder");
     expect(sessionAgent({ messages: [assistant("x", "reviewer", 0, [])] })).toBe("reviewer");
     expect(sessionAgent({ messages: [] })).toBe("unknown");
   });
@@ -141,9 +150,12 @@ describe("helpers", () => {
   });
 
   test("denials are told apart from ordinary errors", () => {
-    expect(classifyDenial("The user rejected permission to use this specific tool call.")).toBe("user");
-    expect(classifyDenial("The user rejected permission to use this specific tool call with the following feedback: no")).toBe("user");
-    expect(classifyDenial("Error: command not found")).toBeUndefined();
+    expect(classifyDenial("The user declined this tool call", "aborted")).toBe("user");
+    expect(classifyDenial("Do not push; the user refused.", "permission.rejected")).toBe("user");
+    expect(classifyDenial("Permission denied: shell", "permission.rejected")).toBe("rule");
+    expect(classifyDenial('ecmwf-multi-agents: helpers may not run "git push"; lead handles git.', "permission.rejected")).toBe("guard");
+    expect(classifyDenial("Tool execution interrupted", "aborted")).toBeUndefined();
+    expect(classifyDenial("Error: command not found", "tool.execution")).toBeUndefined();
     expect(classifyDenial(undefined)).toBeUndefined();
   });
 
@@ -151,6 +163,7 @@ describe("helpers", () => {
     expect(tokensOf(undefined)).toEqual({ input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 });
     expect(tokensOf({ input: Number.NaN, output: 2 })).toMatchObject({ input: 0, output: 2 });
     expect(errorText({ name: "MessageAbortedError" })).toBe("MessageAbortedError");
+    expect(errorText({ type: "provider.auth", message: "expired" })).toBe("provider.auth: expired");
     expect(errorText("plain")).toBe("plain");
     expect(errorText(undefined)).toBe("");
   });
@@ -165,6 +178,6 @@ describe("helpers", () => {
     expect(output.length).toBeLessThan(4_100);
     expect(output).toContain("more characters");
     expect(result[0]!.messages[1]!.parts.find((part) => part.type === "step-finish")).toEqual({ type: "step-finish", cost: 0.1, tokens: { input: 100, output: 20, reasoning: 5, cacheRead: 1000, cacheWrite: 500 } });
-    expect(result[2]!.messages[1]!.error).toBe("ProviderAuthError: expired");
+    expect(result[2]!.messages[1]!.error).toBe("provider.auth: expired");
   });
 });

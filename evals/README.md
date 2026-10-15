@@ -18,18 +18,27 @@ two. They answer three questions:
 The baseline is plain opencode with its built-in `build` agent on lead's model and effort from
 the same profile, with no harness installed.
 
-The evals call real models and use your provider quota. A full run of every case on both
-variants costs real money; `--max-cost` stops starting new runs once the total reaches the
-limit (40 US dollars by default).
+The evals run on opencode 2. They call real models and use your provider quota. A full run of
+every case on both variants costs real money; `--max-cost` stops starting new runs once the
+total reaches the limit (40 US dollars by default).
 
 ## Running
 
-`make evals` runs every case on both variants. To choose, call the runner directly:
+Log in for the evals once, then run them:
+
+```sh
+make eval-login                               # interactive; PROVIDER=anthropic picks one
+make eval-login PROVIDER=github-copilot       # once per provider the profile uses
+make evals                                    # every case on both variants
+make evals CASES="answer no-push" VARIANT=harness OPENCODE_V2_BIN=opencode2
+```
+
+To choose more finely, call the runner directly:
 
 ```sh
 bun evals/run.ts --list                       # the cases, one per line
 bun evals/run.ts --case answer --variant harness
-bun evals/run.ts --case feature --case bug-fix --repeat 3 --jobs 3
+bun evals/run.ts --case feature --case bug-fix --repeat 3 --jobs 3 --opencode opencode2
 ```
 
 | Option | Default | Meaning |
@@ -37,17 +46,18 @@ bun evals/run.ts --case feature --case bug-fix --repeat 3 --jobs 3
 | `--case ID` | all cases | Run this case; repeat the option for several |
 | `--repeat N` | 1 | Runs per case and variant |
 | `--variant V` | `both` | `harness`, `baseline` or `both` |
-| `--profile NAME` | `default` | Harness profile from `dist/opencode-v1/ecmwf-multi-agents/profiles/`; the baseline uses its lead model |
+| `--profile NAME` | `default` | Harness profile from `dist/opencode-v2/ecmwf-multi-agents/profiles/`; the baseline uses its lead model |
 | `--jobs N` | 2 | Runs at the same time |
 | `--max-cost USD` | 40 | Start no new run once the total cost reaches this; runs already started finish |
 | `--timeout MIN` | 20 | Time limit for each turn; a turn that runs over is stopped and the run counts as timed out |
-| `--opencode BIN` | `opencode` | The opencode 1.x binary |
+| `--opencode BIN` | `opencode` | The opencode 2 binary: a path, or a name looked up on `PATH` |
 | `--out DIR` | `evals/runs/<UTC timestamp>/` | Output folder (`evals/runs/` is ignored by git) |
 | `--list` | | List the cases and exit |
 
-Requirements: opencode 1.x (tested with 1.18.35), Bun, git, `python3`, and a built `dist/`
-(`bun run build`). The first opencode start in each sandbox installs the plugin's one
-dependency from npm, so network access is needed.
+Requirements: opencode 2 (tested with 2.0.28; the runner refuses other major versions), Bun,
+git, `python3`, `bash`, a built `dist/` (`bun run build`), and an eval login (`make
+eval-login`, below). `make evals` and `make eval-login` use `OPENCODE_V2_BIN`, `opencode` by
+default.
 
 ## Isolation and credentials
 
@@ -57,35 +67,52 @@ sandbox and your own opencode configuration, data and sessions are never read or
 project is a git repository created in the sandbox from `evals/fixtures/stations/`, with a
 fixed author, committer and dates, so its commits are the same in every run.
 
+- The chosen opencode binary is linked into the sandbox as `opencode`, and its folder comes first
+  on the sandbox's `PATH`, so `install.sh` and every command the agents run find that binary
+  whatever else is installed.
 - Harness: `install.sh` installs the harness into the sandbox (global, linked, with the case's
-  review policy and the chosen profile).
+  review policy and the chosen profile) for the opencode it finds.
 - Baseline: no harness; the sandbox `opencode.json` sets the `build` agent to lead's model and
   effort.
-- Both: `enabled_providers` lists only the providers the profile uses, lead's model is the
-  session model, and sharing is off.
+- Both: the sandbox `opencode.json` allows only the providers the profile uses, lead's model is
+  the session model, and sharing and updates are off.
 
-Your opencode login is reached through a symbolic link: the sandbox's
-`home/.local/share/opencode/auth.json` points at `$ECMWF_MULTI_AGENTS_EVAL_AUTH`, or at
-`~/.local/share/opencode/auth.json` when that variable is unset. The runner never reads,
-copies or prints the file; opencode reads it through the link, and token refreshes write
-through it as in your own setup. If the file is missing, the runner stops before any run.
+The server runs as `opencode serve --stdio` with a random password, listens on a free local port,
+and stops when the runner closes its input. Before the first turn the runner waits until the
+harness plugin is active and lead has the profile's model.
+
+### The eval login
+
+The evals never use your own opencode login. `make eval-login` runs `opencode auth login` in a
+throwaway sandbox with an eval-only database, so the login lands there and nowhere else. The
+database is `${XDG_DATA_HOME:-~/.local/share}/ecmwf-multi-agents/eval-login.db`;
+`ECMWF_MULTI_AGENTS_EVAL_LOGIN_DB` names another one. Run `make eval-login` once per provider
+the profile uses; it shows what the eval login holds afterwards.
+
+For each run, once the sandboxed server is ready, opencode copies the login across itself:
+`opencode auth export` reads the eval database and its output goes straight into
+`opencode auth import --server <sandbox>` through a shell pipe. The runner starts that pipe but
+never reads, stores or prints what passes through it. If the eval database does not exist, the
+runner stops before any run and says to run `make eval-login`.
 
 The sandbox never loads your own opencode configuration, so plugins you use to log in to a
 provider are missing there. When a provider's login needs one (an OAuth login, for example),
-name it in `ECMWF_MULTI_AGENTS_EVAL_PLUGINS`, separated by spaces or commas; the runner adds
-those names to the sandbox's `plugin` list. Each run checks first that the sandbox can use every
-model of the profile, and the runner stops with a message naming the provider when it cannot.
+name the opencode 2 plugin in `ECMWF_MULTI_AGENTS_EVAL_PLUGINS`, separated by spaces or commas;
+`make eval-login` and every run add those names to the sandbox's `plugins` list. Each run
+checks first that the sandbox can use every model of the profile, and the runner stops with a
+message naming the provider when it cannot.
 
 opencode and the commands it runs get only a short list of environment variables (`PATH`,
 locale, terminal, shell, user and `TMPDIR`) plus the git identity, so other variables of your
-session cannot end up in a transcript. The sandbox is deleted after each run, the link
-included; the file it points to stays.
+session cannot end up in a transcript. The sandbox is deleted after each run, the link to the
+binary included; the binary stays.
 
 ## Answering on your behalf
 
 The runner plays the user. It approves permission requests once, except pushes, pull requests,
-merges and history rewrites, which it refuses. It answers questions with the first option,
-which the harness prompts mark as the recommended one. In `plan-execute` it approves the plan with
+merges and history rewrites, which it refuses with a plain reject: that ends lead's turn, as a
+refusal in the TUI does. It answers questions (forms in opencode 2) with the first option, which
+the harness prompts mark as the recommended one. In `plan-execute` it approves the plan with
 "Approved. Go ahead." and, if lead does not finish the plan in the same session, runs `/execute` in a
 new session.
 
@@ -110,7 +137,7 @@ new session.
 | `background-scouts` | Two questions handed to scouts in the background while the user keeps talking | no |
 | `steer`, `restart` | A change of scope for a running scout: redirected with `helpers_steer`, or stopped and started again | no |
 | `cancel` | A running builder stopped with `helpers_cancel` | no |
-| `review-background` | A background scout, then `/review` on a seeded bug; every completion answered by `lead` | no |
+| `review-background` | A background scout, then `/review` on a seeded bug: the reviewer runs as a second background helper, and every completion is answered by `lead` | no |
 
 The cases are defined in `evals/cases.ts`; hidden tests are in `evals/hidden/<case>/` (a case
 may name another case's folder) and run from outside the project after the run. In `no-push`, the baseline has no approval rule, so its
@@ -124,7 +151,9 @@ the project diff, the check results, and a transcript of every session (long too
 shortened). Metrics come from the messages of every session of the run: cost and tokens (input,
 output, reasoning, cache read and write) in total and per agent, models per agent, child
 sessions per agent, model requests, tool calls, refused tool calls and shell commands per agent,
-and the largest context of one request by the agent that talks to the user.
+and the largest context of one request by the agent that talks to the user. opencode's own
+session totals are recorded too (`sessionCost`, `sessionTokens`): they also count the requests
+that name a session, which no message shows, and `--max-cost` uses the larger of the two.
 
 `summary.md` has a section per case, then totals per variant and the comparison.
 
@@ -136,7 +165,7 @@ named after the release they measured, with the licence header added (for exampl
 
 - Result: a run passes when it finished in time and every counted check passed. A check shown
   in brackets is recorded only and does not decide the result.
-- Cost: what opencode reports for each model request. Requests through GitHub Copilot count
+- Cost: what opencode reports for each model request, summed over the messages. Requests through GitHub Copilot count
   against the subscription; opencode reports their cost only when Copilot sends it.
 - Cost per agent and child sessions: where the money went and which helpers ran.
 - Peak context: the largest input of one request by lead (or by `build` for the baseline),
@@ -151,10 +180,14 @@ conclusions.
 
 ```sh
 bun test evals                                        # fast unit tests, no network
-ECMWF_MULTI_AGENTS_INTEGRATION=1 bun test evals/run.integration.test.ts
+ECMWF_MULTI_AGENTS_INTEGRATION=1 OPENCODE_V2_BIN=opencode2 \
+  bun test --timeout 600000 evals/run.integration.test.ts
 ```
 
 The unit tests need git and `python3`: they apply every case's setup to the fixture and check
-that its hidden tests fail before the work is done. The second command runs the runner end to end with real `install.sh`, `dist/` and opencode, but with a
-local stand-in model server instead of real models: a question answered by policy, a scout, a
-refused push, `/review`, a baseline run and a time-out.
+that its hidden tests fail before the work is done. The second command runs the runner end to
+end with real `install.sh`, `dist/` and opencode 2, but with a local stand-in model server
+instead of real models: a question answered by policy, a background scout whose completion
+wakes lead, a push refused with a plain reject, `/review` as a background reviewer, a baseline
+run with a throwaway eval login piped in, and a time-out. `make integration` runs it with the
+other integration suites.
