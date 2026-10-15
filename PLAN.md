@@ -267,7 +267,12 @@ Findings to act on for 0.2.0:
   agent, and Tiago chose to keep that default (no rule added). Integration on 1.18.35, 1.19.0
   and 2.0.28: 120 pass. `docs/research/opencode-v2.md`, Addendum: 2.0.28
 - [x] Tiago: Release 0.5.2
-- [ ] CI: `make check` plus the integration suites in containers per opencode version
+- [~] Tiago: CI: `make check` and `make pack-check` on every push and pull request
+  (`.github/workflows/ci.yml`)
+- [~] Tiago: Release 0.5.3: the npm package and CI, while Phase 9 heads for 0.6.0. Its tag is
+  the first publish from GitHub Actions, due before 2026-10-17, when the trusted publisher
+  expires unless it has published
+- [ ] CI: the integration suites on the pinned opencode 2, once Phase 9 has removed 1.x
 - [ ] README quickstart for scientists; `/guide` content final
 - [ ] `tests/install.test.ts`: the "no opencode at all" test, and since 0.4.0 "with only
   opencode 2 the line does nothing" too, find a distro-packaged `/usr/bin/opencode` through
