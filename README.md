@@ -67,13 +67,10 @@ conversation. If a helper is doing something you do not want, tell `lead` to red
 ("stay in `src/`") or to stop it: a redirected helper keeps everything it has read and done
 instead of starting over. You can also open the helper's session and type to it.
 
-On opencode 1.x this needs `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` in your
-environment before opencode starts; the installer tells you where to put it and
-`./install.sh doctor` checks it. Without it `lead` waits for every helper, as before.
-
 ## Requirements
 
-- opencode 1.18.35 or later in the 1.x series. opencode 2 is also supported, tested on 2.0.28.
+- opencode 2, tested on 2.0.28 (another 2.x version works with a warning). With opencode 1,
+  upgrade first with `opencode upgrade --major`.
 - Access to the models in your chosen profile. The default profile needs Anthropic and GitHub
   Copilot, connected with `opencode auth login`.
 - A POSIX shell for the installer.
@@ -107,28 +104,12 @@ ecmwf-multi-agents
 and options: where this README says `./install.sh`, type `ecmwf-multi-agents`. To update, run
 both commands again, then restart opencode.
 
-Other ways to install:
-
-- Switched on per project, without installing (opencode 1.x): keep the checkout, and add one
-  line to the `opencode.json` of each project that should use the harness:
-
-  ```json
-  { "plugin": ["{env:HOME}/.local/share/ecmwf-multi-agents"] }
-  ```
-
-  The plugin then brings the agents, commands and skills from the checkout. Checking out a new
-  version there updates every such project at its next start; nothing else changes.
-- One project only, installed: `./install.sh --project /path/to/repo` copies the files into
-  that project's `.opencode/` folder.
-- Shared machines with opencode 1.x: `./install.sh --central /shared/path` prepares a copy
-  that can be made read-only; users load it by setting `OPENCODE_CONFIG_DIR` (for example
-  from a module file).
+For one project only, `./install.sh --project /path/to/repo` copies the files into that
+project's `.opencode/` folder.
 
 Check an installation with `./install.sh doctor`, and a project with
 `./install.sh doctor --project /path/to/repo`. Remove an installation with
-`./install.sh uninstall`. `docs/install.md` covers every option, the plugin line, updating,
-both opencode versions on one machine, the central install with module file examples, and
-troubleshooting.
+`./install.sh uninstall`. `docs/install.md` covers every option, updating and troubleshooting.
 
 ## Settings
 
@@ -176,9 +157,7 @@ default settings.
 
 - Agents commit only when you ask. Pushing, opening a pull request and merging always ask for
   your approval first. Answer such prompts with "Allow once".
-- Helpers cannot commit, push or rewrite git history. On opencode 1.x the plugin keeps these
-  limits in place even after an "Allow always" answer, which opencode would otherwise apply to
-  every agent.
+- Helpers cannot commit, push or rewrite git history.
 - The harness never asks for, prints or stores credentials.
 
 ## Development
@@ -193,7 +172,7 @@ make check      # the gate before every commit: versions, dist/, lint, unit test
 make help       # every target
 ```
 
-`make integration` runs the suites against real opencode binaries without calling a model.
+`make integration` runs the suites against a real opencode 2 without calling a model.
 `make evals` runs scenario evals with real models and uses your provider quota; see
 `evals/README.md`. `make release X.Y.Z` releases a version in one step (`DRY_RUN=1` previews)
 and needs npm, to check the package's files first (`make pack-check`); the tag it pushes

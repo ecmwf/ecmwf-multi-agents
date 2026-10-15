@@ -18,6 +18,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
   options. Each release is published to npm from its tag by GitHub Actions, through npm
   trusted publishing and with provenance.
 
+### Changed
+
+- The npm package's `./server` export names the opencode 2 plugin.
+- The installer's unit tests no longer find an opencode installed in a system folder.
+
+### Removed
+
+- opencode 1.x is no longer supported; the harness supports opencode 2 only. With only
+  opencode 1 installed, the installer stops and asks you to upgrade with
+  `opencode upgrade --major`. Running `./install.sh` again replaces an install made for
+  opencode 1, and `doctor` reports one until then.
+- With it go the installer's `--platform` and `--central` options, the per-project plugin line
+  for opencode 1.x, the background flag advice in the installer and `doctor`, `doctor`'s checks
+  that started opencode 1.x, the files in `dist/opencode-v1/`, and the plugin parts that only
+  opencode 1.x used: the shell guard after "Allow always", `/review` and `/progress` answering
+  in your own session, the pinning of messages in a helper's session, and settings problems
+  shown on screen.
+
 ## [0.5.2] - 2026-10-14
 
 ### Changed
