@@ -1,236 +1,407 @@
 // SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
 // SPDX-License-Identifier: Apache-2.0
 
-// On opencode 1.x, `/review` and `/progress` answer in the user's own session as the command's
-// agent (`subtask: false`), so the report appears in the conversation and lead takes no extra turn
-// to relay it. Sharing the session with a helper can go wrong in two ways, and this module decides
-// what the plugin does about each (line numbers are opencode 1.18.35, identical in 1.19.0):
+// `/review` and `/progress` answered in the user's own session.
 //
-// 1. The session loop runs the agent of its newest user message (opencode/src/session/prompt.ts
-//    :1096 and :1170; `latest()` orders messages by creation time, session/message-v2.ts:595-616).
-//    A helper command sent while another agent works would take over that agent's run, and lead
-//    would never see the result it was waiting for. Such a command is turned into the form opencode
-//    gives a command that runs in a child session (prompt.ts:1439-1453): one subtask part, on a
-//    message of the agent that was working. The loop runs the subtask after the current step, then
-//    tells that agent to go on (prompt.ts:430-448), as every helper command did before 0.2.0.
-// 2. A background helper's completion is written as the agent the session record names
-//    (opencode/src/tool/task.ts:227-253), and after an inline command that is the helper. The helper
-//    would answer it, and lead would never be woken. The completion is given back to the session's
-//    owner: the agent that works in it, normally lead.
+// The generated command files run a helper's command in a child session (`subagent: true`), and
+// lead then takes a turn to relay the report. Answering in the user's session instead costs a
+// quarter less, but a native command that does so switches the session to the helper for good and
+// shows it the whole conversation (core/src/config/plugin/command.ts:124-134 at v2.0.29). So the
+// plugin registers its own `review` and `progress` again after each activation, behind the file
+// commands and its own first registration (register.ts, which runs them in a child session), and
+// a later `add` of the same name replaces an earlier one (core/src/command.ts:61). Without the
+// plugin the command files run them in a child session.
 //
-// Neither may cut short a helper that is answering inline: a helper command or a completion that
-// arrives meanwhile waits in the `chat.message` hook until the session is idle. The hook runs
-// before opencode saves the message (prompt.ts:999-1047), and nothing else waits for it: each hook
-// call runs on its own (opencode/src/plugin/index.ts:284-297), a completion is created in a fiber of
-// its own (task.ts:253), and a command's request returns only when its run ends anyway. A message
-// that waited is dated when it is delivered, so it is the newest one when the loop looks.
+// A run: wait until the session is idle (`session.wait` follows runs that start meanwhile), note
+// the owner's agent and model, switch the session to the helper (and to the helper's own model,
+// since a session runs on its own model, runner/model.ts:75-90), send the command's text, wait
+// for the helper to finish, then switch back. `execute` returns at once and the run goes on in the
+// background, because opencode answers the command's HTTP call only when `execute` returns.
+//
+// The `context` session hook keeps the helper to its brief: it drops everything before the brief,
+// and leaves out the reports of background helpers (`<subagent ...>`) that arrive meanwhile, so
+// the helper does not act on them. It leaves out the user's own messages after the brief too: the
+// TUI sends a message typed during a run with delivery `steer`, so it joins the helper's turn
+// (tui/src/component/prompt/index.tsx:1092 at v2.0.29), but it is meant for lead. They stay in
+// the session, and lead sees them on its next turn; when any were held, one queued message wakes
+// lead once the run has ended, to answer the user first. A message sent between the switch and the
+// brief finds the session idle and starts a turn of the helper's: the run notes the session's
+// messages before the switch, so that turn too leaves out the user's message, and the earlier
+// conversation, and the helper only replies "done".
+//
+// Between the helper's end and the switch back (about 16 ms) a report or a message can start a run
+// that is still the helper's. Such a stray request is treated the same way, the owner is restored
+// at once and lead is woken.
 
-import { pinMessage, remember } from "./helpers.ts";
-import type { V1ModelRef, V1UserMessage } from "./types.ts";
+import { INLINE_USER_AND_REPORTS_WAKE_TEXT, INLINE_USER_WAKE_TEXT, INLINE_WAKE_TEXT, V2_REPORT_PREFIX, firstText, stepsV2 } from "./answer-first.ts";
+import { remember } from "./helpers.ts";
+import { fillTemplate, parseModel, unwrap } from "./register.ts";
+import type { Reporter } from "./report.ts";
+import type { SessionTracker } from "./tools-v2.ts";
+import type {
+  EmbeddedHarness,
+  EmbeddedCommand,
+  V2CommandDefinition,
+  V2CommandInvocation,
+  V2Context,
+  V2ContextEvent,
+  V2ModelMessage,
+  V2ModelRef,
+} from "./types.ts";
 
-/** How a background helper's completion starts (opencode/src/tool/task.ts:64-79). */
-export const COMPLETION_PREFIX = "<task ";
-/** How long a message waits for a helper that answers inline. */
-export const INLINE_WAIT_LIMIT_MS = 30 * 60_000;
-/** How long a slash command's name is kept for the message it is about to create. */
-const PENDING_MS = 60_000;
+/** A harness command whose agent is a helper: the command a helper answers inline. */
+export type InlineCommand = EmbeddedCommand & { agent: string };
 
-type Part = Record<string, unknown>;
-
-function textParts(parts: unknown): Part[] {
-  if (!Array.isArray(parts)) return [];
-  return parts.filter((part): part is Part => part !== null && typeof part === "object" && (part as Part).type === "text");
+/** The harness's commands that a helper answers: review and progress. */
+export function inlineCommands(harness: EmbeddedHarness, helpers: ReadonlySet<string>): InlineCommand[] {
+  return harness.commands.filter((command): command is InlineCommand => command.agent !== undefined && helpers.has(command.agent));
 }
 
-/** True when opencode wrote every text part of a message itself (a completion, a "continue" note). */
-export function isSyntheticMessage(parts: unknown): boolean {
-  const texts = textParts(parts);
-  return texts.length > 0 && texts.every((part) => part.synthetic === true);
+/** The metadata key that marks a helper's brief; its value is the command's name. */
+export const INLINE_MARK = "ecmwf-multi-agents.inline";
+/** What a helper reads when the only news in its request was a report or a message held back from it. */
+export const HELD_NOTE = "A message for lead arrived and was held back for it. Your answer above stands: reply only with the word done.";
+
+const isReport = (message: V2ModelMessage | undefined): boolean => message?.role === "user" && firstText(message).startsWith(V2_REPORT_PREFIX);
+
+const USER_WAKES = [INLINE_USER_WAKE_TEXT, INLINE_USER_AND_REPORTS_WAKE_TEXT];
+
+/**
+ * A message the user wrote: a request to lead in answer-first's terms, which opencode built from
+ * a user message, the only kind that carries metadata (core/src/session/runner/to-llm-message.ts
+ * at v2.0.29). Notes opencode or a plugin adds (synthetic messages) carry none: a continue note,
+ * a note that work moved to the background, a helper's own shell result.
+ */
+export function isUserMessage(message: V2ModelMessage | undefined): boolean {
+  if (message?.role !== "user" || message.metadata === null || typeof message.metadata !== "object") return false;
+  if (USER_WAKES.some((wake) => firstText(message).startsWith(wake))) return false;
+  return stepsV2([message])[0] === "request";
 }
 
-/** True for a background helper's completion: a message opencode wrote itself, as `<task ...>`. */
-export function isCompletion(parts: unknown): boolean {
-  const first = textParts(parts)[0]?.text;
-  return isSyntheticMessage(parts) && typeof first === "string" && first.startsWith(COMPLETION_PREFIX);
+/** How a held message is counted: by message id, so a message seen in several requests counts once. */
+export function messageKey(message: V2ModelMessage): string {
+  return typeof message.id === "string" && message.id !== "" ? message.id : `text:${firstText(message)}`;
+}
+
+/** The position of the helper's brief: the last user message with the mark, or with exactly this text. */
+export function briefIndex(messages: readonly V2ModelMessage[], brief: string | undefined): number {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message?.role !== "user") continue;
+    if (typeof message.metadata?.[INLINE_MARK] === "string") return index;
+    if (brief !== undefined && firstText(message) === brief) return index;
+  }
+  return -1;
+}
+
+/** The keys of the messages left out of a helper's request, for lead. */
+export interface HeldMessages {
+  reports: string[];
+  /** The user's own messages after the brief. */
+  user: string[];
 }
 
 /**
- * What to do with a message that lands in the user's own session:
- * - leave: not a helper's message, or the session's state cannot be read; opencode's way stands.
- * - inline: a helper command in an idle session; it answers there.
- * - subtask: a helper command while another agent works; it runs in a child session instead.
- * - owner: a completion; it goes to the session's owner.
- * - wait: a helper is answering inline; decide again once the session is idle.
+ * Keep a helper's request to its brief: drop the messages before it and leave out the reports
+ * and the user's own messages that came after the run began. When those were the last thing in
+ * the request, after the helper's own answer or with nothing left, or came before the brief, a
+ * short note asks it to end, so the request does not end with an assistant message and the
+ * helper does not answer them. Changes `messages` in place, because
+ * opencode sends that array, and returns the keys of the messages left out.
+ *
+ * `known` holds the ids of the session's messages when the run began: everything after the last
+ * of them is new. A message the user sends after the switch to the helper but before the brief
+ * starts a turn of the helper's; its request keeps none of the earlier conversation, which is
+ * lead's. Without `known` only the messages after the brief count as new, and without a brief
+ * either the user's messages stay: nothing tells which came after the run began.
  */
-export type InlineAction = "leave" | "inline" | "subtask" | "owner" | "wait";
-
-export interface InlineFacts {
-  /** The agent the message names. */
-  agent: string | undefined;
-  completion: boolean;
-  /** Whether the session has work in progress; undefined when it cannot be read. */
-  busy: boolean | undefined;
-  /** The agent last seen working in the session. */
-  running: string | undefined;
-}
-
-export function inlineAction(facts: InlineFacts, helpers: ReadonlySet<string>): InlineAction {
-  if (facts.agent === undefined || !helpers.has(facts.agent) || facts.busy === undefined) return "leave";
-  if (facts.busy && facts.running !== undefined && helpers.has(facts.running)) return "wait";
-  if (facts.completion) return "owner";
-  return facts.busy ? "subtask" : "inline";
-}
-
-export interface SubtaskSpec {
-  agent: string;
-  description: string;
-  command?: string;
-  model?: { providerID: string; modelID: string };
-}
-
-/**
- * Turn the parts of a helper command's message into one subtask part with the command's text as
- * its prompt, as opencode builds a command that runs in a child session (prompt.ts:1440-1451; the
- * part's schema is schema/src/v1/session.ts:204-217). The subtask takes the ids of the first text
- * part. Changes `parts` in place, because opencode saves that array; returns false and changes
- * nothing when there is no text to run.
- */
-export function toSubtask(parts: unknown[], spec: SubtaskSpec): boolean {
-  const first = textParts(parts)[0];
-  if (first === undefined || typeof first.text !== "string" || first.text.trim() === "") return false;
-  const subtask: Part = {
-    ...(first.id !== undefined ? { id: first.id } : {}),
-    ...(first.sessionID !== undefined ? { sessionID: first.sessionID } : {}),
-    ...(first.messageID !== undefined ? { messageID: first.messageID } : {}),
-    type: "subtask",
-    prompt: first.text,
-    description: spec.description,
-    agent: spec.agent,
-    ...(spec.model !== undefined ? { model: { providerID: spec.model.providerID, modelID: spec.model.modelID } } : {}),
-    ...(spec.command !== undefined ? { command: spec.command } : {}),
-  };
-  parts.splice(0, parts.length, subtask);
-  return true;
-}
-
-/** The agent that works in a session, and the model of its latest request when known. */
-export interface Owner {
-  agent: string;
-  model?: V1ModelRef;
-}
-
-/**
- * Make a message the owner's: its agent, and the model it works with. Without a known model the
- * owner's own model and effort from the settings apply when it has one; otherwise the message keeps
- * the model opencode gave it, which is the session's.
- */
-export function giveTo(message: V1UserMessage, owner: Owner, plan: { model?: string; effort?: string } | undefined): void {
-  const model = owner.model;
-  if (typeof model?.providerID === "string" && typeof model.modelID === "string") {
-    message.agent = owner.agent;
-    message.model = { providerID: model.providerID, modelID: model.modelID, ...(typeof model.variant === "string" ? { variant: model.variant } : {}) };
-    return;
+export function isolateHelperRequest(messages: V2ModelMessage[], brief: string | undefined, known?: ReadonlySet<string>): HeldMessages {
+  const start = briefIndex(messages, brief);
+  let marker = -1;
+  if (known !== undefined) {
+    for (let index = messages.length - 1; index >= 0 && marker < 0; index--) {
+      const id = messages[index]?.id;
+      if (typeof id === "string" && known.has(id)) marker = index;
+    }
   }
-  pinMessage(message, owner.agent, plan);
-}
-
-/** The owner of each session, from the requests of agents that are not helpers. */
-export class Owners {
-  private readonly owners = new Map<string, Owner>();
-
-  note(session: unknown, agent: unknown, model: unknown): void {
-    if (typeof session !== "string" || session === "" || typeof agent !== "string" || agent === "") return;
-    const ref = model !== null && typeof model === "object" ? (model as V1ModelRef) : undefined;
-    remember(this.owners, session, { agent, ...(ref !== undefined ? { model: { ...ref } } : {}) });
-  }
-
-  get(session: string): Owner | undefined {
-    return this.owners.get(session);
-  }
-}
-
-/** The slash command each session is about to create a message for (`command.execute.before`). */
-export class PendingCommands {
-  private readonly pending = new Map<string, { command: string; at: number }>();
-
-  constructor(private readonly now: () => number = Date.now) {}
-
-  note(session: unknown, command: unknown): void {
-    if (typeof session !== "string" || session === "" || typeof command !== "string" || command === "") return;
-    remember(this.pending, session, { command, at: this.now() }, 1000);
-  }
-
-  /** The command, once, if it was noted for this session in the last minute. */
-  take(session: string): string | undefined {
-    const entry = this.pending.get(session);
-    this.pending.delete(session);
-    return entry !== undefined && this.now() - entry.at <= PENDING_MS ? entry.command : undefined;
-  }
-}
-
-export interface WaitOptions {
-  limitMs: number;
-  sleep: (ms: number) => Promise<void>;
-  now: () => number;
-}
-
-/**
- * Poll until the session is idle. Returns false once it is; true when it is still busy at the
- * limit; undefined when its state could not be read three times in a row.
- */
-export async function waitForIdle(busy: () => Promise<boolean | undefined>, options: WaitOptions): Promise<boolean | undefined> {
-  const deadline = options.now() + options.limitMs;
-  let unreadable = 0;
-  let pause = 200;
-  for (;;) {
-    const state = await busy();
-    if (state === false) return false;
-    unreadable = state === undefined ? unreadable + 1 : 0;
-    if (unreadable >= 3 || options.now() >= deadline) return state;
-    await options.sleep(pause);
-    pause = Math.min(pause * 2, 1000);
-  }
-}
-
-/**
- * Waits that end when opencode reports a session idle (`session.idle`, published with every idle
- * status, opencode/src/session/status.ts:39-47 at v1.18.35), sooner than the next poll.
- */
-export class IdleEvents {
-  private readonly waiting = new Map<string, Set<() => void>>();
-
-  /** Settles at the session's next idle event; cancel it once it is no longer needed. */
-  next(session: string): { promise: Promise<void>; cancel: () => void } {
-    let settle = () => {};
-    const promise = new Promise<void>((resolve) => {
-      settle = resolve;
-    });
-    const waits = this.waiting.get(session) ?? new Set<() => void>();
-    waits.add(settle);
-    this.waiting.set(session, waits);
-    return {
-      promise,
-      cancel: () => {
-        waits.delete(settle);
-        if (waits.size === 0 && this.waiting.get(session) === waits) this.waiting.delete(session);
-      },
-    };
-  }
-
-  /** The session is idle: settle every wait for it. */
-  idle(session: unknown): void {
-    if (typeof session !== "string") return;
-    const waits = this.waiting.get(session);
-    if (waits === undefined) return;
-    this.waiting.delete(session);
-    for (const settle of waits) settle();
-  }
-}
-
-/** A pause that does not keep the process alive. */
-export function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    (timer as { unref?: () => void }).unref?.();
+  const isNew = (index: number) => (start >= 0 && index > start) || (known !== undefined && index > marker);
+  const kinds = messages.map((message, index) => {
+    if (index === start) return undefined;
+    if (isReport(message)) return isNew(index) || (start < 0 && known === undefined) ? "reports" : undefined;
+    return isNew(index) && isUserMessage(message) ? "user" : undefined;
   });
+  const cut = start >= 0 ? start : known !== undefined ? marker + 1 : 0;
+  const leftOut = (index: number) => index < cut || kinds[index] !== undefined;
+  const held: HeldMessages = { reports: [], user: [] };
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const kind = kinds[index];
+    if (kind !== undefined) held[kind].unshift(messageKey(messages[index]!));
+  }
+  const endsLeftOut = messages.length > 0 && leftOut(messages.length - 1);
+  for (let index = messages.length - 1; index >= 0; index--) if (leftOut(index)) messages.splice(index, 1);
+  const last = messages.at(-1);
+  // Before the brief the helper has nothing to do: whatever opencode added (such as a note that its
+  // tools changed, a system message), it only ends its turn.
+  const beforeBrief = start < 0 && known !== undefined && held.reports.length + held.user.length > 0;
+  if (beforeBrief || (endsLeftOut && (last === undefined || last.role === "assistant"))) messages.push({ role: "user", content: [{ type: "text", text: HELD_NOTE }] });
+  return held;
+}
+
+/** One command run in a session, from the switch to the helper until the switch back. */
+export interface InlineRun {
+  command: string;
+  helper: string;
+  owner: string;
+  ownerModel?: V2ModelRef;
+  /** True once the session was switched to the helper's own model. */
+  switchedModel: boolean;
+  brief: string;
+  /** The reports held back from the helper. */
+  held: Set<string>;
+  /** The user's messages held back from the helper. */
+  heldUser: Set<string>;
+  /** The ids of the session's messages before the switch to the helper, when opencode gave them. */
+  known?: ReadonlySet<string>;
+}
+
+/** Tests only: a global that, when a function, runs between the switch to the helper and the brief. */
+export const BEFORE_BRIEF_FOR_TESTS = Symbol.for("ecmwf-multi-agents.testing.beforeBrief");
+
+/** What the plugin knows about inline runs, by session. */
+export class InlineRuns {
+  private readonly active = new Map<string, InlineRun>();
+  /** Sessions that had a run: their owner and the last brief, for a stray request after it. */
+  private readonly past = new Map<string, InlineRun>();
+  /** Messages a wake was queued for, by session. */
+  private readonly woken = new Map<string, Set<string>>();
+
+  start(session: string, run: InlineRun): void {
+    this.active.set(session, run);
+  }
+
+  get(session: string | undefined): InlineRun | undefined {
+    return session === undefined ? undefined : this.active.get(session);
+  }
+
+  /** End the session's run; it stays known for stray requests. */
+  finish(session: string): InlineRun | undefined {
+    const run = this.active.get(session);
+    this.active.delete(session);
+    if (run !== undefined) remember(this.past, session, run);
+    return run;
+  }
+
+  last(session: string | undefined): InlineRun | undefined {
+    return session === undefined ? undefined : this.past.get(session);
+  }
+
+  /** The messages no wake was queued for yet, marked as woken now. */
+  claim(session: string, keys: Iterable<string>): string[] {
+    const woken = this.woken.get(session) ?? new Set<string>();
+    const fresh = [...new Set(keys)].filter((key) => !woken.has(key));
+    for (const key of fresh) woken.add(key);
+    remember(this.woken, session, woken);
+    return fresh;
+  }
+}
+
+/**
+ * What a helper's request in a session is to the plugin:
+ * - inline: the helper answers a command run in this session.
+ * - stray: a run of the helper's that no command started, in a session that had an inline run.
+ * - leave: anything else, such as a helper in its own child session.
+ */
+export type HelperRequest = "inline" | "stray" | "leave";
+
+export function classifyHelperRequest(agent: string | undefined, run: InlineRun | undefined, hadRun: boolean, root: boolean, helpers: ReadonlySet<string>): HelperRequest {
+  if (agent === undefined || !helpers.has(agent) || !root) return "leave";
+  if (run !== undefined) return run.helper === agent ? "inline" : "leave";
+  return hadRun ? "stray" : "leave";
+}
+
+function isModel(value: unknown): value is V2ModelRef {
+  const model = value as V2ModelRef | undefined;
+  return typeof model?.id === "string" && typeof model.providerID === "string";
+}
+
+const sameModel = (a: V2ModelRef | undefined, b: V2ModelRef | undefined) => a?.id === b?.id && a?.providerID === b?.providerID && a?.variant === b?.variant;
+
+export interface InlineDeps {
+  harness: EmbeddedHarness;
+  ctx: V2Context;
+  tracker: SessionTracker;
+  helpers: ReadonlySet<string>;
+  reporter: Reporter;
+  /** The model the settings and profile give an agent, if any. */
+  plannedModel: (agent: string) => V2ModelRef | undefined;
+}
+
+/** Inline runs of the helpers' commands: the commands to register and the context hook's part. */
+export class Inline {
+  readonly runs = new InlineRuns();
+  private readonly chains = new Map<string, Promise<void>>();
+  private readonly roots = new Map<string, boolean>();
+
+  constructor(private readonly deps: InlineDeps) {}
+
+  /** True when every session call a run needs is there. */
+  available(): boolean {
+    const session = this.deps.ctx.session;
+    return [session?.get, session?.prompt, session?.switchAgent, session?.wait].every((call) => typeof call === "function");
+  }
+
+  commands(): V2CommandDefinition[] {
+    return inlineCommands(this.deps.harness, this.deps.helpers).map((command) => ({
+      name: command.name,
+      ...(command.description === undefined ? {} : { description: command.description }),
+      execute: async (invocation) => {
+        // Returning first lets opencode answer the command's HTTP call; runs in a session go one by one.
+        const sessionID = invocation?.sessionID;
+        if (typeof sessionID !== "string") return;
+        const previous = this.chains.get(sessionID) ?? Promise.resolve();
+        const next = previous.then(() => this.run(command, invocation)).catch((error: unknown) => this.deps.reporter.internal(`the /${command.name} command`, error));
+        remember(this.chains, sessionID, next);
+      },
+    }));
+  }
+
+  private async modelOf(agent: string): Promise<V2ModelRef | undefined> {
+    try {
+      const info = unwrap<{ model?: unknown }>(await this.deps.ctx.agent.get?.({ agentID: agent }));
+      if (isModel(info?.model)) return info.model;
+    } catch {
+      // The settings and profile below are what the plugin applied to the agent anyway.
+    }
+    return this.deps.plannedModel(agent);
+  }
+
+  /** The model a session without one of its own runs on; switching back to it is the nearest to no model. */
+  private async defaultModel(): Promise<V2ModelRef | undefined> {
+    try {
+      const model = unwrap<{ id?: unknown; providerID?: unknown }>(await this.deps.ctx.model?.default?.());
+      return isModel(model) ? { id: model.id, providerID: model.providerID } : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async idle(sessionID: string): Promise<void> {
+    const session = this.deps.ctx.session!;
+    // `wait` returns at once when the session is idle; a run that starts just after it returns
+    // shows in the tracker, and is waited for too.
+    for (let round = 0; round < 10; round++) {
+      await session.wait!({ sessionID });
+      if (this.deps.tracker.get(sessionID)?.state !== "running") return;
+    }
+  }
+
+  async run(command: InlineCommand, invocation: V2CommandInvocation): Promise<void> {
+    const session = this.deps.ctx.session!;
+    const sessionID = invocation.sessionID;
+    await this.idle(sessionID);
+    const info = unwrap<{ agent?: string; model?: unknown }>(await session.get!({ sessionID }));
+    const before = this.runs.last(sessionID);
+    // A session left on a helper (a switch back that failed) belongs to the owner noted before.
+    const onHelper = typeof info?.agent === "string" && this.deps.helpers.has(info.agent);
+    const owner = !onHelper && typeof info?.agent === "string" ? info.agent : (before?.owner ?? this.deps.harness.defaultAgent);
+    const ownerModel = onHelper ? before?.ownerModel : isModel(info?.model) ? info.model : undefined;
+    const helperModel = (command.model === undefined ? undefined : parseModel(command.model)) ?? (await this.modelOf(command.agent));
+    const brief = fillTemplate(command.template, typeof invocation.prompt?.text === "string" ? invocation.prompt.text : "");
+    const known = await this.knownMessages(sessionID);
+    const run: InlineRun = { command: command.name, helper: command.agent, owner, ownerModel, switchedModel: false, brief, held: new Set(), heldUser: new Set(), ...(known ? { known } : {}) };
+    this.runs.start(sessionID, run);
+    try {
+      await session.switchAgent!({ sessionID, agent: command.agent });
+      if (helperModel !== undefined && !sameModel(helperModel, ownerModel) && typeof session.switchModel === "function") {
+        run.switchedModel = true;
+        await session.switchModel({ sessionID, model: helperModel });
+      }
+      const pause = (globalThis as Record<symbol, unknown>)[BEFORE_BRIEF_FOR_TESTS];
+      if (typeof pause === "function") await pause({ sessionID, brief });
+      await session.prompt!({ ...invocation.prompt, sessionID, text: brief, metadata: { [INLINE_MARK]: command.name }, delivery: "steer" });
+      await session.wait!({ sessionID });
+    } finally {
+      this.runs.finish(sessionID);
+      await this.restore(sessionID, run);
+      await this.wake(sessionID, { reports: [...run.held], user: [...run.heldUser] });
+    }
+  }
+
+  /** The ids of the session's messages now, read before the switch: a message after them is new. */
+  private async knownMessages(sessionID: string): Promise<Set<string> | undefined> {
+    try {
+      const messages = unwrap<Array<{ id?: unknown }>>(await this.deps.ctx.session?.context?.({ sessionID }));
+      if (!Array.isArray(messages)) return undefined;
+      return new Set(messages.flatMap((message) => (typeof message?.id === "string" ? [message.id] : [])));
+    } catch {
+      // Without them only the messages after the brief count as new, as before.
+      return undefined;
+    }
+  }
+
+  private async restore(sessionID: string, run: InlineRun): Promise<void> {
+    const session = this.deps.ctx.session!;
+    try {
+      await session.switchAgent!({ sessionID, agent: run.owner });
+      if (run.switchedModel) {
+        const model = run.ownerModel ?? (await this.defaultModel()) ?? (await this.modelOf(run.owner));
+        if (model !== undefined) await session.switchModel!({ sessionID, model });
+        else this.deps.reporter.internal("switching back", new Error(`no model to give ${run.owner} back in session ${sessionID}`));
+      }
+    } catch (error) {
+      this.deps.reporter.internal("switching back after a command", error);
+    }
+  }
+
+  /** One wake for what was held: to answer the user first when the user wrote, else to act on the reports. */
+  private async wake(sessionID: string, held: HeldMessages): Promise<void> {
+    const reports = this.runs.claim(sessionID, held.reports).length > 0;
+    const user = this.runs.claim(sessionID, held.user).length > 0;
+    if (!reports && !user) return;
+    const text = !user ? INLINE_WAKE_TEXT : reports ? INLINE_USER_AND_REPORTS_WAKE_TEXT : INLINE_USER_WAKE_TEXT;
+    const description = user ? "Message held while a helper answered" : "Reports held while a helper answered";
+    try {
+      await this.deps.ctx.session?.synthetic?.({ sessionID, text, description, delivery: "queue" });
+    } catch (error) {
+      this.deps.reporter.internal("waking lead after a command", error);
+    }
+  }
+
+  private async isRoot(sessionID: string): Promise<boolean> {
+    const tracked = this.deps.tracker.get(sessionID);
+    if (tracked?.parentID !== undefined) return false;
+    const known = this.roots.get(sessionID);
+    if (known !== undefined) return known;
+    const info = unwrap<{ parentID?: unknown }>(await this.deps.ctx.session?.get?.({ sessionID }));
+    if (info === undefined) return false;
+    const root = typeof info.parentID !== "string";
+    remember(this.roots, sessionID, root);
+    return root;
+  }
+
+  /**
+   * The context hook's part for a helper's request. Returns true when it handled the request:
+   * the request is then the helper's alone, and answer-first does not apply.
+   */
+  async context(event: V2ContextEvent): Promise<boolean> {
+    const sessionID = event.sessionID;
+    const agent = event.agent;
+    if (typeof sessionID !== "string" || typeof agent !== "string" || !this.deps.helpers.has(agent) || !Array.isArray(event.messages)) return false;
+    const run = this.runs.get(sessionID);
+    const before = this.runs.last(sessionID);
+    if (run === undefined && before === undefined) return false;
+    const kind = classifyHelperRequest(agent, run, before !== undefined, await this.isRoot(sessionID), this.deps.helpers);
+    if (kind === "leave") return false;
+    if (kind === "inline") {
+      const held = isolateHelperRequest(event.messages, run!.brief, run!.known);
+      for (const key of held.reports) run!.held.add(key);
+      for (const key of held.user) run!.heldUser.add(key);
+      return true;
+    }
+    const held = isolateHelperRequest(event.messages, (run ?? before)!.brief);
+    const owner = (run ?? before)!;
+    // Not awaited: the request goes on as the helper's, and the switch applies from the next one.
+    void this.restore(sessionID, owner).then(() => this.wake(sessionID, held));
+    return true;
+  }
 }

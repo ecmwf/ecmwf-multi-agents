@@ -33,6 +33,16 @@ describe("settingsPaths", () => {
     ]);
   });
 
+  test("the site file of a central install comes first", () => {
+    const env = { OPENCODE_CONFIG_DIR: "/site/opencode", XDG_CONFIG_HOME: "/xdg" };
+    expect(settingsPaths({ env, home: "/home/u" }, "/repo", "/central/ecmwf-multi-agents.jsonc")).toEqual([
+      "/central/ecmwf-multi-agents.jsonc",
+      "/site/opencode/ecmwf-multi-agents.jsonc",
+      "/xdg/opencode/ecmwf-multi-agents.jsonc",
+      "/repo/.opencode/ecmwf-multi-agents.jsonc",
+    ]);
+  });
+
   test("reads a file once when two locations are the same directory", () => {
     const env = { OPENCODE_CONFIG_DIR: "/home/u/.config/opencode/", XDG_CONFIG_HOME: "/home/u/.config" };
     expect(settingsPaths({ env, home: "/home/u" }, "/home/u/.config")).toEqual([
@@ -213,11 +223,18 @@ describe("loadSettings", () => {
       defaultAgent: true,
       agents: { scout: { steps: 7, effort: "low" }, reviewer: { steps: 9 } },
     });
+    expect(loaded.sources).toEqual({
+      review: project,
+      profile: site,
+      "agents.scout.steps": global,
+      "agents.scout.effort": site,
+      "agents.reviewer.steps": project,
+    });
   });
 
   test("missing files are skipped silently", () => {
     const loaded = loadSettings(harness, fakeEnvironment({}, env), "/repo");
-    expect(loaded).toEqual({ settings: mergeSettings([], harness), problems: [], applied: [] });
+    expect(loaded).toEqual({ settings: mergeSettings([], harness), problems: [], applied: [], sources: {} });
   });
 
   test("an invalid file is ignored entirely and reported with its path; the others still apply", () => {

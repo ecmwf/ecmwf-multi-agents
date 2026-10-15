@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Sandboxes and projects for eval runs: a fresh directory per run with HOME and the XDG
-// directories inside it (tools/sandbox.sh), a git project copied from the fixture with a fixed
-// identity, the harness installed with install.sh or a baseline opencode.json, and a symbolic
-// link to the owner's opencode login file. The login file is never read: only the link is made.
+// directories inside it (tools/sandbox.sh), the chosen opencode 2 binary linked in as
+// `opencode`, a git project copied from the fixture with a fixed identity, and the harness
+// installed with install.sh or a baseline opencode.json. Logins come from login.ts.
 
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import type { CommandResult, SetupStep, Variant } from "./types.ts";
 
@@ -46,15 +46,17 @@ export interface Box {
   config: string;
   project: string;
   remote?: string;
+  /** Folder holding the `opencode` link to the run's binary; first on the run's PATH. */
+  bin?: string;
 }
 
 // ---------------------------------------------------------------------------------------------
-// Profiles, credentials, versions
+// Profiles, plugins, versions
 
 /** Reads a profile from the built harness; the per-agent effort key may be variant or effort. */
 export function loadProfile(name: string, repo = REPO): Profile {
   if (!/^[A-Za-z0-9._-]+$/.test(name)) throw new Error(`invalid profile name: ${name}`);
-  const file = path.join(repo, "dist", "opencode-v1", NAME, "profiles", `${name}.json`);
+  const file = path.join(repo, "dist", "opencode-v2", NAME, "profiles", `${name}.json`);
   if (!existsSync(file)) throw new Error(`unknown profile ${name}: ${path.relative(repo, file)} does not exist (run bun run build?)`);
   return parseProfile(name, JSON.parse(readFileSync(file, "utf8")));
 }
@@ -86,41 +88,36 @@ export function profileProviders(profile: Profile): string[] {
 }
 
 /**
- * Where the sandbox login link points: $ECMWF_MULTI_AGENTS_EVAL_AUTH, else the owner's opencode
- * login file. Only its existence is checked; messages never show the path or a variable's value.
- */
-export function authTarget(env: Record<string, string | undefined> = process.env, home = homedir()): { ok: true; path: string } | { ok: false; message: string } {
-  const fromEnv = env.ECMWF_MULTI_AGENTS_EVAL_AUTH;
-  const target = fromEnv && fromEnv !== "" ? path.resolve(fromEnv) : path.join(home, ".local", "share", "opencode", "auth.json");
-  if (existsSync(target)) return { ok: true, path: target };
-  return {
-    ok: false,
-    message: fromEnv
-      ? "the login file named by ECMWF_MULTI_AGENTS_EVAL_AUTH does not exist. Point it at your opencode auth.json."
-      : "no opencode login file in <your home>/.local/share/opencode/auth.json. Log in with `opencode auth login`, or set ECMWF_MULTI_AGENTS_EVAL_AUTH to the file.",
-  };
-}
-
-/**
- * opencode plugins the sandbox loads for provider logins, from $ECMWF_MULTI_AGENTS_EVAL_PLUGINS
- * (separated by spaces or commas). The sandbox never loads the owner's own opencode config, so a
- * provider whose login needs a plugin (an OAuth login, for example) is listed here.
+ * Extra opencode 2 plugins the sandbox loads, from $ECMWF_MULTI_AGENTS_EVAL_PLUGINS (separated
+ * by spaces or commas). The sandbox never loads the owner's own opencode config, so a provider
+ * whose login needs a plugin (an OAuth login, for example) is listed here.
  */
 export function loginPlugins(env: Record<string, string | undefined> = process.env): string[] {
   return (env.ECMWF_MULTI_AGENTS_EVAL_PLUGINS ?? "").split(/[\s,]+/).filter((item) => item !== "");
 }
 
-/** The binary's version, asked inside a throwaway sandbox. */
+/** The version in `opencode --version` output, such as 2.0.28 from "opencode v2.0.28". */
+export function parseVersion(output: string): string {
+  return /(\d+\.\d+\.\d+\S*)/.exec(output)?.[1] ?? "";
+}
+
+/** The binary's version, asked inside a throwaway sandbox; empty when it cannot be run. */
 export function opencodeVersion(bin: string): string {
   const dir = mkdtempSync(path.join(tmpdir(), "ecmwf-eval-"));
   try {
     const result = Bun.spawnSync([SANDBOX_SCRIPT, dir, bin, "--version"], { cwd: dir, stdout: "pipe", stderr: "pipe", env: baseEnv(), timeout: 60_000 });
-    return result.stdout.toString().trim().split("\n").pop()?.trim() ?? "";
+    return parseVersion(result.stdout.toString());
   } catch {
     return "";
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/** An opencode binary as a path: a bare name is looked up on PATH. Undefined when not found. */
+export function resolveBinary(bin: string): string | undefined {
+  if (bin.includes("/")) return existsSync(bin) ? path.resolve(bin) : undefined;
+  return Bun.which(bin) ?? undefined;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -164,6 +161,45 @@ export function removeLiveBoxes(): void {
   for (const box of [...liveBoxes]) removeBox(box);
 }
 
+/**
+ * Names opencode 2 loads from the project folder and every folder above it, up to the file
+ * system root (core/src/config/discovery.ts at v2.0.29).
+ */
+export const PROJECT_CONFIG_NAMES = [".claude", ".agents", ".opencode", "opencode.jsonc", "opencode.json"];
+
+function present(file: string): boolean {
+  try {
+    lstatSync(file);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Every opencode project config file or folder in `dir` and the folders above it, nearest first. */
+export function projectConfigFrom(dir: string, exists: (file: string) => boolean = present): string[] {
+  const found: string[] = [];
+  for (let current = path.resolve(dir); ; current = path.dirname(current)) {
+    for (const name of PROJECT_CONFIG_NAMES) {
+      const file = path.join(current, name);
+      if (exists(file)) found.push(file);
+    }
+    if (current === path.dirname(current)) return found;
+  }
+}
+
+/**
+ * Why sandboxes in `parent` are unsafe, or undefined when they are safe. The sandboxed server
+ * reads the fixture's own project config, so it cannot switch that search off; opencode config
+ * in a folder above the sandbox (another user's /tmp/opencode.json, say) would load into the
+ * server that holds the eval login.
+ */
+export function sandboxParentProblem(parent: string, exists?: (file: string) => boolean): string | undefined {
+  const found = projectConfigFrom(parent, exists);
+  if (found.length === 0) return undefined;
+  return `opencode would load ${found.join(", ")} into every eval sandbox under ${parent}, because it reads project config from every folder above the project; remove it, or set TMPDIR to a folder where neither it nor any folder above it holds ${PROJECT_CONFIG_NAMES.join(", ")} (a new folder under /var/tmp, say)`;
+}
+
 /** A fresh sandbox under the system temporary directory, with the fixture as a git project. */
 export function createBox(fixture = FIXTURE): Box {
   // opencode reports canonical paths, so resolve symbolic links in the temporary directory.
@@ -179,8 +215,8 @@ export function createBox(fixture = FIXTURE): Box {
 }
 
 export function removeBox(box: Box): void {
-  // chmod -R skips symbolic links it meets, and rmSync removes the login link itself, never
-  // the file it points to.
+  // chmod -R skips symbolic links it meets, and rmSync removes the opencode link itself, never
+  // the binary it points to.
   Bun.spawnSync(["chmod", "-R", "u+w", box.dir]);
   rmSync(box.dir, { recursive: true, force: true });
   liveBoxes.delete(box);
@@ -250,11 +286,22 @@ export function applySetup(box: Box, steps: SetupStep[]): string {
   return must(["git", "rev-parse", "HEAD"], { cwd: project });
 }
 
-/** The sandbox login link: home/.local/share/opencode/auth.json pointing at the owner's file. */
-export function linkAuth(box: Box, target: string): void {
-  const link = path.join(box.home, ".local", "share", "opencode", "auth.json");
-  mkdirSync(path.dirname(link), { recursive: true });
-  symlinkSync(target, link);
+/**
+ * Links the run's opencode binary into the sandbox as `opencode` and returns the link. With its
+ * folder first on PATH, install.sh finds this binary, whatever else is installed.
+ */
+export function linkOpencode(box: Box, bin: string): string {
+  const dir = path.join(box.dir, "bin");
+  mkdirSync(dir, { recursive: true });
+  const link = path.join(dir, "opencode");
+  symlinkSync(bin, link);
+  box.bin = dir;
+  return link;
+}
+
+/** The run's PATH: the sandbox's opencode first, then the runner's own PATH. */
+export function sandboxPath(box: Box): string {
+  return [box.bin, process.env.PATH].filter((item) => item !== undefined && item !== "").join(":");
 }
 
 /** Runs a command inside the sandbox (tools/sandbox.sh), with the run's environment. */
@@ -262,29 +309,30 @@ export function inSandbox(box: Box, argv: string[], options: { cwd: string; env?
   return exec([SANDBOX_SCRIPT, box.dir, ...argv], options);
 }
 
-/** Installs the harness from this checkout into the sandbox: global, linked, opencode 1.x files. */
+/** Installs the harness from this checkout into the sandbox: global and linked, for the run's opencode. */
 export function installHarness(box: Box, profile: string, review: string, repo = REPO): void {
-  const result = inSandbox(box, ["sh", path.join(repo, "install.sh"), "--platform", "v1", "--link", "--profile", profile, "--review", review], { cwd: repo });
+  const result = inSandbox(box, ["sh", path.join(repo, "install.sh"), "--link", "--profile", profile, "--review", review], { cwd: repo, env: { PATH: sandboxPath(box) } });
   if (result.code !== 0) throw new Error(`install.sh failed (${result.code}):\n${result.output.trim()}`);
 }
 
 /**
- * The sandbox opencode.json. Both variants: only the profile's providers, lead's model as the
- * session model, sharing off. Baseline: the built-in build agent on lead's model and effort.
+ * The sandbox opencode.json, in opencode 2 keys. Both variants: only the profile's providers,
+ * lead's model as the session model, sharing and updates off, and the extra plugins. Baseline:
+ * the built-in build agent on lead's model and effort (provider/model#variant).
  */
 export function opencodeConfig(variant: Variant, profile: Profile, extra: Record<string, unknown> = {}, plugins: string[] = []): Record<string, unknown> {
   const lead = profile.agents.lead ?? {};
   const providers = profileProviders(profile);
-  const config: Record<string, unknown> = { $schema: "https://opencode.ai/config.json", share: "disabled", autoupdate: false };
-  if (plugins.length > 0) config.plugin = plugins;
-  if (providers.length > 0) config.enabled_providers = providers;
-  if (lead.model) config.model = lead.model;
-  if (variant === "baseline") {
-    const build: Record<string, string> = {};
-    if (lead.model) build.model = lead.model;
-    if (lead.variant) build.variant = lead.variant;
-    config.agent = { build };
+  const config: Record<string, unknown> = { share: "disabled", update: "disable" };
+  if (plugins.length > 0) config.plugins = plugins;
+  if (providers.length > 0) {
+    config.policies = [
+      { action: "provider.use", resource: "*", effect: "deny" },
+      ...providers.map((provider) => ({ action: "provider.use", resource: provider, effect: "allow" })),
+    ];
   }
+  if (lead.model) config.model = lead.model;
+  if (variant === "baseline") config.agents = { build: lead.model ? { model: lead.variant ? `${lead.model}#${lead.variant}` : lead.model } : {} };
   return { ...config, ...extra };
 }
 

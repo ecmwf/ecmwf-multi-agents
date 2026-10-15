@@ -13,9 +13,10 @@ BUN        ?= bun
 REUSE      ?= reuse
 SHELLCHECK ?= shellcheck
 
-INTEGRATION_TESTS := tools/emit-v1.integration.test.ts tools/emit-v2.integration.test.ts \
+INTEGRATION_TESTS := tools/emit-v2.integration.test.ts \
 	plugin/plugin.integration.test.ts plugin/background.integration.test.ts \
-	tests/install.integration.test.ts evals/run.integration.test.ts
+	plugin/register.integration.test.ts \
+	tests/install.integration.test.ts tests/central.integration.test.ts evals/run.integration.test.ts
 
 # `make release X.Y.Z` (positional) or `make release VERSION=X.Y.Z`. A VERSION inherited from
 # the environment is ignored so a stray shell variable can never start a release.
@@ -29,7 +30,7 @@ $(eval $(VERSION):;@:)
 endif
 endif
 
-.PHONY: help setup build dist-check lint test check all integration evals version version-check \
+.PHONY: help setup build dist-check lint test check all integration evals eval-login version version-check \
         pack-check release clean
 
 help: ## Show this help
@@ -62,17 +63,19 @@ test: ## Unit tests (the integration suites skip themselves)
 
 # ── Beyond the gate ──────────────────────────────────────────────────────────
 
-integration: ## Suites against real opencode binaries, no models: OPENCODE_V1_BINS="a b" OPENCODE_V2_BIN=c
+integration: ## Suites against a real opencode binary, no models: OPENCODE_V2_BIN=path
 	ECMWF_MULTI_AGENTS_INTEGRATION=1 \
-	$(if $(OPENCODE_V1_BINS),OPENCODE_V1_BINS="$(OPENCODE_V1_BINS)") \
-	$(if $(OPENCODE_V1_BIN),,$(if $(OPENCODE_V1_BINS),OPENCODE_V1_BIN="$(firstword $(OPENCODE_V1_BINS))")) \
 	$(if $(OPENCODE_V2_BIN),OPENCODE_V2_BIN="$(OPENCODE_V2_BIN)") \
 		$(BUN) test --timeout 600000 $(INTEGRATION_TESTS)
 
 evals: ## Scenario evals with REAL models (uses your provider quota): CASES="a b" REPEAT=1 VARIANT=both
 	$(BUN) evals/run.ts $(foreach c,$(CASES),--case $(c)) --repeat $(or $(REPEAT),1) \
 		--variant $(or $(VARIANT),both) $(if $(PROFILE),--profile $(PROFILE)) \
-		$(if $(JOBS),--jobs $(JOBS)) $(if $(MAX_COST),--max-cost $(MAX_COST))
+		$(if $(JOBS),--jobs $(JOBS)) $(if $(MAX_COST),--max-cost $(MAX_COST)) \
+		--opencode $(or $(OPENCODE_V2_BIN),opencode)
+
+eval-login: ## Log in for the evals, into an eval-only login (never your own): PROVIDER=name
+	$(BUN) evals/login.ts --opencode $(or $(OPENCODE_V2_BIN),opencode) $(PROVIDER)
 
 # ── Versioning and releases ──────────────────────────────────────────────────
 

@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, test } from "bun:test";
-import { earlyReports, heldReports, heldReportsV2, replyOpen, requestBefore, stepsV1, stepsV2, WAKE_TEXT } from "./answer-first.ts";
-import type { V1MessageWithParts } from "./isolate.ts";
+import { earlyReports, heldReports, heldReportsV2, replyOpen, requestBefore, stepsV2, V2_CONTINUE_NOTES, WAKE_TEXT } from "./answer-first.ts";
 import type { V2ModelMessage } from "./types.ts";
 
 describe("the rule", () => {
@@ -36,28 +35,6 @@ describe("the rule", () => {
   });
 });
 
-describe("stepsV1", () => {
-  const message = (role: string, agent: string, parts: unknown[], extra: Record<string, unknown> = {}): V1MessageWithParts => ({ info: { role, agent, sessionID: "ses_1", ...extra }, parts });
-  const text = (value: string, synthetic = false) => ({ type: "text", text: value, ...(synthetic ? { synthetic: true } : {}) });
-  const step = (finish: string, parts: unknown[] = [], extra: Record<string, unknown> = {}) => message("assistant", "lead", parts, { finish, ...extra });
-  const steps = (...messages: V1MessageWithParts[]) => stepsV1(messages, "lead");
-
-  test("the question, the lookup and a report that arrived meanwhile: lead is still replying", () => {
-    const seen = steps(message("user", "lead", [text("What range?")]), step("tool-calls", [{ type: "tool", tool: "read" }]), message("user", "lead", [text('<task id="ses_c" state="completed">\nDONE\n</task>', true)]));
-    expect(seen).toEqual(["request", "other", "report"]);
-    expect(replyOpen(seen)).toBe(true);
-  });
-
-  test("a final step, an error or a compaction summary ends the turn; a final step that still ran a tool does not, unless the provider ran it", () => {
-    expect(steps(step("stop"), step("tool-calls", [], { error: { name: "Aborted" } }), step("stop", [], { summary: true }))).toEqual(["ended", "ended", "ended"]);
-    expect(steps(step("stop", [{ type: "tool", tool: "read" }]), step("stop", [{ type: "tool", tool: "web", metadata: { providerExecuted: true } }]), step("unknown"))).toEqual(["other", "ended", "other"]);
-  });
-
-  test("a note opencode wrote is no request, and a message to a helper or another agent is a boundary", () => {
-    expect(steps(message("user", "lead", [text("Continue.", true)]), message("user", "reviewer", [text("/review")]), message("user", "build", [text("fix it")]))).toEqual(["other", "boundary", "boundary"]);
-  });
-});
-
 describe("heldReportsV2", () => {
   const user = (text: string): V2ModelMessage => ({ role: "user", content: [{ type: "text", text }] });
   const report = () => user('<subagent sessionID="ses_c" state="completed" description="T1">\nSTATUS: DONE\n</subagent>');
@@ -86,5 +63,41 @@ describe("heldReportsV2", () => {
   test("each message of a request is classified as opencode sends it", () => {
     const checkpoint = user("<conversation-checkpoint>\nsummary\n</conversation-checkpoint>");
     expect(stepsV2([user("q"), lookup(), result(), report(), answer(), user(WAKE_TEXT), checkpoint])).toEqual(["request", "other", "other", "report", "ended", "boundary", "boundary"]);
+  });
+
+  const interrupted = "The previous response was interrupted. Continue from where you left off without repeating completed content.";
+  const outputLimit =
+    "Your last response hit the output token limit (stop reason: length). Do not apologize, recap, or repeat yourself. Break the remaining work into smaller pieces.";
+
+  test("the note after an interrupted response is no request, and the cut-off step before it ended no turn", () => {
+    expect(V2_CONTINUE_NOTES).toContain(interrupted);
+    expect(stepsV2([user("What range?"), answer(), user(interrupted), answer()])).toEqual(["request", "other", "other", "ended"]);
+    // The reply to the user goes on across the note, so a report during it is still held for that reply.
+    expect(heldReportsV2([user("What range?"), answer(), user(interrupted), lookup(), result(), report()])).toEqual({ held: [5], reply: "0\nWhat range?" });
+    // A report after an answer that ended is not held because of the note before it.
+    expect(heldReportsV2([user("What range?"), lookup(), user(interrupted), answer(), report()])).toBeUndefined();
+  });
+
+  test("the note after a response that hit the output limit is no request, and the cut-off step before it ended no turn", () => {
+    expect(V2_CONTINUE_NOTES).toContain(outputLimit);
+    expect(stepsV2([user("Write it all."), answer(), user(outputLimit), answer()])).toEqual(["request", "other", "other", "ended"]);
+    expect(heldReportsV2([user("Write it all."), answer(), user(outputLimit), answer(), report()])).toBeUndefined();
+    expect(heldReportsV2([user("Write it all."), answer(), user(outputLimit), lookup(), result(), report()])).toEqual({ held: [5], reply: "0\nWrite it all." });
+  });
+
+  test("a report that lands between a cut-off response and its note is held for the reply that goes on", () => {
+    expect(stepsV2([user("What range?"), answer(), report(), user(interrupted), lookup()])).toEqual(["request", "other", "report", "other", "other"]);
+    expect(heldReportsV2([user("What range?"), answer(), report(), user(interrupted), lookup(), result()])).toEqual({ held: [2], reply: "0\nWhat range?" });
+    // With no note after the reports, the answer before them ended the reply, so nothing is held.
+    expect(stepsV2([user("What range?"), answer(), report(), report()])).toEqual(["request", "ended", "report", "report"]);
+    expect(heldReportsV2([user("What range?"), answer(), report(), user("thanks")])).toBeUndefined();
+  });
+
+  test("a user who writes the text of a note among other text is still a request", () => {
+    expect(stepsV2([answer(), user(`${outputLimit} Also, what range?`), { role: "user", content: [{ type: "text", text: interrupted }, { type: "text", text: "and this" }] }])).toEqual([
+      "ended",
+      "request",
+      "request",
+    ]);
   });
 });

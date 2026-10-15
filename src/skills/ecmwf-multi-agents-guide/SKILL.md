@@ -24,7 +24,7 @@ You talk to one agent, `lead`. It works out what you need, asks when something i
 - `/review [target]`: independent review, under any policy, of your uncommitted changes (no target), a branch, a pull request (number or URL) or a plan file. It replaces opencode's own `/review`.
 - `/guide [question]`: this guide.
 
-A project's own command or agent with the same name, such as its own `/onboard`, takes precedence in that project.
+A project's own command or agent with the same name, such as its own `/onboard`, takes precedence in that project, except `/review` and `/progress`. The settings, not an agent file, decide a harness agent's model, effort and steps, and the review policy.
 
 ## Review policy
 
@@ -62,11 +62,9 @@ Profiles give each agent a model and an effort:
 
 ## Helpers in the background
 
-`lead` usually waits for a helper. When it has other work meanwhile, or you may want to keep talking, it hands off in the background and the report arrives later in your conversation. If `lead` is waiting on a helper and you want it back, press Ctrl+B (opencode 1.x) to move the hand-off to the background.
+`lead` usually waits for a helper. When it has other work meanwhile, or you may want to keep talking, it hands off in the background and the report arrives later in your conversation. If `lead` is waiting on a helper and you want it back, press Ctrl+B to move the hand-off to the background.
 
-If a helper is doing something you do not want, tell `lead`: "redirect the scout: stay in src/" or "stop the builder". `lead` can list its helpers, send one an amendment it reads at its next step, keeping what it has read, or stop one. You can also open the helper's session and type to it. A stopped helper reports nothing; its changes stay on disk.
-
-On opencode 1.x this needs `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` in the environment before opencode starts; `./install.sh doctor` checks it. Without it `lead` waits for every helper.
+If a helper is doing something you do not want, tell `lead`: "redirect the scout: stay in src/" or "stop the builder". `lead` can list its helpers, send one an amendment it reads at its next step, keeping what it has read, or stop one. You cannot type in a helper's session yourself. A stopped helper reports nothing; its changes stay on disk.
 
 ## Work files
 
@@ -75,7 +73,7 @@ Plans, scout notes and the onboarding summary live in `.ecmwf-multi-agents/` at 
 ## Safety
 
 - Agents commit only when you ask.
-- Pushing, opening or merging a pull request, rewriting history and discarding changes always ask for your approval. Answer "Allow once": in opencode 1.x, "Allow always" lasts until restart and applies to every agent.
+- Pushing, opening or merging a pull request, rewriting history and discarding changes always ask for your approval.
 - Helpers cannot commit, push or rewrite history. Scouts write only their notes; the reviewer changes no files.
 - The harness never asks for credentials. Never paste passwords or tokens into the chat.
 

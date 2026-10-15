@@ -2,35 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, test } from "bun:test";
-import { applyToV1Config, applyToV2Agents, planAgents, rewriteReviewLine } from "./apply.ts";
+import { applyToV2Agents, planAgents, rewriteReviewLine } from "./apply.ts";
 import { mergeSettings } from "./settings.ts";
 import { LEAD_PROMPT, embeddedFixture, resolvedFixture } from "./testing.ts";
-import type { Settings, SettingsFile, V1Config, V2AgentEditor, V2AgentInfo } from "./types.ts";
+import type { Settings, SettingsFile, V2AgentEditor, V2AgentInfo } from "./types.ts";
 
 const harness = embeddedFixture();
 
 function settingsOf(...files: SettingsFile[]): Settings {
   return mergeSettings(files, harness);
-}
-
-/** The config opencode 1.x hands to the `config` hook for the emitted agent files. */
-function v1Config(): V1Config {
-  const agent: NonNullable<V1Config["agent"]> = {
-    build: { model: "other/model", steps: 3 },
-  };
-  for (const item of resolvedFixture().agents) {
-    agent[item.id] = {
-      name: item.id,
-      description: item.description,
-      mode: item.mode,
-      ...(item.model !== undefined ? { model: item.model } : {}),
-      ...(item.variant !== undefined ? { variant: item.variant } : {}),
-      ...(item.steps !== undefined ? { steps: item.steps } : {}),
-      permission: {},
-      prompt: item.prompt,
-    };
-  }
-  return { agent };
 }
 
 /** A fake opencode 2.0.16 agent editor holding the emitted agents and two built-ins. */
@@ -137,93 +117,6 @@ describe("rewriteReviewLine", () => {
     expect(rewriteReviewLine("Review policy: auto\nReview policy: ask", "never", "lead").problem).toBe(
       'the prompt of lead has 2 "Review policy:" lines instead of one, so none was changed',
     );
-  });
-});
-
-describe("applyToV1Config", () => {
-  test("default settings keep the baked values, set the review line and make lead the default agent", () => {
-    const config = v1Config();
-    const before = structuredClone(config);
-    const problems = applyToV1Config(config, harness, settingsOf(), planAgents(harness, settingsOf()).plans);
-    expect(problems).toEqual([]);
-    expect(config.default_agent).toBe("lead");
-    delete config.default_agent;
-    expect(config).toEqual(before);
-  });
-
-  test("a profile and overrides set model, variant, steps and the review line on our agents only", () => {
-    const config = v1Config();
-    const settings = settingsOf({ profile: "anthropic", review: "always", agents: { scout: { steps: 9 }, builder: { model: "openai/gpt-x" } } });
-    applyToV1Config(config, harness, settings, planAgents(harness, settings).plans);
-    const agent = config.agent!;
-    expect(agent.reviewer).toMatchObject({ model: "anthropic/claude-opus-5-5", variant: "high", steps: 30 });
-    expect(agent.scout).toMatchObject({ model: "anthropic/claude-sonnet-5-5", variant: "medium", steps: 9 });
-    expect(agent.builder!.model).toBe("openai/gpt-x");
-    expect("variant" in agent.builder!).toBe(false);
-    expect(agent.lead!.prompt).toContain("\nReview policy: always\n");
-    expect(agent.build).toEqual({ model: "other/model", steps: 3 });
-  });
-
-  test("an effort override is written as the agent's variant", () => {
-    const config = v1Config();
-    const settings = settingsOf({ agents: { builder: { effort: "xhigh" } } });
-    applyToV1Config(config, harness, settings, planAgents(harness, settings).plans);
-    expect(config.agent!.builder).toMatchObject({ model: "anthropic/claude-sonnet-5-5", variant: "xhigh", steps: 60 });
-    expect("effort" in config.agent!.builder!).toBe(false);
-  });
-
-  test("inherit removes model and variant so agents use the session model", () => {
-    const config = v1Config();
-    const settings = settingsOf({ profile: "inherit" });
-    applyToV1Config(config, harness, settings, planAgents(harness, settings).plans);
-    for (const id of ["lead", "scout", "builder", "reviewer"]) {
-      expect("model" in config.agent![id]!).toBe(false);
-      expect("variant" in config.agent![id]!).toBe(false);
-    }
-    expect(config.agent!.scout!.steps).toBe(30);
-  });
-
-  test("agents missing from the config are left alone", () => {
-    const config: V1Config = { agent: { lead: { mode: "primary", prompt: LEAD_PROMPT } } };
-    applyToV1Config(config, harness, settingsOf({ agents: { scout: { steps: 2 } } }), planAgents(harness, settingsOf()).plans);
-    expect(Object.keys(config.agent!)).toEqual(["lead"]);
-  });
-
-  test("a missing review line is reported; a toast only when the user set a policy", () => {
-    const config = v1Config();
-    config.agent!.lead!.prompt = "My own lead prompt.";
-    expect(applyToV1Config(config, harness, settingsOf(), [])).toEqual([
-      {
-        message: 'ecmwf-multi-agents: the prompt of lead has no "Review policy:" line, so the review policy stays as the prompt says',
-        notify: false,
-      },
-    ]);
-    expect(config.agent!.lead!.prompt).toBe("My own lead prompt.");
-    expect(applyToV1Config(config, harness, settingsOf({ review: "never" }), [])[0]?.notify).toBe(true);
-  });
-
-  test("default agent: kept when a config names one, skipped when settings say no", () => {
-    const named = v1Config();
-    named.default_agent = "plan";
-    applyToV1Config(named, harness, settingsOf(), []);
-    expect(named.default_agent).toBe("plan");
-
-    const declined = v1Config();
-    applyToV1Config(declined, harness, settingsOf({ default_agent: false }), []);
-    expect(declined.default_agent).toBeUndefined();
-  });
-
-  test("default agent: never set to a lead that opencode would reject", () => {
-    for (const lead of [undefined, { disable: true }, { mode: "subagent" }, { hidden: true }]) {
-      const config = v1Config();
-      if (lead === undefined) delete config.agent!.lead;
-      else Object.assign(config.agent!.lead!, lead);
-      applyToV1Config(config, harness, settingsOf(), []);
-      expect(config.default_agent).toBeUndefined();
-    }
-    const noAgents: V1Config = {};
-    expect(applyToV1Config(noAgents, harness, settingsOf(), [])).toEqual([]);
-    expect(noAgents).toEqual({});
   });
 });
 

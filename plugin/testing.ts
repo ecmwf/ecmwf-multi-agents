@@ -112,7 +112,6 @@ const agents: ResolvedAgent[] = [
       ...readOnlyShell,
       { action: "delegate", resource: "*", effect: "deny" },
       { action: "question", resource: "*", effect: "deny" },
-      { action: "todo", resource: "*", effect: "deny" },
       { action: "execute", resource: "*", effect: "deny" },
       { action: "skill", resource: "ecmwf-multi-agents-*", effect: "deny" },
       ...harnessTools,
@@ -150,7 +149,6 @@ const agents: ResolvedAgent[] = [
       ...shell("allow", "gh pr view *", "gh pr diff *", "gh pr checks *"),
       { action: "delegate", resource: "*", effect: "deny" },
       { action: "question", resource: "*", effect: "deny" },
-      { action: "todo", resource: "*", effect: "deny" },
       { action: "execute", resource: "*", effect: "deny" },
       { action: "skill", resource: "ecmwf-multi-agents-*", effect: "deny" },
       ...harnessTools,
@@ -177,6 +175,7 @@ export function resolvedFixture(): ResolvedHarness {
     commands: [
       { id: "plan", description: "Plan a piece of work with you", agent: "lead", subtask: false, template: "Plan: $ARGUMENTS" },
       { id: "review", description: "Independent review of your changes", agent: "reviewer", subtask: false, template: "Review $ARGUMENTS" },
+      { id: "progress", description: "Show progress on the current plan", agent: "scout", subtask: false, template: "Progress of $ARGUMENTS" },
     ],
     skills: [{ id: "ecmwf-multi-agents-plan", description: "Plan file format and rules.", body: "# Plan\n\nRules.", hidden: true }],
     profiles: [
@@ -206,7 +205,6 @@ export function fakeEnvironment(files: Record<string, string>, env: Record<strin
   return {
     env,
     home,
-    platform: "linux",
     readFile: (file) => files[file],
   };
 }

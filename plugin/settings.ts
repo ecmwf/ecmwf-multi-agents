@@ -50,18 +50,21 @@ function has(value: object, key: string): boolean {
 }
 
 /**
- * The settings files in the order they apply, later ones overriding earlier ones:
- * `$OPENCODE_CONFIG_DIR` (site defaults), the user's global opencode directory, then the
- * project's `.opencode/`. A path that appears twice is read once, in its first position.
+ * The settings files in the order they apply, later ones overriding earlier ones: the site file
+ * a central install names in the plugin's `site` option, `$OPENCODE_CONFIG_DIR`, the user's
+ * global opencode directory, then the project's `.opencode/`. A path that appears twice is read
+ * once, in its first position.
  */
-export function settingsPaths(environment: Pick<Environment, "env" | "home">, projectRoot: string | undefined): string[] {
+export function settingsPaths(environment: Pick<Environment, "env" | "home">, projectRoot: string | undefined, site?: string): string[] {
   const { env, home } = environment;
   const out: string[] = [];
-  const add = (dir: string | undefined) => {
-    if (!dir) return;
-    const file = path.resolve(dir, SETTINGS_FILE);
+  const addFile = (file: string) => {
     if (!out.includes(file)) out.push(file);
   };
+  const add = (dir: string | undefined) => {
+    if (dir) addFile(path.resolve(dir, SETTINGS_FILE));
+  };
+  if (site) addFile(path.resolve(site));
   add(env.OPENCODE_CONFIG_DIR);
   const xdg = env.XDG_CONFIG_HOME;
   add(path.join(xdg ? xdg : path.join(home, ".config"), "opencode"));
@@ -184,14 +187,31 @@ export interface LoadedSettings {
   problems: Problem[];
   /** Files that were read and applied, in order. */
   applied: string[];
+  /** The file each setting comes from, by name ("review", "agents.scout.steps"); unset ones use the default. */
+  sources: Record<string, string>;
+}
+
+/** The file that set each setting: the last applied file that names it. */
+export function settingSources(files: readonly SettingsFile[], applied: readonly string[]): Record<string, string> {
+  const sources: Record<string, string> = {};
+  files.forEach((file, index) => {
+    const from = applied[index]!;
+    if (file.review !== undefined) sources.review = from;
+    if (file.profile !== undefined) sources.profile = from;
+    if (file.default_agent !== undefined) sources.default_agent = from;
+    for (const [id, override] of Object.entries(file.agents ?? {})) {
+      for (const key of Object.keys(override)) sources[`agents.${id}.${key}`] = from;
+    }
+  });
+  return sources;
 }
 
 /** Read, check and merge every settings file. Missing files are skipped without a word. */
-export function loadSettings(harness: EmbeddedHarness, environment: Environment, projectRoot: string | undefined): LoadedSettings {
+export function loadSettings(harness: EmbeddedHarness, environment: Environment, projectRoot: string | undefined, site?: string): LoadedSettings {
   const files: SettingsFile[] = [];
   const problems: Problem[] = [];
   const applied: string[] = [];
-  for (const file of settingsPaths(environment, projectRoot)) {
+  for (const file of settingsPaths(environment, projectRoot, site)) {
     let text: string | undefined;
     try {
       text = environment.readFile(file);
@@ -218,5 +238,5 @@ export function loadSettings(harness: EmbeddedHarness, environment: Environment,
     files.push(checked.settings);
     applied.push(file);
   }
-  return { settings: mergeSettings(files, harness), problems, applied };
+  return { settings: mergeSettings(files, harness), problems, applied, sources: settingSources(files, applied) };
 }

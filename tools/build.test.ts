@@ -411,6 +411,20 @@ describe("paths", () => {
     expect(files.map((file) => file.path)).toEqual(["Z.md", "a.md", FILES_LIST]);
     expect(files.at(-1)?.content).toBe(`Z.md\na.md\n${FILES_LIST}\n`);
   });
+
+  test("files.txt leaves out the central install's template", () => {
+    const files = platformFiles("p", [
+      {
+        origin: "test",
+        files: [
+          { path: "a.md", content: "a" },
+          { path: "central/opencode.json", content: "{}" },
+        ],
+      },
+    ]);
+    expect(files.map((file) => file.path)).toEqual(["a.md", "central/opencode.json", FILES_LIST]);
+    expect(files.find((file) => file.path === FILES_LIST)?.content).toBe(`a.md\n${FILES_LIST}\n`);
+  });
 });
 
 describe("checks", () => {

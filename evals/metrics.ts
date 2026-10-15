@@ -3,10 +3,11 @@
 
 // Metrics of one run, from the messages of its root sessions and every descendant session.
 //
-// opencode 1.x keeps one assistant message per agent turn. Its `cost` adds up over the turn's
-// model requests, while its `tokens` holds the last request only; each request also leaves a
-// step-finish part with its own cost and tokens. Tokens and request counts therefore come from
-// the step-finish parts, and cost from the message.
+// The messages come from messages.ts: one assistant message per model request, with a
+// step-finish part carrying that request's cost and tokens. Tokens and request counts come from
+// the step-finish parts, and cost from the message. opencode's own session totals also count
+// requests no message shows (the session title); they are kept apart as sessionCost and
+// sessionTokens.
 
 import type {
   AgentMetrics,
@@ -22,8 +23,8 @@ import type {
   TranscriptSession,
 } from "./types.ts";
 
-/** Tool names that run shell commands (opencode 1.x calls it bash). */
-export const SHELL_TOOLS = new Set(["bash", "shell"]);
+/** Tool names that run shell commands. */
+export const SHELL_TOOLS = new Set(["shell"]);
 
 export function emptyTokens(): Tokens {
   return { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 };
@@ -55,11 +56,12 @@ export function contextOf(tokens: Tokens): number {
   return tokens.input + tokens.cacheRead + tokens.cacheWrite;
 }
 
-/** The agent that ran a session: from its first user message, else its first assistant message. */
-export function sessionAgent(session: Pick<SessionData, "messages">): string {
+/** The agent that ran a session: from its first user message, else the session, else its first assistant message. */
+export function sessionAgent(session: Pick<SessionData, "messages"> & Pick<Partial<SessionData>, "agent">): string {
   for (const message of session.messages) {
     if (message.info.role === "user" && message.info.agent) return message.info.agent;
   }
+  if (session.agent) return session.agent;
   for (const message of session.messages) {
     const agent = message.info.agent ?? message.info.mode;
     if (message.info.role === "assistant" && agent) return agent;
@@ -71,12 +73,17 @@ function messageAgent(message: ApiMessage, fallback: string): string {
   return message.info.agent ?? message.info.mode ?? fallback;
 }
 
-/** Why a tool call failed, when it was a refusal rather than an ordinary error. */
-export function classifyDenial(error: string | undefined): DenialKind | undefined {
+/**
+ * Why a tool call failed, when it was a refusal rather than an ordinary error: a deny rule
+ * ("Permission denied: shell"), the user's refusal (a plain reject, or one with a message), or
+ * the harness plugin's guard.
+ */
+export function classifyDenial(error: string | undefined, type?: string): DenialKind | undefined {
   if (!error) return undefined;
-  if (error.includes("prevents you from using this specific tool call")) return "rule";
-  if (error.includes("The user rejected permission to use this specific tool call")) return "user";
   if (/ecmwf-multi-agents: .* may not run /.test(error)) return "guard";
+  if (/^Permission denied: /.test(error)) return "rule";
+  if (error.includes("The user declined this tool call")) return "user";
+  if (type === "permission.rejected") return "user";
   return undefined;
 }
 
@@ -99,9 +106,9 @@ export function finalText(session: Pick<SessionData, "messages">): string {
 export function errorText(error: unknown): string {
   if (error === undefined || error === null) return "";
   if (typeof error === "string") return error;
-  const named = error as { name?: unknown; data?: { message?: unknown }; message?: unknown };
+  const named = error as { name?: unknown; type?: unknown; data?: { message?: unknown }; message?: unknown };
   const message = typeof named.data?.message === "string" ? named.data.message : typeof named.message === "string" ? named.message : "";
-  const name = typeof named.name === "string" ? named.name : "Error";
+  const name = typeof named.name === "string" ? named.name : typeof named.type === "string" ? named.type : "Error";
   return message ? `${name}: ${message}` : name;
 }
 
@@ -142,7 +149,7 @@ export function toolCalls(sessions: SessionData[]): ToolCall[] {
         };
         if (SHELL_TOOLS.has(part.tool) && typeof input.command === "string") call.command = input.command;
         if (part.state?.error) call.error = part.state.error;
-        const denied = classifyDenial(part.state?.error);
+        const denied = classifyDenial(part.state?.error, part.state?.errorType);
         if (denied) call.denied = denied;
         if (part.state?.time?.start !== undefined) call.start = part.state.time.start;
         if (part.state?.time?.end !== undefined) call.end = part.state.time.end;
@@ -167,11 +174,15 @@ export function aggregate(
   let cost = 0;
   let tokens = emptyTokens();
   let requests = 0;
+  let sessionCost = 0;
+  let sessionTokens = emptyTokens();
 
   for (const session of sessions) {
     const owner = sessionAgent(session);
     agentFor(owner).sessions++;
     if (!roots.includes(session.id)) childSessions[owner] = (childSessions[owner] ?? 0) + 1;
+    if (typeof session.cost === "number" && Number.isFinite(session.cost)) sessionCost += session.cost;
+    sessionTokens = addTokens(sessionTokens, tokensOf(session.tokens));
     for (const message of session.messages) {
       if (message.info.role !== "assistant") continue;
       const metrics = agentFor(messageAgent(message, owner));
@@ -219,6 +230,8 @@ export function aggregate(
     childSessions,
     toolCalls: calls,
     errors,
+    sessionCost,
+    sessionTokens,
   };
 }
 
@@ -263,8 +276,6 @@ export function transcript(sessions: SessionData[]): TranscriptSession[] {
                     ...(part.state?.output !== undefined ? { output: clip(part.state.output) } : {}),
                     ...(part.state?.error !== undefined ? { error: clip(part.state.error) } : {}),
                   };
-                case "subtask":
-                  return { type: "subtask", agent: part.agent, text: clip(part.prompt) ?? "" };
                 case "step-finish":
                   return { type: "step-finish", cost: part.cost ?? 0, tokens: tokensOf(part.tokens) };
                 default:

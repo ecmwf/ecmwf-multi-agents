@@ -3,29 +3,22 @@
 
 // Makes lead answer the user before it acts on a helper's report.
 //
-// A background helper's report reaches lead's session as a message of its own: `<task ...>` on
-// opencode 1.x (opencode/src/tool/task.ts:64-79 and :227-253 at v1.18.35), `<subagent ...>` on
-// opencode 2 (core/src/session/subagent-completion.ts:36-43 at v2.0.16). When lead is still
-// replying to the user, for example looking something up, the report joins the running turn at
-// its next step (1.x: session/prompt.ts:1092; 2: session/runner/llm.ts:165-177) as the newest
-// message the model sees, and lead acts on it and forgets the user's question. Neither a rule in
-// lead's prompt and the plan skill nor a note after the report changed that with a real model
-// (evals/results/go-background.md). So lead is not shown such a report until it has answered.
-//
-// opencode 1.x: the report waits in the `chat.message` hook, before opencode saves it, until the
-// session is idle, as inline.ts does for a helper answering inline; it is then dated at delivery,
-// so it is listed after lead's answer (session/message-v2.ts:452) and starts a turn of its own.
+// A background helper's report reaches lead's session as a message of its own, `<subagent ...>`
+// (core/src/session/subagent-completion.ts:36-43 at v2.0.16). When lead is still replying to the
+// user, for example looking something up, the report joins the running turn at its next step
+// (session/runner/llm.ts:165-177) as the newest message the model sees, and lead acts on it and
+// forgets the user's question. Neither a rule in lead's prompt and the plan skill nor a note after
+// the report changed that with a real model (evals/results/go-background.md). So lead is not
+// shown such a report until it has answered.
 //
 // opencode 2 has no hook that can delay a message, so the `context` session hook, which sees each
 // model request before it is sent (session/model-request.ts:378-385 at v2.0.16), leaves the report
 // out of lead's requests until the reply ends, and the plugin queues a short message, delivered
 // after the turn (`delivery: "queue"`, session/inbox.ts:43-48), that wakes lead to act on it.
 //
-// Both use one rule. lead is replying when, walking back from the end of the conversation, a
-// message from the user to lead comes before any step of lead's that ended a turn.
+// The rule: lead is replying when, walking back from the end of the conversation, a message from
+// the user to lead comes before any step of lead's that ended a turn.
 
-import { isCompletion, isSyntheticMessage } from "./inline.ts";
-import type { V1MessageWithParts } from "./isolate.ts";
 import type { V2ModelMessage } from "./types.ts";
 
 /**
@@ -33,7 +26,7 @@ import type { V2ModelMessage } from "./types.ts";
  * - request: a message from the user to lead; a reply to it is open until a step ends the turn.
  * - report: a background helper's report.
  * - ended: a step of lead's that ended a turn.
- * - boundary: a message to another agent, a summary of earlier conversation, or the wake below;
+ * - boundary: a message to another agent, a summary of earlier conversation, or a wake below;
  *   no reply of lead's is open across it.
  * - other: anything else (a step that called tools, a note opencode wrote).
  */
@@ -75,51 +68,85 @@ function partsOf(parts: unknown): Part[] {
   return Array.isArray(parts) ? parts.filter((part): part is Part => part !== null && typeof part === "object") : [];
 }
 
-/** A step that ended a turn, as opencode's loop decides it (session/prompt.ts:1106-1115 at v1.18.35). */
-function endedTurnV1(message: V1MessageWithParts): boolean {
-  const { error, summary, finish } = message.info;
-  if (error || summary) return true;
-  if (typeof finish !== "string" || finish === "tool-calls" || finish === "unknown") return false;
-  return !partsOf(message.parts).some((part) => part.type === "tool" && (part.metadata as { providerExecuted?: unknown } | undefined)?.providerExecuted !== true);
-}
-
-/** opencode 1.x: what each stored message of a session is to the rule. */
-export function stepsV1(messages: readonly V1MessageWithParts[], lead: string): Step[] {
-  return messages.map((message) => {
-    const role = message?.info?.role;
-    if (role === "user") {
-      if (isCompletion(message.parts)) return "report";
-      if (isSyntheticMessage(message.parts)) return "other";
-      return message.info.agent === lead ? "request" : "boundary";
-    }
-    if (role === "assistant") return endedTurnV1(message) ? "ended" : "other";
-    return "other";
-  });
-}
-
-/** What wakes lead on opencode 2 once its reply has ended, when it was shown none of the reports. */
+/** What wakes lead once its reply has ended, when it was shown none of the reports. */
 export const WAKE_TEXT =
   "Reports from your helpers arrived while you were answering the user, so they were held back until you had answered. They are above: act on them now.";
+/**
+ * What wakes lead after a helper answered a command in lead's session, when reports arrived
+ * meanwhile and were held back from that helper (inline.ts). Like the wake above, it ends a reply.
+ */
+export const INLINE_WAKE_TEXT =
+  "Reports from your helpers arrived while a helper answered a command here, so they were held back until it had finished. They are above: act on them now.";
+/**
+ * What wakes lead after a helper answered a command in lead's session, when the user wrote
+ * meanwhile and the message was held back from that helper (inline.ts). Unlike the wakes above it
+ * counts as a request: lead is answering the user from here on, so reports wait for its answer.
+ */
+export const INLINE_USER_WAKE_TEXT =
+  "The user wrote to you while a helper answered a command here, so the message was held back from the helper until it had finished; nothing after it answers it. It is above, after the command: answer it now.";
+/** The same, when reports from helpers were held back too: one wake for both. */
+export const INLINE_USER_AND_REPORTS_WAKE_TEXT =
+  "The user wrote to you, and reports from your helpers arrived, while a helper answered a command here, so they were held back from the helper until it had finished; nothing after the user's message answers it. They are above, after the command: answer the user first, then act on the reports.";
 /** How a background helper's report starts on opencode 2 (core/src/session/subagent-completion.ts). */
 export const V2_REPORT_PREFIX = "<subagent ";
 /** How opencode 2 starts the summary that replaces a compacted conversation. */
 const V2_CHECKPOINT_PREFIX = "<conversation-checkpoint>";
+/**
+ * The notes opencode 2 adds as a user message when it continues a reply that was cut off: an
+ * interrupted response (session/runner/llm.ts:35-36 at v2.0.28 and v2.0.29), one that hit the
+ * output limit (llm.ts:38-39 at v2.0.29), and a server restart (session/execution/restart.ts:15-16).
+ * plugin.integration.test.ts checks that the pinned opencode binary still holds each one.
+ */
+export const V2_CONTINUE_NOTES: readonly string[] = [
+  "The previous response was interrupted. Continue from where you left off without repeating completed content.",
+  "Your last response hit the output token limit (stop reason: length). Do not apologize, recap, or repeat yourself. Break the remaining work into smaller pieces.",
+  "The server restarted while you were working. Continue from where you left off without repeating completed work.",
+];
 
-function firstText(message: V2ModelMessage): string {
+export function firstText(message: V2ModelMessage): string {
   const text = partsOf(message?.content).find((part) => part.type === "text")?.text;
   return typeof text === "string" ? text : "";
 }
 
-/** opencode 2: what each message of a model request is to the rule. */
+function continueNote(message: V2ModelMessage | undefined): boolean {
+  if (message?.role !== "user") return false;
+  const texts = partsOf(message.content).filter((part) => part.type === "text");
+  return texts.length === 1 && V2_CONTINUE_NOTES.includes(String(texts[0]!.text).trim());
+}
+
+/**
+ * Whether opencode continues the reply that the assistant message at `index` cut off: a continue
+ * note follows it, possibly after reports that arrived in between (a report can land while the
+ * response is being cut off, before opencode adds its note).
+ */
+function continuedAfter(messages: readonly V2ModelMessage[], index: number): boolean {
+  for (let next = index + 1; next < messages.length; next += 1) {
+    const message = messages[next];
+    if (continueNote(message)) return true;
+    if (message?.role === "user" && firstText(message).startsWith(V2_REPORT_PREFIX)) continue;
+    return false;
+  }
+  return false;
+}
+
+/**
+ * opencode 2: what each message of a model request is to the rule. A note opencode adds to
+ * continue a cut-off reply is no request, and the cut-off step before it ended no turn, even when
+ * reports arrived between the two.
+ */
 export function stepsV2(messages: readonly V2ModelMessage[]): Step[] {
-  return messages.map((message) => {
+  return messages.map((message, index) => {
     if (message?.role === "user") {
+      if (continueNote(message)) return "other";
       const text = firstText(message);
       if (text.startsWith(V2_REPORT_PREFIX)) return "report";
-      if (text.startsWith(V2_CHECKPOINT_PREFIX) || text.startsWith(WAKE_TEXT)) return "boundary";
+      if (text.startsWith(V2_CHECKPOINT_PREFIX) || text.startsWith(WAKE_TEXT) || text.startsWith(INLINE_WAKE_TEXT)) return "boundary";
       return "request";
     }
-    if (message?.role === "assistant") return partsOf(message.content).some((part) => part.type === "tool-call") ? "other" : "ended";
+    if (message?.role === "assistant") {
+      if (continuedAfter(messages, index)) return "other";
+      return partsOf(message.content).some((part) => part.type === "tool-call") ? "other" : "ended";
+    }
     return "other";
   });
 }

@@ -10,7 +10,7 @@ import { type Manifest, checkPackage, packProblems } from "./pack.ts";
 const MANIFEST: Manifest = {
   files: ["dist", "install.sh", "VERSION"],
   bin: { tool: "bin/tool.js" },
-  exports: { "./server": "./dist/opencode-v1/plugins/tool.js" },
+  exports: { "./server": "./dist/opencode-v2/plugins/ecmwf-multi-agents/index.js", "./tui": "./dist/opencode-v2/plugins/ecmwf-multi-agents/tui.js" },
 };
 
 const TRACKED = [
@@ -18,9 +18,10 @@ const TRACKED = [
   "Makefile",
   "VERSION",
   "bin/tool.js",
-  "dist/opencode-v1/agents/lead.md",
-  "dist/opencode-v1/plugins/tool.js",
   "dist/opencode-v2/agents/lead.md",
+  "dist/opencode-v2/plugins/ecmwf-multi-agents/index.js",
+  "dist/opencode-v2/plugins/ecmwf-multi-agents/tui.js",
+  "dist/opencode-v2/skills/plan/SKILL.md",
   "install.sh",
   "package.json",
   "src/agents/lead.md",
@@ -29,9 +30,10 @@ const TRACKED = [
 const PACKED = [
   "VERSION",
   "bin/tool.js",
-  "dist/opencode-v1/agents/lead.md",
-  "dist/opencode-v1/plugins/tool.js",
   "dist/opencode-v2/agents/lead.md",
+  "dist/opencode-v2/plugins/ecmwf-multi-agents/index.js",
+  "dist/opencode-v2/plugins/ecmwf-multi-agents/tui.js",
+  "dist/opencode-v2/skills/plan/SKILL.md",
   "install.sh",
   "package.json",
 ];
@@ -47,13 +49,13 @@ describe("the files of the npm package", () => {
   });
 
   test("a file npm would leave out, as an ignore file inside dist/ makes it", () => {
-    const packed = PACKED.filter((file) => file !== "dist/opencode-v1/agents/lead.md");
-    expect(packProblems(packed, MANIFEST, TRACKED)).toEqual(["npm would leave out dist/opencode-v1/agents/lead.md"]);
+    const packed = PACKED.filter((file) => file !== "dist/opencode-v2/agents/lead.md");
+    expect(packProblems(packed, MANIFEST, TRACKED)).toEqual(["npm would leave out dist/opencode-v2/agents/lead.md"]);
   });
 
   test("a file npm would add that git does not track, such as one left in dist/", () => {
-    const packed = [...PACKED, "dist/opencode-v1/notes.log"];
-    expect(packProblems(packed, MANIFEST, TRACKED)).toEqual(["npm would add dist/opencode-v1/notes.log, which git does not track"]);
+    const packed = [...PACKED, "dist/opencode-v2/notes.log"];
+    expect(packProblems(packed, MANIFEST, TRACKED)).toEqual(["npm would add dist/opencode-v2/notes.log, which git does not track"]);
   });
 
   test('a "files" entry git does not track', () => {
@@ -68,8 +70,8 @@ describe("the files of the npm package", () => {
   });
 
   test('an "exports" target npm would not pack', () => {
-    const manifest = { ...MANIFEST, exports: { "./server": "./dist/opencode-v1/plugins/other.js" } };
-    expect(packProblems(PACKED, manifest, TRACKED)).toEqual(['"exports" names dist/opencode-v1/plugins/other.js, which npm would not pack']);
+    const manifest = { ...MANIFEST, exports: { "./server": "./dist/opencode-v2/plugins/other.js" } };
+    expect(packProblems(PACKED, manifest, TRACKED)).toEqual(['"exports" names dist/opencode-v2/plugins/other.js, which npm would not pack']);
   });
 
   test('no "files" list', () => {
@@ -99,11 +101,11 @@ describe.skipIf(Bun.which("npm") === null || Bun.which("git") === null)("npm pac
   });
 
   test("npm packs a file left in dist/ that git does not track", () => {
-    write("dist/opencode-v1/stray.txt");
+    write("dist/opencode-v2/stray.txt");
     try {
-      expect(checkPackage(box).problems).toEqual(["npm would add dist/opencode-v1/stray.txt, which git does not track"]);
+      expect(checkPackage(box).problems).toEqual(["npm would add dist/opencode-v2/stray.txt, which git does not track"]);
     } finally {
-      rmSync(path.join(box, "dist/opencode-v1/stray.txt"));
+      rmSync(path.join(box, "dist/opencode-v2/stray.txt"));
     }
   });
 
@@ -112,7 +114,12 @@ describe.skipIf(Bun.which("npm") === null || Bun.which("git") === null)("npm pac
     try {
       expect(checkPackage(box).problems).toEqual([
         "npm would leave out dist/opencode-v2/agents/lead.md",
+        "npm would leave out dist/opencode-v2/plugins/ecmwf-multi-agents/index.js",
+        "npm would leave out dist/opencode-v2/plugins/ecmwf-multi-agents/tui.js",
+        "npm would leave out dist/opencode-v2/skills/plan/SKILL.md",
         "npm would not pack dist/opencode-v2/, which the package needs",
+        "npm would not pack dist/opencode-v2/plugins/ecmwf-multi-agents/index.js, which the package needs",
+        "npm would not pack dist/opencode-v2/plugins/ecmwf-multi-agents/tui.js, which the package needs",
       ]);
     } finally {
       rmSync(path.join(box, "dist/opencode-v2/.gitignore"));

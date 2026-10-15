@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // One eval run: a fresh sandbox and project, the harness or the baseline configuration, a
-// sandboxed opencode server, the case's turns answered by policy, then metrics and checks.
+// sandboxed opencode 2 server with the eval login copied in, the case's turns answered by
+// policy, then metrics and checks.
 
 import path from "node:path";
 import { runChecks } from "./checks.ts";
-import { aggregate, errorText, finalText, transcript } from "./metrics.ts";
-import { Api, driveTurn, fetchSessions, type ServerEvent, startServer, subscribe, UNAVAILABLE, unavailable } from "./opencode.ts";
+import { aggregate, finalText, transcript } from "./metrics.ts";
+import { checkEvalLogin, importLogin, LOGIN_DB_VARIABLE } from "./login.ts";
+import { Api, createSession, driveTurn, Executions, fetchSession, fetchSessions, startServer, subscribe, UNAVAILABLE, unavailable, waitReady } from "./opencode.ts";
 import { policyFor } from "./policy.ts";
 import {
   applySetup,
@@ -18,14 +20,17 @@ import {
   exec,
   HIDDEN,
   installHarness,
-  linkAuth,
+  linkOpencode,
   listProjectFiles,
   opencodeConfig,
   type Profile,
+  profileProviders,
   projectDiff,
   readProjectFile,
   REPO,
   removeBox,
+  sandboxParentProblem,
+  sandboxPath,
   snapshot,
   writeConfig,
 } from "./project.ts";
@@ -35,18 +40,21 @@ export interface RunOptions {
   variant: Variant;
   repeat: number;
   profile: Profile;
+  /** Path of an opencode 2 binary. */
   opencode: string;
   opencodeVersion: string;
   /** Time limit for each turn. */
   timeoutMs: number;
-  /** The sandbox login: a link to the owner's login file, or none (stand-in models). */
-  auth: { kind: "link"; target: string } | { kind: "none" };
+  /** The sandbox login: the eval login database (login.ts), or none (stand-in models). */
+  auth: { kind: "login"; db: string } | { kind: "none" };
   /** opencode.json keys set over the generated ones (stand-in providers in tests). */
   config?: Record<string, unknown>;
   /** Extra environment for opencode. */
   env?: Record<string, string>;
-  /** opencode plugins for provider logins (see loginPlugins in project.ts). */
+  /** Extra opencode plugins (see loginPlugins in project.ts). */
   plugins?: string[];
+  /** How long to wait for the profile's providers after the login is copied in. */
+  providersMs?: number;
   repo?: string;
   hidden?: string;
   fixture?: string;
@@ -69,6 +77,8 @@ function emptyMetrics(mainAgent: string): Metrics {
     childSessions: {},
     toolCalls: [],
     errors: [],
+    sessionCost: 0,
+    sessionTokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
   };
 }
 
@@ -105,40 +115,48 @@ export async function runCase(item: EvalCase, options: RunOptions): Promise<RunR
   let box: Box | undefined;
   try {
     box = createBox(options.fixture);
+    const unsafe = sandboxParentProblem(path.dirname(box.dir));
+    if (unsafe !== undefined) throw new Error(unsafe);
     const project = box.project;
     const head = applySetup(box, item.setup);
     const before = snapshot(project);
 
+    // The run's binary, linked into the sandbox as `opencode` and first on PATH, so install.sh
+    // and every command the agents run find this one.
+    const opencode = linkOpencode(box, options.opencode);
     if (options.variant === "harness") installHarness(box, options.profile.name, review, options.repo ?? REPO);
     const config = opencodeConfig(options.variant, options.profile, options.config, options.plugins);
     writeConfig(box, config);
-    if (options.auth.kind === "link") linkAuth(box, options.auth.target);
 
-    // A case may need a platform flag (the background cases on 1.x); the others, and the
-    // baseline, run opencode as people run it, so the numbers compare with earlier results.
-    const env = baseEnv({ OPENCODE_DISABLE_LSP_DOWNLOAD: "1", OPENCODE_DISABLE_SHARE: "1", ...item.env, ...options.env });
-    const sessionModel = typeof config.model === "string" ? config.model : undefined;
+    const env = baseEnv({ PATH: sandboxPath(box), OPENCODE_DISABLE_LSP_DOWNLOAD: "1", ...item.env, ...options.env });
     let sessions: SessionData[] = [];
     let failure: unknown;
     log("starting opencode");
-    const server = await startServer(box, options.opencode, env);
-    const errors = new Map<string, string[]>();
-    const api = new Api(server.url, project);
-    const events = subscribe(api, (event: ServerEvent) => {
-      if (event.type !== "session.error") return;
-      const sessionID = typeof event.properties.sessionID === "string" ? event.properties.sessionID : "";
-      const list = errors.get(sessionID) ?? [];
-      list.push(errorText(event.properties.error) || "session error");
-      errors.set(sessionID, list);
-    });
+    const server = await startServer(box, opencode, env);
+    const executions = new Executions();
+    const api = new Api(server.url, server.password, project);
+    const events = subscribe(api, (event) => executions.record(event));
     try {
+      await waitReady(api, { harness: options.variant === "harness", ...(options.profile.agents.lead?.model ? { leadModel: options.profile.agents.lead.model } : {}) });
+      if (options.auth.kind === "login") {
+        const login = checkEvalLogin({ [LOGIN_DB_VARIABLE]: options.auth.db });
+        if (!login.ok) throw new Error(login.message);
+        log("copying the eval login into the sandbox");
+        await importLogin(box, opencode, options.auth.db, server, baseEnv({ PATH: sandboxPath(box) }));
+      }
       // Fail fast, with a clear message, when the sandbox cannot reach the profile's models.
-      const providers = Array.isArray(config.enabled_providers) ? (config.enabled_providers as string[]) : [];
+      const providers = profileProviders(options.profile);
       const models = (options.variant === "harness" ? Object.values(options.profile.agents) : [options.profile.agents.lead ?? {}]).flatMap((agent) => (agent.model ? [agent.model] : []));
-      const problems = await unavailable(api, providers, models);
+      let problems: string[] = [];
+      const until = Date.now() + (options.providersMs ?? 30_000);
+      do {
+        problems = await unavailable(api, providers, models);
+        if (problems.length === 0) break;
+        await Bun.sleep(500);
+      } while (Date.now() < until);
       if (problems.length > 0) {
         throw new Error(
-          `${UNAVAILABLE} ${problems.join(", ")}. Check that you are logged in to it with opencode auth login; if your own opencode setup needs a plugin for that login, name it in ECMWF_MULTI_AGENTS_EVAL_PLUGINS (see evals/README.md).`,
+          `${UNAVAILABLE} ${problems.join(", ")}. Check that the eval login has it (make eval-login); if that login needs an opencode plugin, name it in ECMWF_MULTI_AGENTS_EVAL_PLUGINS (see evals/README.md).`,
         );
       }
       let current: string | undefined;
@@ -150,7 +168,7 @@ export async function runCase(item: EvalCase, options: RunOptions): Promise<RunR
         if (stopped) continue;
         if (step.when && !step.when({ project, answers, readFile: (rel) => readProjectFile(project, rel), listFiles: (rel) => listProjectFiles(project, rel) })) continue;
         if (step.newSession || current === undefined) {
-          current = (await api.call<{ id: string }>("POST", "/session", {})).id;
+          current = await createSession(api, mainAgent);
           record.rootSessions.push(current);
         }
         turnRecord.skipped = false;
@@ -164,12 +182,11 @@ export async function runCase(item: EvalCase, options: RunOptions): Promise<RunR
           sessionID: current,
           turn: step.turn,
           agent: mainAgent,
-          ...(sessionModel ? { model: sessionModel } : {}),
           policy,
           deadline: turnStart + options.timeoutMs,
           permissions,
           questions,
-          errors,
+          executions,
           log,
           ...(options.pollMs ? { pollMs: options.pollMs } : {}),
           ...(step.waitFor ? { waitFor: step.waitFor } : {}),
@@ -177,8 +194,7 @@ export async function runCase(item: EvalCase, options: RunOptions): Promise<RunR
         turnRecord.durationMs = Date.now() - turnStart;
         turnRecord.status = result.status;
         if (result.error) turnRecord.error = result.error;
-        const messages = await api.call<SessionData["messages"]>("GET", `/session/${current}/message`).catch(() => []);
-        turnRecord.answer = finalText({ messages });
+        turnRecord.answer = finalText(await fetchSession(api, current));
         answers.push(turnRecord.answer);
         log(`turn ${record.turns.length}: ${result.status} after ${Math.round(turnRecord.durationMs / 1000)} s`);
         if (result.status !== "completed") {
@@ -207,7 +223,7 @@ export async function runCase(item: EvalCase, options: RunOptions): Promise<RunR
     const ctx: CheckContext = {
       variant: options.variant,
       project,
-      setup: { head, ...(box.remote ? { remote: box.remote } : {}) },
+      setup: { head, home: box.home, ...(box.remote ? { remote: box.remote } : {}) },
       answer: answers.at(-1) ?? "",
       answers,
       reports: sessions.map((session) => ({ agent: record.transcript.find((item) => item.id === session.id)?.agent ?? "unknown", sessionID: session.id, text: finalText(session) })),

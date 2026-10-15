@@ -1,14 +1,13 @@
 // SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
 // SPDX-License-Identifier: Apache-2.0
 
-// What the settings mean for each agent, and how that lands in each platform's agent shape:
-// opencode 1.x config agents (`model` string plus `variant`, `steps`, `prompt`) and opencode
-// 2.0.16 agent info (`model` as {id, providerID, variant}, `steps`, `system`). The settings and
-// profiles call the reasoning effort `effort`; opencode calls it the model variant, so the
-// effort is written as `variant`. Every function works out all changes before making any, so an
-// unexpected shape changes nothing.
+// What the settings mean for each agent, and how that lands in opencode 2.0.16 agent info
+// (`model` as {id, providerID, variant}, `steps`, `system`). The settings and profiles call the
+// reasoning effort `effort`; opencode calls it the model variant, so the effort is written as
+// `variant`. Every function works out all changes before making any, so an unexpected shape
+// changes nothing.
 
-import type { EmbeddedHarness, Problem, ReviewPolicy, Settings, V1Config, V2AgentEditor, V2ModelRef } from "./types.ts";
+import type { EmbeddedHarness, Problem, ReviewPolicy, Settings, V2AgentEditor, V2ModelRef } from "./types.ts";
 
 /** The model, reasoning effort and step limit one agent ends up with. */
 export interface AgentPlan {
@@ -74,58 +73,7 @@ function reviewProblem(harness: EmbeddedHarness, settings: Settings, problem: st
   return { message: `${harness.name}: ${problem}`, notify: settings.reviewSet };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/**
- * Apply plans, the review policy and the default agent to the opencode 1.x config seen by the
- * `config` hook. Agents keep `model` as "provider/model" and the effort as `variant` beside it;
- * deleting both makes the agent use the session model. Returns problems to report.
- */
-export function applyToV1Config(config: V1Config, harness: EmbeddedHarness, settings: Settings, plans: readonly AgentPlan[]): Problem[] {
-  const problems: Problem[] = [];
-  const changes: Array<() => void> = [];
-  const agents = isRecord(config.agent) ? config.agent : undefined;
-
-  for (const plan of plans) {
-    const agent = agents?.[plan.id];
-    if (!isRecord(agent)) continue;
-    changes.push(() => {
-      if (plan.model === undefined) {
-        delete agent.model;
-        delete agent.variant;
-      } else {
-        agent.model = plan.model;
-        if (plan.effort === undefined) delete agent.variant;
-        else agent.variant = plan.effort;
-      }
-      if (plan.steps !== undefined) agent.steps = plan.steps;
-    });
-  }
-
-  const lead = agents?.[harness.defaultAgent];
-  if (isRecord(lead)) {
-    if (typeof lead.prompt === "string") {
-      const result = rewriteReviewLine(lead.prompt, settings.review, harness.defaultAgent);
-      if (result.problem !== undefined) problems.push(reviewProblem(harness, settings, result.problem));
-      else changes.push(() => (lead.prompt = result.prompt));
-    } else {
-      problems.push(reviewProblem(harness, settings, `${harness.defaultAgent} has no prompt, so the review policy was not applied`));
-    }
-  }
-
-  // opencode 1.x refuses to start a session when default_agent names a missing, hidden or
-  // subagent agent (opencode/src/agent/agent.ts:332-334 at v1.18.35), so check lead first.
-  if (settings.defaultAgent && !config.default_agent && isRecord(lead) && lead.disable !== true && lead.mode !== "subagent" && lead.hidden !== true) {
-    changes.push(() => (config.default_agent = harness.defaultAgent));
-  }
-
-  for (const change of changes) change();
-  return problems;
-}
-
-function modelRef(model: string, effort: string | undefined): V2ModelRef {
+export function modelRef(model: string, effort: string | undefined): V2ModelRef {
   // Split at the first "/", as opencode does (Model.Ref.parse in @opencode/schema 2.0.16).
   const slash = model.indexOf("/");
   const ref: V2ModelRef = { id: model.slice(slash + 1), providerID: model.slice(0, slash) };

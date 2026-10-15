@@ -40,7 +40,7 @@ support waits in `TODO.md` until approved.
 | Work files | `.ecmwf-multi-agents/{plans,context,notes}/`, excluded through `.git/info/exclude` |
 | Settings | `ecmwf-multi-agents.jsonc`, global in `~/.config/opencode/`, per project in `.opencode/`; applied by the optional plugin |
 | opencode v1 | Dropped (Phase 9). Supported up to 0.5.x on 1.18.35 and later 1.x |
-| opencode v2 | The only platform from Phase 9. Pinned (2.0.28, moving to 2.0.29); moves only after a deliberate re-test |
+| opencode v2 | The only platform from Phase 9. Pinned (2.0.29); moves only after a deliberate re-test |
 | Tooling | TypeScript on Bun for the generator and plugin; POSIX sh installer; generated `dist/` is committed |
 | Distribution | git clone + `install.sh`; central install through environment variables; npm plugin |
 | Evals | Scenario suite against real models; results feed 0.2.0 (0.1.0 released before the first eval run, at the owner's choice) |
@@ -255,11 +255,14 @@ Findings to act on for 0.2.0:
   two-factor authentication, which npm now offers as a security key only; Tiago set one up on
   npmjs.com. 0.5.2 was published by hand on 2026-10-15, and 0.5.3 validated the trusted
   publisher. npm added a placeholder version `0.0.0-stage` itself, not tagged `latest`
-- [ ] `install.sh` names itself `./install.sh` in its help and advice, also when run as the npm
-  command `ecmwf-multi-agents`; name the command it was run as
-- [ ] A project's plugin line naming the npm package (`"plugin": ["@ecmwf.int/multi-agents"]`)
-  on opencode 1.x: test that the plugin brings the agents, commands and skills from the package
-- [ ] Central install on opencode 2 (generated `opencode.json` through `OPENCODE_CONFIG`)
+- [x] Samet: `install.sh` names itself `./install.sh` in its help and advice, also when run as
+  the npm command `ecmwf-multi-agents`; name the command it was run as (be8f1ac, with the
+  central install)
+- [x] Superseded by Phase 9: a project's plugin line naming the npm package
+  (`"plugin": ["@ecmwf.int/multi-agents"]`) on opencode 1.x. opencode 1.x is no longer
+  supported; on opencode 2 the packed package named in `plugins` is tested instead
+- [x] Superseded by Phase 9: central install on opencode 2 (generated `opencode.json` through
+  `OPENCODE_CONFIG`), done there
 - [x] Tiago: opencode 2.0.28 (on Tiago's machine since 2026-10-14, with no 1.x beside it): the
   pin moved from 2.0.16 to 2.0.28 (`V2_VERSION`, the installer's `V2_PINNED`, tests and docs;
   ADR 0001 amended). The agent and model schemas and the plugin API are unchanged; the
@@ -282,7 +285,9 @@ Findings to act on for 0.2.0:
   opencode 2 the line does nothing" too, find a distro-packaged `/usr/bin/opencode` through
   the system PATH and fail on such machines; give the installer a PATH of only the tools it
   needs, and have `make setup` or `lint` name `reuse` and `shellcheck` when they are missing
-  instead of failing with "command not found"
+  instead of failing with "command not found". The PATH half is done on `release/0.6.0`
+  (Samet: the unit tests give the installer a PATH without any `opencode`); the `reuse` and
+  `shellcheck` hint is still open
 - [x] Version 0.1.0
 
 ## Phase 7: background helpers, steering and cancel
@@ -537,8 +542,8 @@ hand-off is recorded only, since a plan may have none. Measured on 1.18.35; the 
   run: the runner drives the 1.x API only and refuses a 2.x binary; a 2.x eval runner is its
   own task (below), and the skill's 2.0.16 side rests on the integration suite's pinned
   facts (the `subagent` tool's `background`, each completion a wake)
-- [ ] Eval runner for opencode 2.0.16: the 2.x API routes (`/api/session`, `prompt` with
-  `text`, `location[directory]`, the password header), so the cases can run on both platforms
+- [x] Superseded by Phase 9: eval runner for opencode 2.0.16, so the cases can run on both
+  platforms. The runner now drives opencode 2 only (2.0.29)
 - [ ] `evals/checks.ts`: `recordOnly` is a list of variants on `backgroundHandoffs`,
   `remoteUnchanged` and `pushRefused`, so `backgroundHandoffs(1, ["harness"])` reads as a
   variant filter; a `recordOnly: boolean` option would say what it means
@@ -548,7 +553,9 @@ hand-off is recorded only, since a plan may have none. Measured on 1.18.35; the 
   this file and in `evals/results/` keeps the old name
 - [ ] `/execute` is also the name of opencode 2's Code Mode tool; a command and a tool are
   different namespaces and nothing clashed on 2.0.16, but watch for a built-in `/execute`
-  command in later versions (the clash note lists where to look)
+  command in later versions (the clash note lists where to look). Checked on 2.0.29: no clash,
+  2.0.29 has no built-in `/execute`; its built-in commands are still `init` and `review`
+  (`docs/research/command-clashes.md`)
 
 8c. Follow-ups from the review of #3, and release
 
@@ -618,32 +625,74 @@ row: `docs/research/opencode-v2.md` (sections added in this phase), ADR 0004.
 | Not needed on 2 | Shell guard after "Allow always", child pinning, the background flag, `todo` and `list` rules |
 
 Order: research and ADR, eval runner, removal of v1, plugin features, installer, docs and
-release. The removal comes early so the new work is built for one platform.
+release. The removal comes early so the new work is built for one platform. The work
+collects on the branch `release/0.6.0`; `main` keeps 0.5.x patch releases until 0.6.0
+merges.
 
-- [~] Samet: Research addendum (`docs/research/opencode-v2.md`) and ADR 0004 "opencode 2
-  only", superseding ADR 0003 and amending ADR 0001 and 0002
-- [~] Samet: Eval runner on opencode 2: server, routes, permissions and forms, message
+- [x] Samet: Research addendum (`docs/research/opencode-v2.md`, sections 11 to 15) and ADR
+  0004 "opencode 2 only", superseding ADR 0003 and amending ADR 0001 and 0002
+- [x] Samet: Eval runner on opencode 2: server, routes, permissions and forms, message
   adapter, tool names (`shell`, `subagent`), the eval login (`make eval-login`) and the
-  `AGENTS.md` rule for it; `evals/run.integration.test.ts` on the stand-in model
-- [~] Samet: Remove opencode 1.x: plugin core (`plugin.ts` to `{ id, setup }`, guard helpers
+  `AGENTS.md` rule for it; `evals/run.integration.test.ts` on the stand-in model. 10 of 10 on 2.0.28 and 2.0.29; messages go through an adapter to the old shape
+  (`evals/messages.ts`); the login is `evals/login.ts`
+- [x] Samet: Remove opencode 1.x: plugin core (`plugin.ts` to `{ id, setup }`, guard helpers
   moved, pinning and v1 modules deleted), the embedded `v1` block, `emit-v1`,
   `dist/opencode-v1`, installer (`--platform`, version detection, background flag; old
-  `opencode-v1` links still count as ours), tests, prompt lines, Makefile, `exports`
-- [~] Samet: Plugin registers agents, skills, commands and the default agent, so a project's
+  `opencode-v1` links still count as ours), tests, prompt lines, Makefile, `exports`. About
+  6,300 source lines and 4,600 generated lines gone; the plugin is `{ id, setup }`, the
+  command splitter lives in `plugin/command-parts.ts`, `todo` and `list` rules are gone, and
+  only 1.x installed stops with `opencode upgrade --major`. Removed until their opencode 2
+  form lands: the per-project line, central install, inline `/review` and `/progress`,
+  `doctor`'s live checks, settings problems on screen. The guide's "Allow always" and Ctrl+B
+  notes were dropped and need checking on 2
+- [x] Samet: Plugin registers agents, skills, commands and the default agent, so a project's
   `plugins` line or the npm package brings the harness; a test compares registered agents with
-  agents loaded from files; `doctor` warns when a global install masks a project line
-- [~] Samet: Inline `/review` and `/progress` owned by the plugin, with the `context` hook
+  agents loaded from files; `doctor` warns when a global install masks a project line. Also
+  done here: the plugin as a folder (`index.js`, `tui.js`; `server.js` and `tui.js` at the
+  checkout root re-export them), the RPC (`doctor`, `problems`) and the toast entry, and
+  `install.sh doctor` through the RPC (the task "Plugin RPC `doctor` and `problems`" below)
+- [x] Samet: Agents brought by a `plugins` line keep their own rules over the user's global
+  `permissions`: opencode appends a config's top-level `permissions` after a
+  plugin-registered agent's rules but before an agent file's, so a global "allow all shell"
+  would loosen `scout`'s read-only shell rules only when the harness comes from the line.
+  Done: a hidden probe agent receives every rule opencode adds to all agents; the late
+  settings transform reads them, removes the probe and moves each agent's own rules after
+  them, so the order equals an installed-files setup (`plugin/rule-order.ts`); a global
+  allow-all no longer loosens `scout`, and a user's stricter deny still holds
+- [x] Samet: Inline `/review` and `/progress` owned by the plugin, with the `context` hook
   isolation and the switch back; integration tests on the stand-in (idle, busy, report during
-  the review)
-- [~] Samet: Plugin RPC `doctor` and `problems`, the TUI toast entry, the plugin as a folder;
-  `install.sh doctor` through the RPC
-- [~] Samet: Central install on opencode 2 through `OPENCODE_CONFIG`, module file lines (Lmod,
-  Tcl), the service step and the port check
-- [~] Samet: Answer-first ignores the 2.0.29 output-limit and incomplete-stream notes; pin
-  2.0.29
-- [~] Samet: Docs for opencode 2 only (README, install, architecture, guide skill), changelog
-- [~] Samet: Real-model evals on opencode 2 (`plan-execute`, `execute-chat`,
-  `review-background`, inline `/review` cost against the 1.x numbers)
+  the review); also in a project switched on by a `plugins` line
+  alone (`plugin/inline.ts`; 47 of 47 integration tests on 2.0.29). Not yet measured with a
+  real model: the cost against the 1.x numbers is in the evals task
+- [x] Samet: Plugin RPC `doctor` and `problems`, the TUI toast entry, the plugin as a folder;
+  `install.sh doctor` through the RPC (with the registration task; the toast is unit-tested only,
+  since it needs a terminal)
+- [x] Samet: The published package works as a `plugins` line: an integration test runs
+  `npm pack` on the branch and names the tarball in a project's `plugins`, so opencode's own
+  npm install path proves the `./server` and `./tui` entries before a release; the package
+  brings exactly what a checkout's line brings (`plugin/register.integration.test.ts`)
+- [x] Samet: Central install on opencode 2 through `OPENCODE_CONFIG`, module file lines (Lmod,
+  Tcl), the service step and the port check. `--central DIR`,
+  `central-enable`/`central-disable`, `doctor` checks for the variable, the service and the
+  shared port (Linux `ss`); in a central install `/review` answers inline and the agents'
+  rules win over global ones. Also: the installer names the command you ran (the npm
+  package's command too), and `doctor`'s RPC waits for the settings to reach the agents
+- [x] Samet: Answer-first ignores the 2.0.29 output-limit and incomplete-stream notes; pin
+  2.0.29: the notes (and the server-restart note) are no request and the cut-off step before
+  one ends no turn; pinned to 2.0.29, integration suites pass on it
+- [x] Samet: Tiago's review of #5 (changes requested at b708cf7): evals load config from
+  folders above their sandbox, `uninstall --central` advises `rm -rf` for any folder, a
+  message typed during an inline `/review` reaches the helper, 0.5.x central installs cannot
+  be upgraded, the no-push check misses opencode 2's `write`/`edit`/`patch` input, docs that
+  contradict the code, upgrade steps, `doctor` and old `"plugin"` lines, a stray file drops
+  the plugin from the install record, and smaller items. All addressed; `make check` 602
+  pass, integration 59 of 59 on 2.0.29
+- [x] Samet: Docs for opencode 2 only (README, install, architecture, guide skill), changelog: done with the 1.x removal, each
+  feature's own docs and Tiago's review of #5 (the exceptions to files winning, upgrade steps
+  from 0.5.x, the Ctrl+B tip)
+- [ ] Samet, after 0.6.0 (released without them, on the owners' decision): real-model
+  evals on opencode 2 (`plan-execute`, `execute-chat`, `review-background`, inline `/review`
+  cost against the 1.x numbers)
 
 Exit: `make check` and the integration suites pass on 2.0.29 with no 1.x code left; every row
 above works on the stand-in; the real-model evals pass on opencode 2.

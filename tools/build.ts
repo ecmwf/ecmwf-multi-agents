@@ -8,8 +8,7 @@
 
 import { lstat, mkdir, readdir, readFile, rm, rmdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { emitV1 } from "./emit-v1.ts";
-import { emitV2 } from "./emit-v2.ts";
+import { CENTRAL_DIR, emitV2, v2CentralFiles } from "./emit-v2.ts";
 import { load } from "./load.ts";
 import { checkHarness, resolveHarness, type SizeRow, sizeTable } from "./resolve.ts";
 import { settingsSchema } from "./schema.ts";
@@ -19,12 +18,11 @@ import { compareBytes, errorCode, GeneratorError, normalizeContent, own, unsafeP
 /** Support files for the installer and doctor live in this directory of each platform. */
 export const SUPPORT_DIR = "ecmwf-multi-agents";
 export const FILES_LIST = `${SUPPORT_DIR}/files.txt`;
-export const PLUGIN_FILE = "plugins/ecmwf-multi-agents.js";
 
 export interface BuildOptions {
   /** Repository root: the directory that holds src/ and dist/. */
   root: string;
-  /** Platform directory name, such as "opencode-v1", to the emitter for that platform. */
+  /** Platform directory name, such as "opencode-v2", to the emitter for that platform. */
   emitters: Record<string, Emitter>;
   /** Files added to every platform, such as the plugin bundle. */
   extras?: (harness: ResolvedHarness) => Promise<OutputFile[]>;
@@ -84,7 +82,7 @@ export function supportFiles(harness: ResolvedHarness): OutputFile[] {
 // Assembling a platform
 
 export interface FileGroup {
-  /** Who produced the files, for messages: "emitter opencode-v1", "extras", "support files". */
+  /** Who produced the files, for messages: "emitter opencode-v2", "extras", "support files". */
   origin: string;
   files: readonly OutputFile[];
 }
@@ -145,7 +143,9 @@ export function platformFiles(platform: string, groups: readonly FileGroup[]): O
   const files = entries
     .filter(({ file }) => file.path !== FILES_LIST)
     .map(({ file }) => ({ path: file.path, content: normalizeContent(file.content) }));
-  const paths = [...files.map((file) => file.path), FILES_LIST].sort(compareBytes);
+  // files.txt lists what an install puts into a config folder; a central install builds its
+  // folder from the template in central/ instead.
+  const paths = [...files.map((file) => file.path).filter((file) => !file.startsWith(`${CENTRAL_DIR}/`)), FILES_LIST].sort(compareBytes);
   files.push({ path: FILES_LIST, content: `${paths.join("\n")}\n` });
   return files.sort((a, b) => compareBytes(a.path, b.path));
 }
@@ -328,11 +328,11 @@ async function main(args: readonly string[]): Promise<number> {
   const check = args.includes("--check");
   const root = path.resolve(import.meta.dir, "..");
   try {
-    const { bundlePlugin } = await import("./bundle-plugin.ts");
+    const { pluginFiles } = await import("./bundle-plugin.ts");
     await build({
       root,
-      emitters: { "opencode-v1": emitV1, "opencode-v2": emitV2 },
-      extras: async (harness) => [{ path: PLUGIN_FILE, content: await bundlePlugin(root, harness) }],
+      emitters: { "opencode-v2": (harness) => [...emitV2(harness), ...v2CentralFiles(harness)] },
+      extras: (harness) => pluginFiles(root, harness),
       check,
     });
     return 0;

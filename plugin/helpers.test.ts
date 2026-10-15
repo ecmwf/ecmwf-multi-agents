@@ -12,8 +12,6 @@ import {
   elapsed,
   formatStatus,
   notRunningResult,
-  pinMessage,
-  splitModel,
   steerText,
   summarizeCall,
   targetProblem,
@@ -24,7 +22,6 @@ import {
   remember,
   requiredText,
   type HelperView,
-  type PinnableMessage,
 } from "./helpers.ts";
 import { embeddedFixture } from "./testing.ts";
 import { SessionTracker } from "./tools-v2.ts";
@@ -179,34 +176,8 @@ describe("guard", () => {
 
   test("the refusal does not depend on the manifest's rules: a helper added without any is refused too", () => {
     const extended = embeddedFixture();
-    extended.agents.push({ id: "tester", mode: "subagent", shell: [] });
+    extended.agents.push({ id: "tester", mode: "subagent" });
     for (const tool of Object.values(HELPER_TOOLS)) expect(toolCallBlock(extended, "tester", tool)).toContain("helpers may not use");
-  });
-});
-
-describe("pinning", () => {
-  test("splits provider/model at the first slash", () => {
-    expect(splitModel("anthropic/claude-sonnet-5-5")).toEqual({ providerID: "anthropic", modelID: "claude-sonnet-5-5" });
-    expect(splitModel("openrouter/anthropic/claude")).toEqual({ providerID: "openrouter", modelID: "anthropic/claude" });
-    expect(splitModel("nomodel")).toBeUndefined();
-    expect(splitModel("/x")).toBeUndefined();
-    expect(splitModel(undefined)).toBeUndefined();
-  });
-
-  test("sets the helper's agent, and its model and effort when it has a model of its own", () => {
-    const message = { agent: "lead", model: { providerID: "anthropic", modelID: "claude-opus-5-5", variant: "xhigh" } };
-    expect(pinMessage(message, "scout", { model: "anthropic/claude-sonnet-5-5", effort: "medium" })).toBe(true);
-    expect(message).toEqual({ agent: "scout", model: { providerID: "anthropic", modelID: "claude-sonnet-5-5", variant: "medium" } });
-    expect(pinMessage(message, "scout", { model: "anthropic/claude-sonnet-5-5", effort: "medium" })).toBe(false);
-  });
-
-  test("keeps the message's model under inherit, and drops the effort when the helper has none", () => {
-    const inherit = { agent: "lead", model: { providerID: "mock", modelID: "m1", variant: "high" } };
-    expect(pinMessage(inherit, "builder", undefined)).toBe(true);
-    expect(inherit).toEqual({ agent: "builder", model: { providerID: "mock", modelID: "m1", variant: "high" } });
-    const noEffort: PinnableMessage = { agent: "lead", model: { providerID: "mock", modelID: "m1", variant: "high" } };
-    pinMessage(noEffort, "builder", { model: "acme/big" });
-    expect(noEffort.model).toEqual({ providerID: "acme", modelID: "big" });
   });
 });
 

@@ -3,7 +3,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { YAML } from "bun";
-import { emitV2, V2_ACTIONS, v2Model, v2Permissions } from "./emit-v2.ts";
+import { CENTRAL_PLACEHOLDER, emitV2, V2_ACTIONS, v2CentralFiles, v2Model, v2Permissions } from "./emit-v2.ts";
 import { ACTIONS, type OutputFile, type ResolvedAgent, type ResolvedHarness } from "./types.ts";
 
 const MARKER = "# managed by ecmwf-multi-agents";
@@ -48,9 +48,7 @@ function fixture(): ResolvedHarness {
           { action: "shell", resource: "git log *", effect: "allow" },
           { action: "delegate", resource: "*", effect: "deny" },
           { action: "question", resource: "*", effect: "deny" },
-          { action: "todo", resource: "*", effect: "deny" },
           { action: "skill", resource: "ecmwf-multi-agents-*", effect: "deny" },
-          { action: "list", resource: "*", effect: "allow" },
         ],
       },
       {
@@ -257,17 +255,8 @@ describe("emitV2 agents", () => {
     ]);
   });
 
-  test("leaves out todo and list rules and records each one as a frontmatter comment", () => {
-    const scout = file(emitV2(fixture()), "agents/scout.md");
-    expect(scout.comments).toEqual([
-      MARKER,
-      '# no todo action in opencode 2.0.28, rule left out: todo "*" deny',
-      '# no list action in opencode 2.0.28, rule left out: list "*" allow',
-    ]);
-    const actions = (scout.data.permissions as { action: string }[]).map((rule) => rule.action);
-    expect(actions).not.toContain("todo");
-    expect(actions).not.toContain("todowrite");
-    expect(actions).not.toContain("list");
+  test("the marker is the only frontmatter comment", () => {
+    expect(file(emitV2(fixture()), "agents/scout.md").comments).toEqual([MARKER]);
   });
 
   test("an agent without rules gets no permissions key", () => {
@@ -356,8 +345,6 @@ describe("action and model helpers", () => {
     expect(Object.keys(V2_ACTIONS).sort()).toEqual(ACTIONS.filter((action) => action !== "tool").sort());
     expect(V2_ACTIONS.shell).toBe("shell");
     expect(V2_ACTIONS.delegate).toBe("subagent");
-    expect(V2_ACTIONS.todo).toBeNull();
-    expect(V2_ACTIONS.list).toBeNull();
     expect(V2_ACTIONS.execute).toBe("execute");
   });
 
@@ -366,33 +353,97 @@ describe("action and model helpers", () => {
     expect(
       v2Permissions([
         { action: "tool", resource: "helpers_status", effect: "deny" },
-        { action: "todo", resource: "*", effect: "deny" },
         { action: "shell", resource: "ls *", effect: "allow" },
       ]),
-    ).toEqual({
-      rules: [
-        { action: "helpers_status", resource: "*", effect: "deny" },
-        { action: "shell", resource: "ls *", effect: "allow" },
-      ],
-      dropped: [{ action: "todo", resource: "*", effect: "deny" }],
-    });
-  });
-  test("v2Permissions keeps order and separates dropped rules", () => {
-    const result = v2Permissions([
-      { action: "todo", resource: "*", effect: "deny" },
-      { action: "delegate", resource: "*", effect: "deny" },
-      { action: "delegate", resource: "scout", effect: "allow" },
+    ).toEqual([
+      { action: "helpers_status", resource: "*", effect: "deny" },
+      { action: "shell", resource: "ls *", effect: "allow" },
     ]);
-    expect(result.rules).toEqual([
+  });
+
+  test("v2Permissions keeps order", () => {
+    expect(
+      v2Permissions([
+        { action: "delegate", resource: "*", effect: "deny" },
+        { action: "delegate", resource: "scout", effect: "allow" },
+      ]),
+    ).toEqual([
       { action: "subagent", resource: "*", effect: "deny" },
       { action: "subagent", resource: "scout", effect: "allow" },
     ]);
-    expect(result.dropped).toEqual([{ action: "todo", resource: "*", effect: "deny" }]);
   });
 
   test("v2Model joins model and variant", () => {
     expect(v2Model("t", "openai/gpt-6.1-sol", "high")).toBe("openai/gpt-6.1-sol#high");
     expect(v2Model("t", "openai/gpt-6.1-sol")).toBe("openai/gpt-6.1-sol");
     expect(v2Model("t")).toBeUndefined();
+  });
+});
+
+describe("v2CentralFiles", () => {
+  const files = v2CentralFiles(fixture());
+  const config = JSON.parse(files.find((item) => item.path === "central/opencode.json")!.content) as {
+    agents: Record<string, Record<string, unknown>>;
+    commands: Record<string, Record<string, unknown>>;
+    skills: string[];
+    plugins: Array<{ package: string; options: { site: string } }>;
+    default_agent?: unknown;
+  };
+
+  test("writes the config and one prompt file per agent and command, under central/", () => {
+    expect(files.map((item) => item.path)).toEqual([
+      "central/opencode.json",
+      "central/prompts/builder.md",
+      "central/prompts/commands/guide.md",
+      "central/prompts/commands/plan.md",
+      "central/prompts/commands/review.md",
+      "central/prompts/commands/status.md",
+      "central/prompts/lead.md",
+      "central/prompts/reviewer.md",
+      "central/prompts/scout.md",
+    ]);
+    // The text alone: {file:} inserts the whole file.
+    expect(files.find((item) => item.path === "central/prompts/lead.md")?.content).toBe("Lead prompt.\n\nSecond paragraph.");
+    expect(files.find((item) => item.path === "central/prompts/commands/plan.md")?.content).toBe("Plan: $ARGUMENTS");
+  });
+
+  test("every agent sets every field the harness defines, and hidden, with its prompt through {file:}", () => {
+    const harness = fixture();
+    for (const agent of harness.agents) {
+      const fromFile = file(emitV2(harness), `agents/${agent.id}.md`).data;
+      expect(config.agents[agent.id]).toEqual({ permissions: [], ...fromFile, hidden: false, system: `{file:./prompts/${agent.id}.md}` });
+    }
+    expect(Object.keys(config.agents)).toEqual(["builder", "lead", "reviewer", "scout"]);
+    expect(config.agents.reviewer).toEqual({
+      description: "Independent review: APPROVE or REJECT.",
+      mode: "subagent",
+      steps: 30,
+      hidden: false,
+      permissions: [],
+      system: "{file:./prompts/reviewer.md}",
+    });
+  });
+
+  test("commands carry what their files do, with the template through {file:}", () => {
+    const harness = fixture();
+    for (const command of harness.commands) {
+      const { data } = file(emitV2(harness), `commands/${command.id}.md`);
+      expect(config.commands[command.id]).toEqual({ ...data, template: `{file:./prompts/commands/${command.id}.md}` });
+    }
+  });
+
+  test("skills, the plugin and its site file are absolute paths in the central folder; the default agent is left to the plugin", () => {
+    expect(config.skills).toEqual([`${CENTRAL_PLACEHOLDER}/skills`]);
+    expect(config.plugins).toEqual([
+      { package: `${CENTRAL_PLACEHOLDER}/plugins/ecmwf-multi-agents`, options: { site: `${CENTRAL_PLACEHOLDER}/ecmwf-multi-agents.jsonc` } },
+    ]);
+    expect(config.default_agent).toBeUndefined();
+  });
+
+  test("is deterministic and independent of input order", () => {
+    const shuffled = fixture();
+    shuffled.agents.reverse();
+    shuffled.commands.reverse();
+    expect(v2CentralFiles(shuffled)).toEqual(files);
   });
 });

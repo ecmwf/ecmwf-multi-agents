@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, test } from "bun:test";
-import { WAKE_TEXT } from "./answer-first.ts";
+import { INLINE_WAKE_TEXT, WAKE_TEXT } from "./answer-first.ts";
+import { INLINE_MARK } from "./inline.ts";
 import { createPlugin } from "./plugin.ts";
 import { LEAD_PROMPT, embeddedFixture, fakeEnvironment } from "./testing.ts";
-import type { V2AgentEditor, V2AgentInfo, V2Context, V2ContextEvent, V2Event, V2ModelMessage, V2ToolCall, V2ToolInfo } from "./types.ts";
+import type { V2AgentEditor, V2AgentInfo, V2CommandDefinition, V2CommandEditor, V2Context, V2ContextEvent, V2Event, V2ModelMessage, V2ToolCall, V2ToolInfo } from "./types.ts";
 import { v2ProjectRoot } from "./v2.ts";
 
 const harness = embeddedFixture();
@@ -31,6 +32,9 @@ class FakeHost {
   prompts: Array<{ sessionID: string; text: string; delivery?: string }> = [];
   interrupts: string[] = [];
   sessions: Record<string, { parentID?: string; agent?: string }> = {};
+  /** Command transforms in registration order, as opencode keeps them (core/src/command.ts). */
+  commandTransforms: Array<(editor: V2CommandEditor) => void> = [];
+  switches: string[] = [];
 
   readonly ctx: V2Context = {
     location: { directory: "/repo/sub", project: { directory: "/repo" } },
@@ -59,8 +63,24 @@ class FakeHost {
         return { dispose: async () => {} };
       },
     },
+    command: {
+      transform: async (callback) => {
+        const entry = (editor: V2CommandEditor) => callback(editor);
+        this.commandTransforms.push(entry);
+        return {
+          dispose: async () => {
+            this.commandTransforms = this.commandTransforms.filter((item) => item !== entry);
+          },
+        };
+      },
+    },
     session: {
       get: async ({ sessionID }) => (this.sessions[sessionID] === undefined ? undefined : { id: sessionID, ...this.sessions[sessionID] }),
+      switchAgent: async ({ sessionID, agent }) => {
+        this.switches.push(agent);
+        this.sessions[sessionID] = { ...this.sessions[sessionID], agent };
+      },
+      wait: async () => {},
       prompt: async (input) => {
         this.prompts.push(input);
         return {};
@@ -114,9 +134,17 @@ class FakeHost {
         state.agents.set(id, agent);
         update(agent);
       },
+      remove: (id) => void state.agents.delete(id),
     };
     for (const transform of this.transforms) transform(editor);
     return state;
+  }
+
+  /** The commands after every transform has run: a later `add` of a name replaces an earlier one. */
+  commands(): Map<string, V2CommandDefinition> {
+    const commands = new Map<string, V2CommandDefinition>();
+    for (const transform of this.commandTransforms) transform({ add: (definition) => void commands.set(definition.name, definition) });
+    return commands;
   }
 
   emit(type: string, data?: Record<string, unknown>): void {
@@ -201,6 +229,36 @@ describe("v2 setup", () => {
     expect("model" in host.build().agents.get("lead")!).toBe(false);
   });
 
+  test("each agent's own permission rules follow the config's, as with agent files, and the probe never shows", async () => {
+    const { host } = await start({});
+    const config = [{ action: "shell", resource: "*", effect: "allow" }];
+    host.transforms.push((editor) => {
+      for (const agent of editor.list()) (agent.permissions ??= []).push(...config);
+    });
+    const own = harness.agents.find((agent) => agent.id === "scout")!.permissions!;
+    expect(host.build().agents.get("scout")!.permissions).toEqual([...own, ...config]);
+
+    host.emit("plugin.updated");
+    await settle();
+    const state = host.build();
+    expect(state.agents.get("scout")!.permissions).toEqual([...config, ...own]);
+    expect([...state.agents.keys()].filter((id) => id.endsWith("-rule-probe"))).toEqual([]);
+  });
+
+  test("the site file named in the plugin's site option applies first; the user's and the project's override it", async () => {
+    const site = "/central/ecmwf-multi-agents.jsonc";
+    const host = new FakeHost();
+    (host.ctx as { options?: Record<string, unknown> }).options = { site };
+    await start({ [site]: '{ "review": "never", "agents": { "scout": { "steps": 4 }, "reviewer": { "steps": 5 } } }', [GLOBAL]: '{ "agents": { "scout": { "steps": 6 } } }' }, host);
+    host.loader();
+    host.emit("plugin.updated");
+    await settle();
+    const state = host.build();
+    expect(state.agents.get("lead")!.system).toContain("Review policy: never");
+    expect(state.agents.get("scout")!.steps).toBe(6);
+    expect(state.agents.get("reviewer")!.steps).toBe(5);
+  });
+
   test("other events do not register anything", async () => {
     const { host } = await start({});
     host.emit("agent.updated");
@@ -268,7 +326,10 @@ describe("v2 setup", () => {
     host.emit("plugin.updated");
     await settle();
     expect(() => host.build()).not.toThrow();
-    expect(write).toEqual(["ecmwf-multi-agents: internal error in the agent transform, settings left unchanged: boom"]);
+    expect(write).toEqual([
+      "ecmwf-multi-agents: internal error in ordering the agents' rules, settings left unchanged: boom",
+      "ecmwf-multi-agents: internal error in the agent transform, settings left unchanged: boom",
+    ]);
   });
 
   test("fail safe: setup never throws, even when opencode's API does", async () => {
@@ -281,8 +342,10 @@ describe("v2 setup", () => {
         },
       },
     } as unknown as V2Context;
-    expect(await plugin.setup(ctx)).toBeUndefined();
-    expect(write[0]).toContain("internal error in setup");
+    expect(await plugin.setup(ctx)).toBeDefined();
+    expect(write[0]).toContain("internal error in registering the agents");
+    expect(await plugin.setup(null as unknown as V2Context)).toBeUndefined();
+    expect(write.at(-1)).toContain("internal error in setup");
   });
 
   test("cleanup stops listening for activations", async () => {
@@ -460,5 +523,85 @@ describe("v2 answer first", () => {
     delete (host.ctx.session as { hook?: unknown }).hook;
     const { cleanup } = await start({}, host);
     expect(typeof cleanup).toBe("function");
+  });
+});
+
+describe("v2 inline commands", () => {
+  const user = (text: string, metadata?: Record<string, unknown>): V2ModelMessage => ({ role: "user", content: [{ type: "text", text }], ...(metadata ? { metadata } : {}) });
+  const report = (id: string): V2ModelMessage => ({ id, ...user(`<subagent sessionID="ses_${id}" state="completed">\nDONE\n</subagent>`) });
+
+  test("review and progress are registered on plugin.updated, over the plugin's own first registration and the command files, and again on each activation", async () => {
+    const { host } = await start({});
+    // The registration during setup (register.ts): every harness command, the helpers' in a child session.
+    expect(host.commandTransforms).toHaveLength(1);
+    const early = host.commands();
+    expect([...early.keys()]).toEqual(["plan", "review", "progress"]);
+    // opencode's loader for command files comes after it.
+    const files = (editor: V2CommandEditor) => editor.add({ name: "review", description: "file", execute: async () => {} });
+    host.commandTransforms.push(files);
+    host.emit("plugin.updated");
+    await settle();
+    expect(host.commandTransforms).toHaveLength(3);
+    const late = host.commands();
+    expect(late.get("plan")).toBe(early.get("plan")!);
+    for (const name of ["review", "progress"]) {
+      expect(late.get(name)).not.toBe(early.get(name)!);
+      expect(late.get(name)!.description).not.toBe("file");
+    }
+    // The late review answers inline: it switches the session to the reviewer, never makes a child.
+    host.sessions.root = { agent: "lead" };
+    await late.get("review")!.execute({ sessionID: "root", prompt: { text: "x" } });
+    await settle();
+    expect(host.switches).toEqual(["reviewer", "lead"]);
+    // A later activation re-registers the loader behind the plugin; the plugin moves to the end again.
+    host.commandTransforms = host.commandTransforms.filter((item) => item !== files);
+    host.commandTransforms.push(files);
+    host.emit("plugin.updated");
+    await settle();
+    expect(host.commandTransforms).toHaveLength(3);
+    expect(host.commands().get("review")!.description).toBe("Independent review of your changes");
+  });
+
+  test("a helper's request goes to the inline run and lead's to answer-first, through the one context hook", async () => {
+    const { host } = await start({});
+    host.sessions.root = { agent: "lead" };
+    host.emit("plugin.updated");
+    await settle();
+    let release = () => {};
+    host.ctx.session!.wait = () => new Promise<void>((resolve) => (release = resolve));
+    await host.commands().get("review")!.execute({ sessionID: "root", prompt: { text: "main" } });
+    release();
+    await settle();
+    expect(host.switches).toEqual(["reviewer"]);
+    expect(host.prompts.at(-1)).toMatchObject({ sessionID: "root", text: "Review main", metadata: { [INLINE_MARK]: "review" } });
+
+    const reviewer = { sessionID: "root", agent: "reviewer", messages: [user("hello"), user("Review main", { [INLINE_MARK]: "review" }), report("r1")] };
+    await host.contextHooks[0]!(reviewer);
+    expect(reviewer.messages).toHaveLength(1);
+    expect(host.synthetics).toEqual([]);
+
+    release();
+    await settle();
+    expect(host.switches).toEqual(["reviewer", "lead"]);
+    expect(host.synthetics.map((item) => item.text)).toEqual([INLINE_WAKE_TEXT]);
+    // lead's turn on the wake: the report is in view, and answer-first queues no second wake.
+    const lead = {
+      sessionID: "root",
+      agent: "lead",
+      messages: [user("Review main"), report("r1"), { role: "assistant", content: [{ type: "text", text: "VERDICT: APPROVE" }] }, user(INLINE_WAKE_TEXT)],
+    };
+    await host.contextHooks[0]!(lead);
+    expect(lead.messages).toHaveLength(4);
+    expect(host.synthetics).toHaveLength(1);
+  });
+
+  test("without the session calls a run needs, the file commands stay", async () => {
+    const host = new FakeHost();
+    delete (host.ctx.session as { switchAgent?: unknown }).switchAgent;
+    await start({}, host);
+    host.emit("plugin.updated");
+    await settle();
+    // Only the registration during setup, which runs the helpers' commands in a child session.
+    expect(host.commandTransforms).toHaveLength(1);
   });
 });

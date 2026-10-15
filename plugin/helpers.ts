@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // The platform-neutral part of the tools that let lead see, redirect and stop its helpers
-// (docs/adr/0002-background-helpers-and-steering.md). The platform entries (v1.ts, v2.ts) wire
-// these to their session APIs. Nothing here keeps a job registry: the platforms own the
-// helpers' lifecycle, and the plugin only observes it through the hooks it already receives.
+// (docs/adr/0002-background-helpers-and-steering.md). tools-v2.ts and v2.ts wire these to
+// opencode's session API. Nothing here keeps a job registry: opencode owns the helpers'
+// lifecycle, and the plugin only observes it through the hooks it already receives.
 
-import { commandParts, withoutAssignments } from "./guard.ts";
+import { commandParts, withoutAssignments } from "./command-parts.ts";
 import type { ArgSchema, EmbeddedHarness } from "./types.ts";
 
 export const HELPER_TOOLS = {
@@ -158,9 +158,9 @@ const PLAIN_WORD = /^[A-Za-z0-9._+-]+$/;
 /**
  * The head of a shell command: the program and, for a few programs, its subcommand. Arguments
  * are left out on purpose: a command line can carry a password or a token (`curl -u`, `-H
- * Authorization`), and the status line goes into lead's context. The command is split with the
- * guard's shell-aware splitter (quotes, subshells and leading assignments), and any word that is
- * not a plain name ends the head, so nothing quoted or expanded is ever shown.
+ * Authorization`), and the status line goes into lead's context. The command is split with a
+ * shell-aware splitter (quotes, subshells and leading assignments), and any word that is not a
+ * plain name ends the head, so nothing quoted or expanded is ever shown.
  */
 export function commandHead(command: string): string {
   const first = commandParts(command)[0];
@@ -320,43 +320,4 @@ export function toolCallBlock(harness: EmbeddedHarness, agentId: string | undefi
   const agent = harness.agents.find((item) => item.id === agentId);
   const who = agent?.mode === "subagent" ? "helpers" : (agentId ?? "an unknown agent");
   return `${harness.name}: ${who} may not use ${tool}; only ${harness.defaultAgent} sees, redirects or stops helpers. Do not try another way: say in your report what is needed.`;
-}
-
-// ---------------------------------------------------------------------------------------------
-// Pinning (opencode 1.x): a message that lands in a helper's child session runs as that helper.
-
-export interface PinnableMessage {
-  agent?: string;
-  model?: { providerID?: string; modelID?: string; variant?: string };
-}
-
-/** `provider/model` split at the first slash, or undefined when it is not that shape. */
-export function splitModel(model: string | undefined): { providerID: string; modelID: string } | undefined {
-  if (model === undefined) return undefined;
-  const slash = model.indexOf("/");
-  if (slash <= 0 || slash === model.length - 1) return undefined;
-  return { providerID: model.slice(0, slash), modelID: model.slice(slash + 1) };
-}
-
-/**
- * Make `message` run as `helper`: its agent, and its model and effort when the helper has a
- * model of its own (otherwise the message keeps its model, which is the session's). Returns true
- * when something changed.
- */
-export function pinMessage(message: PinnableMessage, helper: string, plan: { model?: string; effort?: string } | undefined): boolean {
-  let changed = false;
-  if (message.agent !== helper) {
-    message.agent = helper;
-    changed = true;
-  }
-  const model = splitModel(plan?.model);
-  if (model !== undefined) {
-    const current = message.model ?? {};
-    if (current.providerID !== model.providerID || current.modelID !== model.modelID || current.variant !== plan?.effort) {
-      message.model = { ...current, providerID: model.providerID, modelID: model.modelID, variant: plan?.effort };
-      if (plan?.effort === undefined) delete message.model.variant;
-      changed = true;
-    }
-  }
-  return changed;
 }

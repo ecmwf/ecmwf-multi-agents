@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
 // SPDX-License-Identifier: Apache-2.0
 
-// opencode 2.0.16 entry: `setup(ctx)`. Agents come from transforms that run in registration
+// opencode 2 entry: `setup(ctx)`. It first registers the harness itself (register.ts): agents,
+// skills, commands and lead as the default agent, which opencode's loaders for files and config
+// then override, and the RPC (rpc.ts). The rest adjusts and extends what is registered.
+//
+// Agents come from transforms that run in registration
 // order on every rebuild. User plugins activate before opencode's own loader for agent files and
 // config, and a transform registered during setup therefore runs before the agent files load and
 // loses every field they set (docs/research/opencode-v2.md, section 6).
@@ -16,8 +20,11 @@
 // in between. Agent file and config changes rerun the transforms in place and keep the order
 // (core/src/config/plugin/agent.ts:55-58).
 //
-// The default agent is the opposite case: it is set by a transform registered during setup, so
-// opencode's loader, which runs later, applies a `default_agent` from a config file over it.
+// The same late transform keeps each registered agent's own permission rules after the config's
+// top-level `permissions`, as they are with agent files (rule-order.ts).
+//
+// The default agent is the opposite case: it is set by the registration transform during setup,
+// so opencode's loader, which runs later, applies a `default_agent` from a config file over it.
 //
 // The helper tools (tools-v2.ts) are added by a tool transform registered during setup, which
 // is enough: nothing later removes a tool another plugin added. The `execute.before` hook
@@ -27,15 +34,25 @@
 // The `context` session hook leaves a background helper's report that arrives while lead is still
 // replying to the user out of lead's requests until the reply has ended, and a message queued for
 // after the turn wakes lead to act on it; see answer-first.ts.
+//
+// `/review` and `/progress` are registered again, late in the same way, by a command transform:
+// their helper answers in the user's own session (inline.ts). The same `context` hook keeps that
+// helper to its brief; it sees a helper's requests there and lead's, never both at once.
 
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { heldReportsV2, WAKE_TEXT } from "./answer-first.ts";
-import { applyToV2Agents, planAgents, type AgentPlan } from "./apply.ts";
+import { applyToV2Agents, modelRef, planAgents, type AgentPlan } from "./apply.ts";
 import { processEnvironment } from "./environment.ts";
 import { Activity, helperIds, toolCallBlock } from "./helpers.ts";
+import { Inline, inlineCommands } from "./inline.ts";
+import { registerHarness } from "./register.ts";
 import { v2Reporter, type Reporter } from "./report.ts";
-import { loadSettings, mergeSettings } from "./settings.ts";
+import { ProblemLog, registerRpc } from "./rpc.ts";
+import { RuleOrder } from "./rule-order.ts";
+import { loadSettings, mergeSettings, type LoadedSettings } from "./settings.ts";
 import { SessionTracker, v2Tools } from "./tools-v2.ts";
-import type { EmbeddedHarness, Environment, Settings, V2AgentEditor, V2Cleanup, V2Context, V2Event, V2Registration } from "./types.ts";
+import type { EmbeddedHarness, Environment, Settings, V2AgentEditor, V2Cleanup, V2CommandEditor, V2Context, V2Event, V2Registration } from "./types.ts";
 
 /** Registers anyway when no `plugin.updated` arrives, in case the first one came before the subscription. */
 export const FALLBACK_MS = 3000;
@@ -44,6 +61,13 @@ export interface V2Options {
   environment?: () => Environment;
   write?: (line: string) => void;
   fallbackMs?: number;
+  /** The folder of the plugin's entry file; skills are registered at their files next to it. */
+  pluginDir?: string;
+}
+
+/** The folder this module runs from: the plugin folder once bundled. */
+function moduleDir(): string {
+  return path.dirname(fileURLToPath(import.meta.url));
 }
 
 /** The project root: the worktree of the project opencode resolved, else the directory it runs in. */
@@ -54,28 +78,40 @@ export function v2ProjectRoot(ctx: V2Context | undefined): string | undefined {
   return typeof directory === "string" && directory !== "" ? directory : undefined;
 }
 
+/** The site settings file a central install names in the plugin's `site` option. */
+export function siteSettings(ctx: V2Context | undefined): string | undefined {
+  const site = ctx?.options?.site;
+  return typeof site === "string" && site !== "" ? site : undefined;
+}
+
 /** One transform kept at the end of the list by registering it again. */
-class LateTransform {
+class LateTransform<E> {
   private current: V2Registration | undefined;
   private queue: Promise<void> = Promise.resolve();
   private stopped = false;
 
   constructor(
-    private readonly ctx: V2Context,
-    private readonly callback: (editor: V2AgentEditor) => void,
+    private readonly transform: (callback: (editor: E) => void) => Promise<V2Registration>,
+    private readonly callback: (editor: E) => void,
     private readonly reporter: Reporter,
+    private readonly what: string,
   ) {}
+
+  /** Register now unless a registration is there already, as when the RPC asks before any event. */
+  ensure(): Promise<void> {
+    return this.current === undefined ? this.register() : this.queue;
+  }
 
   register(): Promise<void> {
     this.queue = this.queue.then(async () => {
       if (this.stopped) return;
       try {
-        const next = await this.ctx.agent.transform(this.callback);
+        const next = await this.transform(this.callback);
         const previous = this.current;
         this.current = next;
         if (previous !== undefined) await previous.dispose();
       } catch (error) {
-        if (!this.stopped) this.reporter.internal("registering the agent transform", error);
+        if (!this.stopped) this.reporter.internal(`registering the ${this.what} transform`, error);
       }
     });
     return this.queue;
@@ -122,30 +158,55 @@ function watchEvents(ctx: V2Context, onActivation: () => void, onEvent: (event: 
 
 export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
   return async function setup(ctx: V2Context): Promise<V2Cleanup | undefined> {
-    const reporter = v2Reporter(harness.name, options.write);
+    const problems = new ProblemLog();
+    const reporter = v2Reporter(harness.name, options.write, (problem) => problems.add(problem));
     try {
-      let settings: Settings = mergeSettings([], harness);
+      let environment: Environment | undefined;
+      let loaded: LoadedSettings = { settings: mergeSettings([], harness), problems: [], applied: [], sources: {} };
       try {
-        const environment = (options.environment ?? processEnvironment)();
-        const loaded = loadSettings(harness, environment, v2ProjectRoot(ctx));
-        settings = loaded.settings;
-        reporter.report(loaded.problems);
+        environment = (options.environment ?? processEnvironment)();
+        loaded = loadSettings(harness, environment, v2ProjectRoot(ctx), siteSettings(ctx));
       } catch (error) {
         reporter.internal("reading the settings", error);
       }
+      const settings: Settings = loaded.settings;
+
+      const ruleOrder = new RuleOrder(harness, environment?.home ?? "");
+      // The RPC can be asked before the late transform is registered; it registers it first.
+      let late: LateTransform<V2AgentEditor> | undefined;
+      await registerHarness(ctx, harness, {
+        home: environment?.home ?? "",
+        ruleOrder,
+        pluginDir: options.pluginDir ?? moduleDir(),
+        defaultAgent: settings.defaultAgent,
+        reporter,
+      });
+      if (environment !== undefined) {
+        try {
+          await registerRpc({
+            harness,
+            ctx,
+            loaded,
+            problems,
+            environment,
+            directory: ctx.location?.directory,
+            projectRoot: v2ProjectRoot(ctx),
+            // By the time the RPC answers, every plugin has activated.
+            ready: async () => {
+              if (late === undefined) return;
+              ruleOrder.start();
+              await late.ensure();
+            },
+          });
+        } catch (error) {
+          reporter.internal("registering the RPC", error);
+        }
+      }
+
+      reporter.report(loaded.problems);
       const planned = planAgents(harness, settings);
       const plans: AgentPlan[] = planned.plans;
       reporter.report(planned.problems);
-
-      if (settings.defaultAgent) {
-        await ctx.agent.transform((editor) => {
-          try {
-            editor.default(harness.defaultAgent);
-          } catch (error) {
-            reporter.internal("the default agent transform", error);
-          }
-        });
-      }
 
       const helpers = helperIds(harness);
       const tracker = new SessionTracker();
@@ -175,12 +236,25 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
           if (message !== undefined) throw new Error(message);
         });
       }
+      const inline = new Inline({
+        harness,
+        ctx,
+        tracker,
+        helpers,
+        reporter,
+        plannedModel: (agent) => {
+          const plan = plans.find((item) => item.id === agent);
+          return plan?.model === undefined ? undefined : modelRef(plan.model, plan.effort);
+        },
+      });
       if (typeof ctx.session?.hook === "function") {
         /** Replies whose held reports already have a wake queued, by session and request. */
         const woken = new Set<string>();
         await ctx.session.hook("context", async (event) => {
           // A session hook that throws cannot fail cleanly (core/src/plugin/hooks.ts:23-28).
           try {
+            // A helper answering a command here, else lead answering first: never both.
+            if (await inline.context(event)) return;
             if (event?.agent !== harness.defaultAgent || !Array.isArray(event.messages)) return;
             const found = heldReportsV2(event.messages);
             if (found === undefined) return;
@@ -199,10 +273,15 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
         });
       }
 
-      const late = new LateTransform(
-        ctx,
+      late = new LateTransform<V2AgentEditor>(
+        (callback) => ctx.agent.transform(callback),
         (editor) => {
           // Runs on every rebuild; opencode disables a plugin whose transform throws.
+          try {
+            ruleOrder.apply(editor);
+          } catch (error) {
+            reporter.internal("ordering the agents' rules", error);
+          }
           try {
             reporter.report(applyToV2Agents(editor, harness, settings, plans));
           } catch (error) {
@@ -210,11 +289,35 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
           }
         },
         reporter,
+        "agent",
       );
-      const stopWatching = watchEvents(ctx, () => void late.register(), (event) => tracker.observe(event), reporter, options.fallbackMs ?? FALLBACK_MS);
+      const commandTransform = ctx.command?.transform;
+      const lateCommands =
+        typeof commandTransform === "function" && inline.available() && inlineCommands(harness, helpers).length > 0
+          ? new LateTransform<V2CommandEditor>(
+              (callback) => commandTransform.call(ctx.command, callback),
+              (editor) => {
+                try {
+                  for (const command of inline.commands()) editor.add(command);
+                } catch (error) {
+                  reporter.internal("the command transform", error);
+                }
+              },
+              reporter,
+              "command",
+            )
+          : undefined;
+      const agentTransform = late;
+      const onActivation = () => {
+        ruleOrder.start();
+        void agentTransform.register();
+        void lateCommands?.register();
+      };
+      const stopWatching = watchEvents(ctx, onActivation, (event) => tracker.observe(event), reporter, options.fallbackMs ?? FALLBACK_MS);
       return async () => {
         stopWatching();
-        late.stop();
+        agentTransform.stop();
+        lateCommands?.stop();
       };
     } catch (error) {
       reporter.internal("setup", error);

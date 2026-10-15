@@ -7,10 +7,12 @@
 # never reads or writes the real user configuration, data, state or sessions. Variables that
 # an enclosing opencode session sets are removed.
 #
-# opencode also looks for project config and skill folders in parent directories, up to the
-# file system root when a project is outside git. Skill folders of other tools (.claude,
-# .agents) are switched off here; create test projects with `git init` so the search for
-# project config stops at the project root.
+# opencode 2 also reads project config (opencode.json, opencode.jsonc, .opencode, .claude,
+# .agents) from every folder above the project, up to the file system root; a git repository
+# does not stop that search (core/src/config/discovery.ts at v2.0.29). This script cannot
+# switch it off for a project that needs its own config, so callers check the folders above
+# DIR themselves (the eval runner refuses to start when one holds such a file). The two
+# OPENCODE_DISABLE_* variables below were read by opencode 1.x; 2.0.29 ignores them.
 #
 # Usage: tools/sandbox.sh DIR command [args...]
 #   DIR is created if missing and reused if present, so several commands can share a sandbox.

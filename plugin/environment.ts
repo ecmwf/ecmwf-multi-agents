@@ -10,7 +10,6 @@ export function processEnvironment(): Environment {
   return {
     env: { ...process.env },
     home: os.homedir(),
-    platform: process.platform,
     readFile(file) {
       try {
         return readFileSync(file, "utf8");

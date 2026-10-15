@@ -49,15 +49,42 @@ export interface TurnStep {
   note?: string;
 }
 
-/** A pending permission request, as GET /permission returns it. */
+/** A pending permission request, as GET /api/permission/request returns it. */
 export interface PermissionRequest {
   id: string;
   sessionID: string;
-  permission: string;
-  patterns: string[];
-  always?: string[];
+  /** What is asked for, such as shell or edit. */
+  action: string;
+  /** What the action applies to: the command line, the file paths. */
+  resources: string[];
+  /** What an "always" reply would save. */
+  save?: string[];
+  source?: Record<string, unknown>;
+}
+
+export interface FormOption {
+  value: string;
+  label: string;
+  description?: string;
+}
+
+export interface FormField {
+  key: string;
+  type: string;
+  title?: string;
+  description?: string;
+  options?: FormOption[];
+  default?: unknown;
+  minimum?: number;
+}
+
+/** A pending form, as GET /api/form returns it; the question tool asks through one. */
+export interface FormRequest {
+  id: string;
+  sessionID: string;
+  title?: string;
   metadata?: Record<string, unknown>;
-  tool?: { messageID: string; callID: string };
+  fields: FormField[];
 }
 
 export interface QuestionOption {
@@ -65,18 +92,15 @@ export interface QuestionOption {
   description?: string;
 }
 
-/** A pending question, as GET /question returns it. */
+/** The questions of a form, one per field, as the answering policy sees them. */
 export interface QuestionRequest {
-  id: string;
-  sessionID: string;
-  questions: Array<{ question: string; header?: string; options: QuestionOption[]; multiple?: boolean; custom?: boolean }>;
-  tool?: { messageID: string; callID: string };
+  questions: Array<{ question: string; header?: string; options: QuestionOption[]; multiple?: boolean }>;
 }
 
 export interface PermissionRule {
-  /** Permission name, such as bash or edit; leave out to match any. */
-  permission?: string;
-  /** Tested against each pattern of the request. */
+  /** Action name, such as shell or edit; leave out to match any. */
+  action?: string;
+  /** Tested against each resource of the request. */
   pattern: RegExp;
   reply: PermissionReply;
   reason: string;
@@ -96,8 +120,8 @@ export interface PermissionRecord {
   id: string;
   sessionID: string;
   agent: string;
-  permission: string;
-  patterns: string[];
+  action: string;
+  resources: string[];
   reply: PermissionReply;
   reason: string;
   at: number;
@@ -109,11 +133,14 @@ export interface QuestionRecord {
   agent: string;
   questions: Array<{ question: string; options: string[] }>;
   answers: string[][];
+  /** The reply failed and the form was cancelled instead; answers is empty. */
+  cancelled?: true;
   at: number;
 }
 
 // ---------------------------------------------------------------------------------------------
-// opencode 1.x messages, reduced to the fields the evals read.
+// Session messages as the metrics and checks read them, converted from opencode 2 messages by
+// messages.ts.
 
 export interface ApiTokens {
   input?: number;
@@ -134,14 +161,13 @@ export interface ApiPart {
     input?: Record<string, unknown>;
     output?: string;
     error?: string;
+    /** opencode's error type, such as aborted or permission.rejected. */
+    errorType?: string;
+    metadata?: Record<string, unknown>;
     time?: { start?: number; end?: number };
   };
   cost?: number;
   tokens?: ApiTokens;
-  agent?: string;
-  prompt?: string;
-  description?: string;
-  command?: string;
 }
 
 export interface ApiMessage {
@@ -160,6 +186,7 @@ export interface ApiMessage {
     time?: { created?: number; completed?: number };
     error?: unknown;
     finish?: string;
+    metadata?: Record<string, unknown>;
   };
   parts: ApiPart[];
 }
@@ -168,6 +195,11 @@ export interface SessionData {
   id: string;
   parentID?: string;
   title?: string;
+  /** The session's agent, as opencode reports it. */
+  agent?: string;
+  /** Totals opencode keeps for the session; they include requests no message shows, such as the title. */
+  cost?: number;
+  tokens?: ApiTokens;
   messages: ApiMessage[];
 }
 
@@ -229,6 +261,9 @@ export interface Metrics {
   childSessions: Record<string, number>;
   toolCalls: ToolCall[];
   errors: string[];
+  /** opencode's own totals over every session, title requests included. */
+  sessionCost: number;
+  sessionTokens: Tokens;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -248,8 +283,8 @@ export interface CommandResult {
 export interface CheckContext {
   variant: Variant;
   project: string;
-  /** HEAD after setup, and the bare remote when the case has one. */
-  setup: { head: string; remote?: string };
+  /** HEAD after setup, the bare remote when the case has one, and the sandbox's home folder. */
+  setup: { head: string; remote?: string; home?: string };
   /** Final answer of the last turn. */
   answer: string;
   /** Final answer of every turn, in order. */
@@ -297,7 +332,7 @@ export interface EvalCase {
   review?: ReviewPolicy;
   /** Changes to the default answering policy. */
   answering?: Partial<AnsweringPolicy>;
-  /** Extra environment for opencode in this case only, such as a platform flag the case needs. */
+  /** Extra environment for opencode in this case only. */
   env?: Record<string, string>;
   checks: Check[];
   /** Whether the case also runs on plain opencode with its build agent. */
