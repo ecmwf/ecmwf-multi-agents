@@ -184,6 +184,14 @@ file writable, edit it and make it read-only again. Check the folder with
 `./install.sh doctor --central /opt/ecmwf-multi-agents`. To remove it, delete the folder
 (`chmod -R u+w` first); `uninstall --central` only says so.
 
+A central folder made by 0.5.x for opencode 1 is upgraded the same way: run the same
+`--central` command on the folder again, which replaces the earlier install in place. Then
+change the module file: replace the `OPENCODE_CONFIG_DIR` line with the `OPENCODE_CONFIG` line
+above, pointing at `DIR/opencode.json`, and drop the `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS`
+line, which opencode 2 does not need. While `OPENCODE_CONFIG_DIR` still names the folder, a
+user's opencode 2 service does not start, and `doctor` reports a FAIL. Ask every user to load the
+new module and run `central-enable` once (see below).
+
 ### For each user
 
 Load the module, then once:
@@ -274,8 +282,10 @@ folder only when its files really are inside it; a copied install copies it. Run
 `doctor` reports, and always for copied installs (projects). Re-running is safe: unchanged
 files stay as they are.
 
-An install made for opencode 1 by an earlier version is replaced by running `./install.sh`
-again; `doctor` reports such an install as a FAIL until then.
+An install made for opencode 1 by an earlier version is replaced by running the same command
+again (`./install.sh`, `./install.sh --project DIR` or `./install.sh --central DIR`); `doctor`
+reports such an install as a FAIL until then. A central install also needs the module file
+changed (see "For the administrator").
 
 With npm, run `npm install -g @ecmwf.int/multi-agents`, then `ecmwf-multi-agents`.
 
