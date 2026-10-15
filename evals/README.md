@@ -81,6 +81,14 @@ The server runs as `opencode serve --stdio` with a random password, listens on a
 and stops when the runner closes its input. Before the first turn the runner waits until the
 harness plugin is active and lead has the profile's model.
 
+opencode 2 reads `opencode.json`, `opencode.jsonc`, `.opencode`, `.claude` and `.agents` from
+the project folder and from every folder above it, up to `/`. The server needs the project's
+own files, so the runner refuses to start when a folder above the sandbox holds any of these
+(another user's `/tmp/opencode.json`, say, which would load into the server that holds the eval
+login). The message names the file; remove it or set `TMPDIR` to a folder with none above it.
+`make eval-login` and the login copy switch that search off
+(`OPENCODE_DISABLE_PROJECT_CONFIG=1`), since they need no project.
+
 ### The eval login
 
 The evals never use your own opencode login. `make eval-login` runs `opencode auth login` in a

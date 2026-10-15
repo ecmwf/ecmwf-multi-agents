@@ -70,6 +70,18 @@ const PIPE = [
 let queue: Promise<unknown> = Promise.resolve();
 
 /**
+ * Switches off opencode's project config search for the commands that hold the eval login:
+ * they need no project, and the search reads opencode.json(c), .opencode, .claude and .agents
+ * from every folder above the working folder, up to the file system root.
+ */
+export const NO_PROJECT_CONFIG = { OPENCODE_DISABLE_PROJECT_CONFIG: "1" };
+
+/** Environment for the export and import pipe. */
+export function pipeEnv(env: Record<string, string>, db: string, password: string): Record<string, string> {
+  return { ...env, ...NO_PROJECT_CONFIG, EVAL_LOGIN_DB: db, EVAL_SERVER_PASSWORD: password };
+}
+
+/**
  * Copies the eval login into a running sandboxed server: `opencode auth export` from the eval
  * database, piped into `opencode auth import --server`. Runs one at a time, so two runs never
  * open the database together.
@@ -80,7 +92,7 @@ export function importLogin(box: Box, bin: string, db: string, server: { url: st
     mkdirSync(scratch, { recursive: true });
     const proc = Bun.spawn([SANDBOX_SCRIPT, scratch, "bash", "-c", PIPE, bin, server.url], {
       cwd: scratch,
-      env: { ...env, EVAL_LOGIN_DB: db, EVAL_SERVER_PASSWORD: server.password },
+      env: pipeEnv(env, db, server.password),
       stdin: "ignore",
       stdout: "ignore",
       stderr: "pipe",
@@ -100,12 +112,12 @@ export function importLogin(box: Box, bin: string, db: string, server: { url: st
 }
 
 /** Environment for the interactive login: the owner's, without opencode's own variables. */
-function loginEnv(db: string): Record<string, string> {
+export function loginEnv(db: string, from: Record<string, string | undefined> = process.env): Record<string, string> {
   const env: Record<string, string> = {};
-  for (const [name, value] of Object.entries(process.env)) {
+  for (const [name, value] of Object.entries(from)) {
     if (value !== undefined && !name.startsWith("OPENCODE")) env[name] = value;
   }
-  return { ...env, ...baseEnv(), OPENCODE_DB: db };
+  return { ...env, ...baseEnv(), ...NO_PROJECT_CONFIG, OPENCODE_DB: db };
 }
 
 async function main(argv: string[]): Promise<number> {

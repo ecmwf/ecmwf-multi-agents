@@ -5,11 +5,11 @@
 // fixture. Uses git and python3; no network and no opencode.
 
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { CASES } from "./cases.ts";
-import { checkEvalLogin, evalLoginDb, gitWorkTreeOf, loginDbProblem } from "./login.ts";
+import { checkEvalLogin, evalLoginDb, gitWorkTreeOf, importLogin, loginDbProblem, loginEnv, pipeEnv } from "./login.ts";
 import {
   applySetup,
   changedBetween,
@@ -24,14 +24,18 @@ import {
   parseProfile,
   parseVersion,
   profileProviders,
+  PROJECT_CONFIG_NAMES,
+  projectConfigFrom,
   projectDiff,
   readProjectFile,
   removeBox,
   resolveBinary,
+  sandboxParentProblem,
   sandboxPath,
   snapshot,
 } from "./project.ts";
 import type { Box } from "./project.ts";
+import { runCase } from "./runner.ts";
 
 const boxes: Box[] = [];
 const box = () => {
@@ -151,6 +155,43 @@ describe("the eval login", () => {
     if (!inside.ok) expect(inside.message).toContain("git working tree");
   });
 
+  test("the login and the export and import pipe never read project config", () => {
+    const env = loginEnv("/data/eval-login.db", { OPENCODE_CONFIG: "/x/opencode.json", OPENCODE_DISABLE_PROJECT_CONFIG: "0", OTHER: "kept" });
+    expect(env).toMatchObject({ OPENCODE_DISABLE_PROJECT_CONFIG: "1", OPENCODE_DB: "/data/eval-login.db", OTHER: "kept" });
+    expect(env.OPENCODE_CONFIG).toBeUndefined();
+    expect(pipeEnv({ PATH: "/bin", OPENCODE_DISABLE_PROJECT_CONFIG: "0" }, "/data/eval-login.db", "secret")).toEqual({
+      PATH: "/bin",
+      OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+      EVAL_LOGIN_DB: "/data/eval-login.db",
+      EVAL_SERVER_PASSWORD: "secret",
+    });
+  });
+
+  test("both sides of the pipe run with project config off, each with only its own secret", async () => {
+    const made = box();
+    const record = path.join(dir, "pipe.txt");
+    const fake = path.join(dir, "fake-opencode");
+    // Records, for each side, the switch and whether each secret is visible to it.
+    writeFileSync(
+      fake,
+      [
+        "#!/bin/sh",
+        'side=$2; [ "$side" = import ] && cat >/dev/null',
+        'echo "$side project=${OPENCODE_DISABLE_PROJECT_CONFIG:-unset} db=${OPENCODE_DB:+yes} password=${OPENCODE_PASSWORD:+yes} cwd=$(pwd)" >>"$RECORD"',
+        '[ "$side" = export ] && echo "[]"',
+        "exit 0",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    await importLogin(made, fake, "/data/eval-login.db", { url: "http://127.0.0.1:9", password: "secret" }, { PATH: process.env.PATH ?? "/bin", RECORD: record });
+    const lines = readFileSync(record, "utf8").trim().split("\n").sort();
+    expect(lines).toEqual([
+      `export project=1 db=yes password= cwd=${path.join(made.dir, "login")}`,
+      `import project=1 db= password=yes cwd=${path.join(made.dir, "login")}`,
+    ].sort());
+  });
+
   test("a missing login says to run make eval-login", () => {
     const missing = checkEvalLogin({ XDG_DATA_HOME: dir }, "/nonexistent-home");
     expect(missing.ok).toBe(false);
@@ -158,6 +199,67 @@ describe("the eval login", () => {
     const db = path.join(dir, "login.db");
     writeFileSync(db, "");
     expect(checkEvalLogin({ ECMWF_MULTI_AGENTS_EVAL_LOGIN_DB: db }, "/nonexistent-home")).toEqual({ ok: true, path: db });
+  });
+});
+
+describe("project config above the sandbox", () => {
+  const scratch = realpathSync(mkdtempSync(path.join(tmpdir(), "eval-above-")));
+  afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+
+  test("the names are those opencode 2 reads from every folder up to the root", () => {
+    expect([...PROJECT_CONFIG_NAMES].sort()).toEqual([".agents", ".claude", ".opencode", "opencode.json", "opencode.jsonc"]);
+  });
+
+  test("every name in the folder and every folder above it counts, nearest first, up to the root", () => {
+    const files = new Set(["/opencode.json", "/tmp/.claude", "/tmp/.agents", "/tmp/x/.opencode", "/tmp/x/opencode.jsonc", "/tmp/x/y/README.md"]);
+    const exists = (file: string) => files.has(file);
+    expect(projectConfigFrom("/tmp/x/y", exists)).toEqual(["/tmp/x/.opencode", "/tmp/x/opencode.jsonc", "/tmp/.claude", "/tmp/.agents", "/opencode.json"]);
+    expect(projectConfigFrom("/srv/clean", exists)).toEqual(["/opencode.json"]);
+    expect(projectConfigFrom("/srv/clean", () => false)).toEqual([]);
+    expect(sandboxParentProblem("/srv/clean", () => false)).toBeUndefined();
+  });
+
+  test("the message names the file and suggests TMPDIR", () => {
+    const problem = sandboxParentProblem("/tmp", (file) => file === "/tmp/opencode.json");
+    expect(problem).toContain("/tmp/opencode.json");
+    expect(problem).toContain("TMPDIR");
+  });
+
+  test("on a real tree: a file or folder above counts, a dangling link too, the folders below do not", () => {
+    const top = path.join(scratch, "top");
+    const sandboxes = path.join(top, "a", "b");
+    mkdirSync(path.join(sandboxes, "ecmwf-eval-x", "project", ".opencode"), { recursive: true });
+    writeFileSync(path.join(sandboxes, "ecmwf-eval-x", "project", "opencode.json"), "{}\n");
+    expect(projectConfigFrom(sandboxes).filter((file) => file.startsWith(scratch))).toEqual([]);
+    mkdirSync(path.join(top, "a", ".claude"));
+    writeFileSync(path.join(top, "opencode.jsonc"), "{}\n");
+    symlinkSync(path.join(scratch, "missing"), path.join(sandboxes, ".agents"));
+    expect(projectConfigFrom(sandboxes).filter((file) => file.startsWith(scratch))).toEqual([path.join(sandboxes, ".agents"), path.join(top, "a", ".claude"), path.join(top, "opencode.jsonc")]);
+  });
+
+  test("a run refuses to start opencode under such a folder and removes its sandbox", async () => {
+    const tmp = path.join(scratch, "tmp");
+    mkdirSync(tmp);
+    writeFileSync(path.join(scratch, "opencode.json"), '{"plugins": ["someone-elses-plugin"]}\n');
+    const saved = process.env.TMPDIR;
+    process.env.TMPDIR = tmp;
+    try {
+      const record = await runCase(CASES[0]!, {
+        variant: "baseline",
+        repeat: 1,
+        profile: parseProfile("inherit", {}),
+        opencode: "/nonexistent/opencode",
+        opencodeVersion: "2.0.29",
+        timeoutMs: 1_000,
+        auth: { kind: "none" },
+      });
+      expect(record.status).toBe("error");
+      expect(record.error).toContain(path.join(scratch, "opencode.json"));
+      expect(readdirSync(tmp)).toEqual([]);
+    } finally {
+      if (saved === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = saved;
+    }
   });
 });
 

@@ -10,12 +10,13 @@
 //          [--profile NAME] [--jobs N] [--max-cost USD] [--timeout MIN] [--opencode BIN]
 //          [--out DIR] [--list]
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { CASES } from "./cases.ts";
 import { checkEvalLogin } from "./login.ts";
 import { killServers, UNAVAILABLE } from "./opencode.ts";
-import { loadProfile, loginPlugins, opencodeVersion, type Profile, REPO, removeLiveBoxes, resolveBinary } from "./project.ts";
+import { loadProfile, loginPlugins, opencodeVersion, type Profile, REPO, removeLiveBoxes, resolveBinary, sandboxParentProblem } from "./project.ts";
 import { runCase } from "./runner.ts";
 import { renderSummary } from "./summary.ts";
 import type { EvalCase, RunRecord, Variant } from "./types.ts";
@@ -201,6 +202,11 @@ async function main(argv: string[]): Promise<number> {
   const login = checkEvalLogin();
   if (!login.ok) {
     console.error(`Error: ${login.message}`);
+    return 1;
+  }
+  const unsafe = sandboxParentProblem(realpathSync(tmpdir()));
+  if (unsafe !== undefined) {
+    console.error(`Error: ${unsafe}.`);
     return 1;
   }
   let profile: Profile;

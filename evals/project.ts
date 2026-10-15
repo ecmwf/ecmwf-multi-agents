@@ -161,6 +161,45 @@ export function removeLiveBoxes(): void {
   for (const box of [...liveBoxes]) removeBox(box);
 }
 
+/**
+ * Names opencode 2 loads from the project folder and every folder above it, up to the file
+ * system root (core/src/config/discovery.ts at v2.0.29).
+ */
+export const PROJECT_CONFIG_NAMES = [".claude", ".agents", ".opencode", "opencode.jsonc", "opencode.json"];
+
+function present(file: string): boolean {
+  try {
+    lstatSync(file);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Every opencode project config file or folder in `dir` and the folders above it, nearest first. */
+export function projectConfigFrom(dir: string, exists: (file: string) => boolean = present): string[] {
+  const found: string[] = [];
+  for (let current = path.resolve(dir); ; current = path.dirname(current)) {
+    for (const name of PROJECT_CONFIG_NAMES) {
+      const file = path.join(current, name);
+      if (exists(file)) found.push(file);
+    }
+    if (current === path.dirname(current)) return found;
+  }
+}
+
+/**
+ * Why sandboxes in `parent` are unsafe, or undefined when they are safe. The sandboxed server
+ * reads the fixture's own project config, so it cannot switch that search off; opencode config
+ * in a folder above the sandbox (another user's /tmp/opencode.json, say) would load into the
+ * server that holds the eval login.
+ */
+export function sandboxParentProblem(parent: string, exists?: (file: string) => boolean): string | undefined {
+  const found = projectConfigFrom(parent, exists);
+  if (found.length === 0) return undefined;
+  return `opencode would load ${found.join(", ")} into every eval sandbox under ${parent}, because it reads project config from every folder above the project; remove it, or set TMPDIR to a folder where neither it nor any folder above it holds ${PROJECT_CONFIG_NAMES.join(", ")} (a new folder under /var/tmp, say)`;
+}
+
 /** A fresh sandbox under the system temporary directory, with the fixture as a git project. */
 export function createBox(fixture = FIXTURE): Box {
   // opencode reports canonical paths, so resolve symbolic links in the temporary directory.

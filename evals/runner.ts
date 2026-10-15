@@ -29,6 +29,7 @@ import {
   readProjectFile,
   REPO,
   removeBox,
+  sandboxParentProblem,
   sandboxPath,
   snapshot,
   writeConfig,
@@ -114,6 +115,8 @@ export async function runCase(item: EvalCase, options: RunOptions): Promise<RunR
   let box: Box | undefined;
   try {
     box = createBox(options.fixture);
+    const unsafe = sandboxParentProblem(path.dirname(box.dir));
+    if (unsafe !== undefined) throw new Error(unsafe);
     const project = box.project;
     const head = applySetup(box, item.setup);
     const before = snapshot(project);
