@@ -95,6 +95,7 @@ const V2_CHECKPOINT_PREFIX = "<conversation-checkpoint>";
  * The notes opencode 2 adds as a user message when it continues a reply that was cut off: an
  * interrupted response (session/runner/llm.ts:35-36 at v2.0.28 and v2.0.29), one that hit the
  * output limit (llm.ts:38-39 at v2.0.29), and a server restart (session/execution/restart.ts:15-16).
+ * plugin.integration.test.ts checks that the pinned opencode binary still holds each one.
  */
 export const V2_CONTINUE_NOTES: readonly string[] = [
   "The previous response was interrupted. Continue from where you left off without repeating completed content.",

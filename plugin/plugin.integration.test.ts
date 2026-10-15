@@ -9,15 +9,19 @@
 // in the sandbox config directory, settings files written per scenario, and a git project.
 // opencode is read back with `opencode serve` and its HTTP API, as in
 // tools/emit-v2.integration.test.ts. No model is contacted.
+//
+// The binary must also still hold the notes opencode adds to continue a cut-off reply, word for
+// word, since answer-first.ts recognizes them by their text.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PLUGIN_DIR, pluginFiles } from "../tools/bundle-plugin.ts";
 import { V2_VERSION, emitV2 } from "../tools/emit-v2.ts";
 import type { OutputFile } from "../tools/types.ts";
+import { V2_CONTINUE_NOTES } from "./answer-first.ts";
 import { resolvedFixture } from "./testing.ts";
 
 const enabled = process.env.ECMWF_MULTI_AGENTS_INTEGRATION === "1";
@@ -82,6 +86,29 @@ function setPlugin(box: Sandbox, on: boolean): void {
   const parked = path.join(box.config, PARKED);
   if (on && existsSync(parked)) renameSync(parked, active);
   if (!on && existsSync(active)) renameSync(active, parked);
+}
+
+/** The texts among `texts` that a file holds, read in chunks: the opencode executable is large. */
+function textsIn(file: string, texts: readonly string[]): string[] {
+  const wanted = texts.map((text) => ({ text, bytes: Buffer.from(text) }));
+  const overlap = Math.max(...wanted.map((item) => item.bytes.length)) - 1;
+  const found = new Set<string>();
+  const fd = openSync(file, "r");
+  try {
+    const chunk = Buffer.alloc(8 << 20);
+    let carry = Buffer.alloc(0);
+    for (;;) {
+      const read = readSync(fd, chunk, 0, chunk.length, null);
+      if (read === 0) break;
+      const window = Buffer.concat([carry, chunk.subarray(0, read)]);
+      for (const item of wanted) if (window.includes(item.bytes)) found.add(item.text);
+      if (found.size === wanted.length) break;
+      carry = Buffer.from(window.subarray(Math.max(0, window.length - overlap)));
+    }
+  } finally {
+    closeSync(fd);
+  }
+  return texts.filter((text) => found.has(text));
 }
 
 async function within<T>(ms: number, what: string, attempt: () => Promise<T | undefined>): Promise<T> {
@@ -204,6 +231,13 @@ describe.skipIf(!enabled)(`plugin in opencode ${V2_VERSION}`, () => {
   afterAll(async () => {
     await stop();
     if (box) rmSync(box.dir, { recursive: true, force: true });
+  });
+
+  test("the executable still holds, word for word, the notes opencode adds to continue a cut-off reply", () => {
+    // OPENCODE_V2_BIN may be a name on the PATH or a link, as node_modules/.bin/opencode is.
+    const executable = realpathSync(Bun.which(v2Bin) ?? v2Bin);
+    expect(statSync(executable).size).toBeGreaterThan(10 << 20);
+    expect(textsIn(executable, V2_CONTINUE_NOTES)).toEqual([...V2_CONTINUE_NOTES]);
   });
 
   test("settings apply after the agent files load, and lead becomes the default agent", async () => {
