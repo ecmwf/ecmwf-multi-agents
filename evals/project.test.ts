@@ -9,7 +9,7 @@ import { existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, rmSync,
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { CASES } from "./cases.ts";
-import { checkEvalLogin, evalLoginDb } from "./login.ts";
+import { checkEvalLogin, evalLoginDb, gitWorkTreeOf, loginDbProblem } from "./login.ts";
 import {
   applySetup,
   changedBetween,
@@ -130,10 +130,25 @@ describe("the eval login", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "eval-login-"));
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-  test("its own database in the data folder, never opencode's", () => {
-    expect(evalLoginDb({}, "/home/someone")).toBe("/home/someone/.local/share/ecmwf-multi-agents/eval-login.db");
-    expect(evalLoginDb({ XDG_DATA_HOME: "/data" }, "/home/someone")).toBe("/data/ecmwf-multi-agents/eval-login.db");
+  test("its own database in a folder of its own in the data folder, never opencode's nor the checkout's", () => {
+    expect(evalLoginDb({}, "/home/someone")).toBe("/home/someone/.local/share/ecmwf-multi-agents-evals/eval-login.db");
+    expect(evalLoginDb({ XDG_DATA_HOME: "/data" }, "/home/someone")).toBe("/data/ecmwf-multi-agents-evals/eval-login.db");
+    // The README suggests ~/.local/share/ecmwf-multi-agents for the checkout: the login never goes there.
+    expect(path.dirname(evalLoginDb({}, "/home/someone"))).not.toBe("/home/someone/.local/share/ecmwf-multi-agents");
     expect(evalLoginDb({ ECMWF_MULTI_AGENTS_EVAL_LOGIN_DB: "/elsewhere/login.db", XDG_DATA_HOME: "/data" }, "/home/someone")).toBe("/elsewhere/login.db");
+  });
+
+  test("a login database inside a git working tree is refused, whichever way it is named", () => {
+    const checkout = "/home/someone/.local/share/ecmwf-multi-agents";
+    const exists = (file: string) => file === `${checkout}/.git`;
+    expect(gitWorkTreeOf(`${checkout}/eval-login.db`, exists)).toBe(checkout);
+    expect(gitWorkTreeOf(`${checkout}/evals/x/login.db`, exists)).toBe(checkout);
+    expect(gitWorkTreeOf("/home/someone/.local/share/ecmwf-multi-agents-evals/eval-login.db", exists)).toBeUndefined();
+    expect(loginDbProblem(`${checkout}/eval-login.db`, exists)).toContain("git working tree");
+    // This repository is a git working tree: a login named inside it is refused before any use.
+    const inside = checkEvalLogin({ ECMWF_MULTI_AGENTS_EVAL_LOGIN_DB: path.join(import.meta.dir, "eval-login.db") }, "/nonexistent-home");
+    expect(inside.ok).toBe(false);
+    if (!inside.ok) expect(inside.message).toContain("git working tree");
   });
 
   test("a missing login says to run make eval-login", () => {

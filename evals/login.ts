@@ -19,17 +19,38 @@ import { baseEnv, type Box, loginPlugins, opencodeVersion, resolveBinary, SANDBO
 /** The variable that names another eval login database. */
 export const LOGIN_DB_VARIABLE = "ECMWF_MULTI_AGENTS_EVAL_LOGIN_DB";
 
-/** The eval login database: $ECMWF_MULTI_AGENTS_EVAL_LOGIN_DB, else in the XDG data folder. */
+/**
+ * The eval login database: $ECMWF_MULTI_AGENTS_EVAL_LOGIN_DB, else a folder of its own in the
+ * XDG data folder. Not `<data>/ecmwf-multi-agents`, where the README suggests keeping the
+ * checkout: the credentials must never sit in a git working tree.
+ */
 export function evalLoginDb(env: Record<string, string | undefined> = process.env, home = homedir()): string {
   const named = env[LOGIN_DB_VARIABLE];
   if (named) return path.resolve(named);
   const data = env.XDG_DATA_HOME || path.join(home, ".local", "share");
-  return path.join(data, "ecmwf-multi-agents", "eval-login.db");
+  return path.join(data, "ecmwf-multi-agents-evals", "eval-login.db");
 }
 
-/** The eval login database when it exists, else a message that says how to make it. */
+/** The git working tree a file would sit in (a folder above it holds `.git`), if any. */
+export function gitWorkTreeOf(file: string, exists: (file: string) => boolean = existsSync): string | undefined {
+  for (let dir = path.dirname(path.resolve(file)); ; dir = path.dirname(dir)) {
+    if (exists(path.join(dir, ".git"))) return dir;
+    if (dir === path.dirname(dir)) return undefined;
+  }
+}
+
+/** Why a login database may not be used there, or undefined when it may: never inside a git working tree. */
+export function loginDbProblem(db: string, exists: (file: string) => boolean = existsSync): string | undefined {
+  const tree = gitWorkTreeOf(db, exists);
+  if (tree === undefined) return undefined;
+  return `the eval login database ${db} would sit in the git working tree ${tree}, where a commit could take the credentials with it; point ${LOGIN_DB_VARIABLE} at a folder outside any repository`;
+}
+
+/** The eval login database when it exists and is outside any git working tree, else a message that says what to do. */
 export function checkEvalLogin(env: Record<string, string | undefined> = process.env, home = homedir()): { ok: true; path: string } | { ok: false; message: string } {
   const db = evalLoginDb(env, home);
+  const problem = loginDbProblem(db);
+  if (problem !== undefined) return { ok: false, message: problem };
   if (existsSync(db)) return { ok: true, path: db };
   return {
     ok: false,
@@ -110,6 +131,11 @@ async function main(argv: string[]): Promise<number> {
     return 1;
   }
   const db = evalLoginDb();
+  const problem = loginDbProblem(db);
+  if (problem !== undefined) {
+    console.error(`Error: ${problem}.`);
+    return 1;
+  }
   const existed = existsSync(db);
   mkdirSync(path.dirname(db), { recursive: true, mode: 0o700 });
   const scratch = mkdtempSync(path.join(tmpdir(), "ecmwf-eval-login-"));

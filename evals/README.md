@@ -85,8 +85,10 @@ harness plugin is active and lead has the profile's model.
 
 The evals never use your own opencode login. `make eval-login` runs `opencode auth login` in a
 throwaway sandbox with an eval-only database, so the login lands there and nowhere else. The
-database is `${XDG_DATA_HOME:-~/.local/share}/ecmwf-multi-agents/eval-login.db`;
-`ECMWF_MULTI_AGENTS_EVAL_LOGIN_DB` names another one. Run `make eval-login` once per provider
+database is `${XDG_DATA_HOME:-~/.local/share}/ecmwf-multi-agents-evals/eval-login.db`, a
+folder of its own and never the checkout; `ECMWF_MULTI_AGENTS_EVAL_LOGIN_DB` names another one.
+A database inside a git working tree is refused, so a commit can never take the credentials
+with it; `.gitignore` also leaves out SQLite databases and their side files. Run `make eval-login` once per provider
 the profile uses; it shows what the eval login holds afterwards.
 
 For each run, once the sandboxed server is ready, opencode copies the login across itself:

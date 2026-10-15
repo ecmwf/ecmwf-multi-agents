@@ -5,6 +5,11 @@
 node_modules/
 .ecmwf-multi-agents/
 evals/runs/
+# Never commit an opencode database, such as an eval login, or its SQLite side files.
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
 *.log
 .DS_Store
 .idea/
