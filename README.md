@@ -20,12 +20,8 @@ A multi-agent harness for [opencode](https://opencode.ai), made for ECMWF scient
 and developers.
 
 You talk to one agent, `lead`. It works out what you need, asks questions when your request is
-unclear, and hands the reading, building and checking to three helpers. Each helper runs on a
-model and effort suited to its job, so routine work goes to cheaper models and `lead` keeps a
-small context for the conversation with you.
-
-> Status: early releases (0.x). See `CHANGELOG.md` for what changed and `PLAN.md` for what
-> comes next.
+unclear, and hands the reading, building and checking to three helpers. Helpers run on a
+model and effort suited to its job.
 
 ## The agents
 
