@@ -30,7 +30,7 @@ model and effort suited to its job.
 | `lead` | Talks to you, plans, hands out work, checks results, commits when asked | Claude Opus 5.5, xhigh |
 | `scout` | Read-only lookups and investigations in code, docs and the web | Claude Sonnet 5.5, medium |
 | `builder` | Makes one clearly specified change, from a small edit to a hard fix, and runs its checks | Claude Sonnet 5.5, high |
-| `reviewer` | Independent review of plans and changes, answers APPROVE or REJECT | GPT 6.1 Sol through GitHub Copilot, medium |
+| `reviewer` | Independent review of plans and changes, answers APPROVE or REJECT | GPT 6.1 Sol via GH Copilot, medium |
 
 Effort is how hard a model thinks before it answers: more effort is slower and costs more.
 You can change each agent's effort, and its model, in the settings file. The reviewer uses a
