@@ -134,7 +134,7 @@ names the npm package with a pinned version, and opencode fetches it.
 
 ```json
 {
-  "plugins": ["@ecmwf.int/multi-agents@0.6.0"]
+  "plugins": ["@ecmwf.int/multi-agents@latest"]
 }
 ```
 
