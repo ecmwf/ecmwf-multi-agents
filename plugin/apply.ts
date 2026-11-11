@@ -19,6 +19,8 @@ export interface AgentPlan {
   effort?: string;
   /** Models to try, in order, when `model` is not usable (see ModelChoices); only with a model. */
   fallback?: FallbackEntry[];
+  /** True when `fallback` is the profile's: with none of it usable, doctor says so, without a toast. */
+  fallbackFromProfile?: true;
   /** undefined: keep the agent's own step limit. */
   steps?: number;
 }
@@ -46,7 +48,10 @@ export function planAgents(harness: EmbeddedHarness, settings: Settings): { plan
       const effort = override.effort ?? fromProfile.effort;
       if (effort !== undefined) plan.effort = effort;
       const fallback = override.fallback ?? fromProfile.fallback;
-      if (fallback !== undefined && fallback.length > 0) plan.fallback = fallback;
+      if (fallback !== undefined && fallback.length > 0) {
+        plan.fallback = fallback;
+        if (override.fallback === undefined) plan.fallbackFromProfile = true;
+      }
     } else if (override.effort !== undefined) {
       problems.push({
         message:

@@ -199,7 +199,8 @@ export class ModelChoices {
       if (problem === undefined) this.told.delete(plan.id);
       else if (this.told.get(plan.id) !== problem) {
         this.told.set(plan.id, problem);
-        update.problems.push({ message: problem, notify: true });
+        // A profile's list that nothing in matches is the profile's choice, not the user's: no toast.
+        update.problems.push({ message: problem, notify: plan.fallbackFromProfile !== true });
       }
     }
     return update;

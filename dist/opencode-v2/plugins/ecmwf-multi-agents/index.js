@@ -169,8 +169,11 @@ function planAgents(harness, settings) {
       if (effort !== undefined)
         plan.effort = effort;
       const fallback = override.fallback ?? fromProfile.fallback;
-      if (fallback !== undefined && fallback.length > 0)
+      if (fallback !== undefined && fallback.length > 0) {
         plan.fallback = fallback;
+        if (override.fallback === undefined)
+          plan.fallbackFromProfile = true;
+      }
     } else if (override.effort !== undefined) {
       problems.push({
         message: `${harness.name}: the effort ${JSON.stringify(override.effort)} for ${agent.id} was ignored: ` + `profile ${JSON.stringify(settings.profile)} gives ${agent.id} no model and the settings name none, ` + `so it uses the session model`,
@@ -729,7 +732,7 @@ ${primary.effort ?? ""}`;
         this.told.delete(plan.id);
       else if (this.told.get(plan.id) !== problem) {
         this.told.set(plan.id, problem);
-        update.problems.push({ message: problem, notify: true });
+        update.problems.push({ message: problem, notify: plan.fallbackFromProfile !== true });
       }
     }
     return update;

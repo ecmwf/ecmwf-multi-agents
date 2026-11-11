@@ -118,13 +118,17 @@ describe("planAgents", () => {
         model: "anthropic/claude-sonnet-5-5",
         effort: "medium",
         fallback: [{ model: "openai/gpt-a", effort: "low" }, { model: "openai/gpt-b" }],
+        fallbackFromProfile: true,
       });
       // An agent whose profile gives no list has none, and no empty list is carried.
       expect("fallback" in plan(mergeSettings([], withFallback), "builder")).toBe(false);
     });
 
     test("an effort override alone keeps the profile's list", () => {
-      expect(plan(mergeSettings([{ agents: { scout: { effort: "high" } } }], withFallback))).toMatchObject({ effort: "high", fallback: [{ model: "openai/gpt-a", effort: "low" }, { model: "openai/gpt-b" }] });
+      expect(plan(mergeSettings([{ agents: { scout: { effort: "high" } } }], withFallback))).toMatchObject({ effort: "high", fallback: [{ model: "openai/gpt-a", effort: "low" }, { model: "openai/gpt-b" }], fallbackFromProfile: true });
+      // A list of the user's own, for the profile's model, is not the profile's.
+      expect(plan(mergeSettings([{ agents: { scout: { fallback: [{ model: "a/1" }] } } }], withFallback))).toMatchObject({ fallback: [{ model: "a/1" }] });
+      expect("fallbackFromProfile" in plan(mergeSettings([{ agents: { scout: { fallback: [{ model: "a/1" }] } } }], withFallback))).toBe(false);
     });
 
     test("a settings model without a list drops the profile's list", () => {

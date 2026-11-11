@@ -35,6 +35,7 @@ import { load } from "../tools/load.ts";
 import { resolveHarness } from "../tools/resolve.ts";
 import type { OutputFile } from "../tools/types.ts";
 import { STEP_LIMIT_NOTICE } from "./step-limit.ts";
+import { chooseModel } from "./fallback.ts";
 import type { EmbeddedHarness, PermissionRule } from "./types.ts";
 
 const enabled = process.env.ECMWF_MULTI_AGENTS_INTEGRATION === "1";
@@ -253,6 +254,16 @@ describe.skipIf(!v2Available)(`a project's plugins line in opencode ${V2_VERSION
   let stderr = "";
   let model: ReturnType<typeof standIn>;
   let embedded: EmbeddedHarness;
+  /**
+   * No sandbox sets up Anthropic or GitHub Copilot, so each helper that is on and has a fallback
+   * in the default profile has nothing usable: doctor lists it, without a toast.
+   */
+  const unusable = (...ids: string[]) =>
+    ids.map((id) => {
+      const agent = embedded.profiles.find((item) => item.id === "default")!.agents[id]!;
+      const primary = { model: agent.model!, ...(agent.effort === undefined ? {} : { effort: agent.effort }) };
+      return { problem: `${NAME}: ${id}: ${chooseModel(primary, agent.fallback!, { providers: [] }).problem!.message}`, notify: false };
+    });
   const projects = { line: "", files: "", both: "", changed: "", none: "", run: "", runFiles: "", packed: "", switched: "", switchedBoth: "", switchedRun: "", excludeRepo: "", excludeMain: "", excludeWorktree: "", excludeOutside: "", limitRun: "" };
 
   const call = async <T = unknown>(method: string, route: string, project: string, body?: unknown): Promise<{ status: number; data: T }> => {
@@ -532,10 +543,10 @@ describe.skipIf(!v2Available)(`a project's plugins line in opencode ${V2_VERSION
       reviewLine: "Review policy: auto",
       helperSlotsLine: "Run at most 4 helpers at once.",
       settings: { max_helper_slots: 4 },
-      problems: [],
+      problems: unusable("reviewer"),
     });
     const problems = await call<{ output?: unknown }>("POST", `/api/rpc/${NAME}/problems`, projects.line, { input: {} });
-    expect(problems.data.output).toEqual({ problems: [] });
+    expect(problems.data.output).toEqual({ problems: unusable("reviewer") });
     const none = await call<{ type?: string }>("POST", `/api/rpc/${NAME}/doctor`, projects.none, { input: {} });
     expect(none.status).not.toBe(200);
     expect(none.data.type).toBe("rpc.unavailable");
@@ -606,7 +617,7 @@ describe.skipIf(!v2Available)(`a project's plugins line in opencode ${V2_VERSION
 
     const doctor = await call<{ output?: Record<string, unknown> }>("POST", `/api/rpc/${NAME}/doctor`, projects.packed, { input: {} });
     expect(doctor.status).toBe(200);
-    expect(doctor.data.output).toMatchObject({ name: NAME, version: pkg.version, defaultAgent: "lead", leadLoaded: true, leadDefinition: "harness", problems: [] });
+    expect(doctor.data.output).toMatchObject({ name: NAME, version: pkg.version, defaultAgent: "lead", leadLoaded: true, leadDefinition: "harness", problems: unusable("reviewer") });
   }, 300_000);
 
   test("/review, registered by the plugin, is answered by the reviewer in the user's session, and a later report wakes lead", async () => {
@@ -665,7 +676,7 @@ describe.skipIf(!v2Available)(`a project's plugins line in opencode ${V2_VERSION
       const ignored = Bun.spawnSync(["git", "check-ignore", "-q", `.${NAME}/notes/a.md`], { cwd: project });
       expect(ignored.exitCode).toBe(0);
       const doctor = await call<{ output?: Record<string, unknown> }>("POST", `/api/rpc/${NAME}/doctor`, project, { input: {} });
-      expect(doctor.data.output).toMatchObject({ workDirExcluded: true, problems: [] });
+      expect(doctor.data.output).toMatchObject({ workDirExcluded: true, problems: unusable("reviewer") });
     }
     const outside = projects.excludeOutside;
     await active(outside);
@@ -673,7 +684,7 @@ describe.skipIf(!v2Available)(`a project's plugins line in opencode ${V2_VERSION
     await Bun.sleep(2_000);
     expect(existsSync(path.join(outside, ".git"))).toBe(false);
     const doctor = await call<{ output?: Record<string, unknown> }>("POST", `/api/rpc/${NAME}/doctor`, outside, { input: {} });
-    expect(doctor.data.output).toMatchObject({ workDirExcluded: null, problems: [] });
+    expect(doctor.data.output).toMatchObject({ workDirExcluded: null, problems: unusable("reviewer") });
   }, 180_000);
 
   test("settings switch helpers on and off, whether the helpers come from the line or from files", async () => {
@@ -705,7 +716,7 @@ describe.skipIf(!v2Available)(`a project's plugins line in opencode ${V2_VERSION
         helpersOff: ["builder", "researcher", "data-scientist"],
         helpersMissing: [],
         helpersStray: [],
-        problems: [],
+        problems: unusable("reviewer", "tester"),
       });
     }
   }, 180_000);

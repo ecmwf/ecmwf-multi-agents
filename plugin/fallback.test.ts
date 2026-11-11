@@ -173,6 +173,20 @@ describe("ModelChoices", () => {
     expect(choices.update({ providers: ["openai"] })).toEqual({ changed: false, problems: [] });
   });
 
+  test("when none is usable and the list is the profile's, the problem goes to doctor only; a list of the user's own is shown", () => {
+    const profiled: AgentPlan[] = [
+      { id: "reviewer", model: "copilot/gpt", fallback: [{ model: "anthropic/opus" }], fallbackFromProfile: true },
+      { id: "scout", model: "copilot/gpt", fallback: [{ model: "anthropic/opus" }] },
+    ];
+    const update = new ModelChoices("x", profiled).update({ providers: [] });
+    expect(update.problems.map((problem) => [problem.message.split(":")[1], problem.notify])).toEqual([
+      [" reviewer", false],
+      [" scout", true],
+    ]);
+    // A fallback in use is shown either way.
+    expect(new ModelChoices("x", profiled).update({ providers: ["anthropic"] }).problems.map((problem) => problem.notify)).toEqual([true, true]);
+  });
+
   test("an agent without a fallback, or with an empty one, is neither resolved nor reported", () => {
     const choices = new ModelChoices("x", plans, active);
     const update = choices.update({ providers: [] });
