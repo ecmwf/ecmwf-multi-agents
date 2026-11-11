@@ -922,24 +922,36 @@ Release 0.10.0 with Harrison Cook's per-agent fallback models (PR #7), reviewed 
 commits on his branch, then merged with a merge commit; fallbacks for the default profile's
 Copilot agents; the two follow-ups below, which Tiago takes. Tests come first in every task.
 
-- [~] Tiago: Review PR #7: the repository's rules (`make check`, `make pack-check`, budgets,
+- [x] Tiago: Review PR #7: the repository's rules (`make check`, `make pack-check`, budgets,
   headers), the 2.2.6 facts it relies on, the code (settings merge, re-registering the late
   transform, helpers switched off, `doctor`), the integration suites on 2.2.5 and 2.2.6, and an
-  independent second review. Findings to the owner before any commit
-- [~] Tiago: Fixes on the PR's branch: the 2.2.6 research into `docs/research/opencode-v2.md`,
-  the fallback notice as OK in `install.sh doctor`, `fallback` in the README, an integration
-  test with stand-in providers, and the review's findings; then merge with a merge commit
-- [~] Tiago: Default profile: the reviewer and the tester fall back to Claude Opus 5.5, high,
-  when GitHub Copilot is not set up; `doctor` and the guide say such a review is no longer
-  from another model family
-- [~] Tiago: opencode 2.2.6: a message typed during an inline `/review` waits for `lead` again
-  (the follow-up below); then the pin moves to 2.2.6
-- [~] Tiago: `lead` offers to raise a helper's step limit (the follow-up below): the plugin
-  adds the helper's limit to the step-limit notice; when the same helper reaches its limit a
-  second time in a session, `lead` asks whether to raise `agents.<id>.steps`
-- [~] Tiago: Checks: `make check`; integration suites on 2.2.6; stand-in evals; real-model runs
+  independent second review. Done: approved with no blockers; findings on a startup race, the
+  research note in a git-ignored folder, the guide's trims and the notice shown nowhere
+- [x] Tiago: Fixes on the PR's branch, then merge with a merge commit. Done: `f9c6096` (the
+  race, the notice as a toast and as OK in `install.sh doctor`, the research addendum, the
+  guide restored with the skill budget at 1850, README and architecture, five tests including
+  one with stand-in providers in real opencode); 71 of 71 integration tests on 2.2.5; merged
+  as `8a10106`
+- [x] Tiago: Default profile: the reviewer and the tester fall back to Claude Opus 5.5, high,
+  when GitHub Copilot is not set up; `install.sh doctor` warns that their checks then no
+  longer come from another model family, and the guide says so. A profile's list with nothing
+  usable shows only in `doctor`, without a toast
+- [x] Tiago: opencode 2.2.6: a message typed during an inline `/review` waits for `lead` again
+  (the follow-up below); then the pin moves to 2.2.6. Done: the plugin reads which messages
+  opencode stores as the user's (2.2.6 leaves metadata out of requests); 71 of 71 integration
+  tests on 2.2.6
+- [x] Tiago: `lead` offers settings changes the plugin words (`plugin/offers.ts`): a higher
+  step limit when the same helper reaches it a second time in a session (project or user
+  file, asked again in a later session), and keeping a fallback model for the project (asked
+  once per project, kept in `offers` in the work folder). The plugin adds a note to the end of
+  `lead`'s next request; `lead` asks with the question tool and edits only on a yes. `lead`
+  budget 1850, `lead-all` 2200. Stand-in eval `designer-limit-twice` passes on 2.2.6
+- [x] Tiago: Checks: `make check`; integration suites on 2.2.6; stand-in evals; real-model runs
   of `designer-limit`, `review-background`, `review-off`, `feature` and the new step-limit case,
-  at most $5
+  at most $5. Done: 794 unit tests; 72 of 72 integration tests on 2.2.6, stand-in evals among
+  them; on real models `designer-limit-twice`, `review-off`, `review-background` and `feature`
+  pass for $3.14 (`evals/results/settings-offers.md`); `designer-limit` not run again, to stay
+  within $5, since `designer-limit-twice` covers its path
 - [ ] Tiago: Release 0.10.0
 
 Exit: `make check` and the integration suites pass on 2.2.6; PR #7 merged; the evals above pass.
@@ -967,14 +979,14 @@ Exit: `make check` and the integration suites pass on 2.2.6; PR #7 merged; the e
   `ecmwf-multi-agents` installs 20 files with no version warning and records 0.7.1, and
   `doctor` finds no problems (`lead` is the harness's, the plugin 0.7.1 active)
 
-- [~] Tiago: opencode 2.2.6: a message the user sends while `/review` runs inline reaches the
+- [x] Tiago: opencode 2.2.6: a message the user sends while `/review` runs inline reaches the
   reviewer instead of waiting for `lead` after the review. Two tests of
   `plugin/background.integration.test.ts` fail on 2.2.6 ("a message the user sends during a
   review is held back...", "a message sent between the switch to the reviewer and its
   brief..."), with 0.9.0 as well, and pass on 2.2.5. Find what 2.2.6 changed, fix it, then
   move the pin to 2.2.6
 
-- [~] Tiago: `lead` offers to raise a helper's step limit when helpers keep reaching it: when a
+- [x] Tiago: `lead` offers to raise a helper's step limit when helpers keep reaching it: when a
   helper reaches its step limit again in the same session (its report says so: opencode's
   notice asks it to state that the limit was reached), `lead` asks the user with the
   question tool whether to raise `agents.<id>.steps` in a settings file, giving the current
