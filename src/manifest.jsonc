@@ -38,7 +38,11 @@
   //   the work folder to git's exclude file. Measured 1795 and 2142.
   // - skill 1750 -> 1850: the users' guide to fallback models, keeping what it says about a
   //   project switching helpers, the helper limit and the folders kept out of git. Measured 1835.
-  "budgets": { "lead": 1800, "helper": 750, "command": 500, "skill": 1850, "routing": 100, "lead-all": 2150 },
+  // - lead 1800 -> 1850, lead-all 2150 -> 2200: lead puts the plugin's offers of a settings
+  //   change (a higher step limit, keeping a fallback model) to the user and edits only on a
+  //   yes; the plugin detects the case and words the offer (plugin/offers.ts). Measured 1839
+  //   and 2187.
+  "budgets": { "lead": 1850, "helper": 750, "command": 500, "skill": 1850, "routing": 100, "lead-all": 2200 },
 
   // Named lists of {action, resource}. A permission entry {"use": name, "effect": e}
   // expands to one rule per item, all with effect e.

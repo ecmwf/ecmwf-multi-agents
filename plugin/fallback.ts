@@ -15,6 +15,7 @@
 // settings, headers or body: only ids.
 
 import type { AgentPlan } from "./apply.ts";
+import type { FallbackInUse } from "./offers.ts";
 import { unwrap } from "./register.ts";
 import type { FallbackEntry, Problem } from "./types.ts";
 
@@ -144,6 +145,8 @@ export async function readAvailability(source: AvailabilitySource, timeoutMs = R
 export interface ChoiceUpdate {
   changed: boolean;
   problems: Problem[];
+  /** The switched-on agents that have just moved to a fallback. */
+  inUse: FallbackInUse[];
 }
 
 /**
@@ -181,7 +184,7 @@ export class ModelChoices {
    * without a fallback is never resolved or reported: it keeps its primary, as before fallbacks.
    */
   update(availability: Availability): ChoiceUpdate {
-    const update: ChoiceUpdate = { changed: false, problems: [] };
+    const update: ChoiceUpdate = { changed: false, problems: [], inUse: [] };
     for (const plan of this.base) {
       if (plan.model === undefined || plan.fallback === undefined || plan.fallback.length === 0) continue;
       const primary: FallbackEntry = { model: plan.model, ...(plan.effort === undefined ? {} : { effort: plan.effort }) };
@@ -193,6 +196,7 @@ export class ModelChoices {
       if (signature !== before) update.changed = true;
       if (!this.active(plan.id)) continue;
       if (signature !== before && result.index > 0) {
+        update.inUse.push({ id: plan.id, model: result.choice.model, ...(result.choice.effort === undefined ? {} : { effort: result.choice.effort }), own: primary.model });
         update.problems.push({ message: `${this.name}: ${plan.id} runs on ${result.choice.model}, its fallback number ${result.index}: ${result.notes.join("; ")}`, notify: true });
       }
       const problem = result.problem === undefined ? undefined : `${this.name}: ${plan.id}: ${result.problem.message}`;

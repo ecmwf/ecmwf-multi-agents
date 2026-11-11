@@ -708,7 +708,7 @@ class ModelChoices {
     });
   }
   update(availability) {
-    const update = { changed: false, problems: [] };
+    const update = { changed: false, problems: [], inUse: [] };
     for (const plan of this.base) {
       if (plan.model === undefined || plan.fallback === undefined || plan.fallback.length === 0)
         continue;
@@ -725,6 +725,7 @@ ${primary.effort ?? ""}`;
       if (!this.active(plan.id))
         continue;
       if (signature !== before && result.index > 0) {
+        update.inUse.push({ id: plan.id, model: result.choice.model, ...result.choice.effort === undefined ? {} : { effort: result.choice.effort }, own: primary.model });
         update.problems.push({ message: `${this.name}: ${plan.id} runs on ${result.choice.model}, its fallback number ${result.index}: ${result.notes.join("; ")}`, notify: true });
       }
       const problem = result.problem === undefined ? undefined : `${this.name}: ${plan.id}: ${result.problem.message}`;
@@ -1492,6 +1493,89 @@ class Inline {
     this.restore(sessionID, owner).then(() => this.wake(sessionID, held));
     return true;
   }
+}
+
+// plugin/offers.ts
+var OFFER_PREFIX = "Note from the ecmwf-multi-agents plugin, not from the user:";
+
+class Offers {
+  deps;
+  hits = new Map;
+  session = new Map;
+  anywhere = new Map;
+  offered;
+  constructor(deps) {
+    this.deps = deps;
+  }
+  stepLimit(root, helper, request) {
+    const key = `${root}
+${helper}`;
+    const seen = this.hits.get(key) ?? new Set;
+    this.hits.set(key, seen);
+    if (seen.has(request))
+      return;
+    seen.add(request);
+    const limit = this.deps.limit(helper);
+    if (seen.size !== 2 || limit === undefined)
+      return;
+    const raised = Math.ceil(limit * 1.5);
+    const where = this.deps.files.project === undefined ? `in ${this.deps.files.user}` : `in ${this.deps.files.project} for this project, or in ${this.deps.files.user} for every project`;
+    this.add(root, `${OFFER_PREFIX} the ${helper} reached its step limit of ${limit} twice in this session. ` + `Ask the user with the question tool whether to raise it to ${raised}: set "agents": { "${helper}": { "steps": ${raised} } } ${where}, keeping the file's other settings. ` + `Pro: it can finish larger tasks. Con: each of its runs may take up to ${raised} steps, which can cost more. It takes effect when opencode restarts.`);
+  }
+  fallback(inUse) {
+    const key = `fallback ${inUse.id} ${inUse.model}`;
+    if (this.made().has(key) || this.anywhere.has(key))
+      return;
+    const project = this.deps.files.project;
+    if (project === undefined)
+      return;
+    const entry = `{ "model": "${inUse.model}"${inUse.effort === undefined ? "" : `, "effort": "${inUse.effort}"`} }`;
+    const ownProvider = inUse.own.split("/")[0];
+    this.anywhere.set(key, `${OFFER_PREFIX} the ${inUse.id} runs on ${inUse.model}, its fallback, because ${inUse.own} is not available. ` + `Ask the user with the question tool whether to keep this for this project: set "agents": { "${inUse.id}": ${entry} } in ${project}, keeping the file's other settings. ` + `Pro: the same model at every start, without the notice. Con: the ${inUse.id} stays on it after ${ownProvider} is set up. It takes effect when opencode restarts. Do not change the user's own settings file.`);
+  }
+  take(root) {
+    const notes = this.session.get(root) ?? [];
+    this.session.delete(root);
+    if (this.anywhere.size === 0)
+      return notes;
+    const made = this.made();
+    for (const [key, note] of this.anywhere) {
+      notes.push(note);
+      made.add(key);
+    }
+    const added = [...this.anywhere.keys()];
+    this.anywhere.clear();
+    try {
+      this.deps.store?.add(added);
+    } catch {}
+    return notes;
+  }
+  add(root, note) {
+    const notes = this.session.get(root) ?? [];
+    notes.push(note);
+    this.session.set(root, notes);
+  }
+  made() {
+    if (this.offered === undefined) {
+      try {
+        this.offered = new Set(this.deps.store?.read() ?? []);
+      } catch {
+        this.offered = new Set;
+      }
+    }
+    return this.offered;
+  }
+}
+function fileStore(environment, file) {
+  return {
+    read: () => (environment.readFile(file) ?? "").split(`
+`).filter((line) => line !== ""),
+    add: (made) => {
+      if (made.length > 0)
+        environment.appendFile(file, made.map((line) => `${line}
+`).join(""));
+    }
+  };
 }
 
 // plugin/report.ts
@@ -2514,6 +2598,11 @@ function v2Tools(deps) {
 
 // plugin/v2.ts
 var FALLBACK_MS = 3000;
+function userSettingsFile(environment) {
+  const xdg = environment?.env.XDG_CONFIG_HOME;
+  const config = xdg ? xdg : path6.join(environment?.home ?? "~", ".config");
+  return path6.join(config, "opencode", SETTINGS_FILE);
+}
 function moduleDir() {
   return path6.dirname(fileURLToPath(import.meta.url));
 }
@@ -2644,6 +2733,13 @@ function createSetup(harness, options = {}) {
       const subagents = helperIds(harness);
       const switchedOn = enabledHelpers(harness, settings);
       const choices = new ModelChoices(harness.name, planned.plans, (id) => !subagents.has(id) || switchedOn.has(id));
+      const projectRoot = v2ProjectRoot(ctx);
+      const offers = new Offers({
+        name: harness.name,
+        files: { ...projectRoot === undefined ? {} : { project: path6.join(projectRoot, ".opencode", SETTINGS_FILE) }, user: userSettingsFile(environment) },
+        store: environment !== undefined && projectRoot !== undefined ? fileStore(environment, path6.join(projectRoot, harness.workDir, "offers")) : null,
+        limit: (agent) => planned.plans.find((plan) => plan.id === agent)?.steps ?? harness.agents.find((item) => item.id === agent)?.steps
+      });
       let late;
       let availabilityRead = false;
       let reading = Promise.resolve();
@@ -2653,6 +2749,8 @@ function createSetup(harness, options = {}) {
           try {
             const update = choices.update(await readAvailability(ctx));
             reporter.report(update.problems);
+            for (const inUse of update.inUse)
+              offers.fallback(inUse);
             if (update.changed && late?.requested === true)
               late.register();
           } catch (error) {
@@ -2740,28 +2838,46 @@ function createSetup(harness, options = {}) {
       if (typeof ctx.session?.hook === "function") {
         const agentIds = new Set(harness.agents.map((agent) => agent.id));
         const woken = new Set;
+        const rootOf = async (sessionID) => {
+          const tracked = tracker.get(sessionID)?.parentID;
+          if (tracked !== undefined)
+            return tracked;
+          const info = unwrap(await ctx.session?.get?.({ sessionID }));
+          return typeof info?.parentID === "string" ? info.parentID : sessionID;
+        };
+        const holdReports = async (event) => {
+          const found = heldReportsV2(event.messages);
+          if (found === undefined)
+            return;
+          const sessionID = event.sessionID;
+          const key = `${sessionID}
+${found.reply}`;
+          if (!woken.has(key)) {
+            if (typeof sessionID !== "string" || typeof ctx.session?.synthetic !== "function")
+              return;
+            await ctx.session.synthetic({ sessionID, text: WAKE_TEXT, description: "Reports held until lead answered", delivery: "queue" });
+            woken.add(key);
+          }
+          for (const index of [...found.held].reverse())
+            event.messages.splice(index, 1);
+        };
         await ctx.session.hook("context", async (event) => {
           try {
-            if (typeof event?.agent === "string" && agentIds.has(event.agent) && Array.isArray(event.messages))
-              stepLimitAsUser(event.messages);
+            if (typeof event?.agent === "string" && agentIds.has(event.agent) && Array.isArray(event.messages) && stepLimitAsUser(event.messages)) {
+              if (helpers.has(event.agent) && typeof event.sessionID === "string") {
+                offers.stepLimit(await rootOf(event.sessionID), event.agent, `${event.sessionID}:${event.messages.length}`);
+              }
+            }
             if (await inline.context(event))
               return;
             if (event?.agent !== harness.defaultAgent || !Array.isArray(event.messages))
               return;
-            const found = heldReportsV2(event.messages);
-            if (found === undefined)
-              return;
-            const sessionID = event.sessionID;
-            const key = `${sessionID}
-${found.reply}`;
-            if (!woken.has(key)) {
-              if (typeof sessionID !== "string" || typeof ctx.session?.synthetic !== "function")
-                return;
-              await ctx.session.synthetic({ sessionID, text: WAKE_TEXT, description: "Reports held until lead answered", delivery: "queue" });
-              woken.add(key);
-            }
-            for (const index of [...found.held].reverse())
-              event.messages.splice(index, 1);
+            await holdReports(event);
+            const notes = typeof event.sessionID === "string" ? offers.take(event.sessionID) : [];
+            if (notes.length > 0)
+              event.messages.push({ role: "user", content: [{ type: "text", text: notes.join(`
+
+`) }] });
           } catch (error) {
             reporter.internal("the context hook", error);
           }
@@ -2894,6 +3010,8 @@ For plan-sized work, load the skill \`ecmwf-multi-agents-plan\` with the skill t
 ## Asking the user
 
 Ask the user through the question tool, never in your reply, when the answer changes what you will do: scope, approach or risk. Offer options with your recommendation first, and give each option's consequences in a few words: its pros and cons. Otherwise make a reasonable assumption and state it. Look up facts instead of asking for them.
+
+A note from the ecmwf-multi-agents plugin may offer a settings change: put it to the user with the question tool, and edit the file only if the user agrees.
 
 ## Work files
 

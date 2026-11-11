@@ -18,6 +18,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
   when opencode does not list an agent's own model as available, and shows a notice when it
   does. It needs the plugin and does not react to rate limits or outages. Contributed by
   Harrison Cook (#7).
+- `lead` offers to raise a helper's step limit when the same helper reaches it a second time
+  in a session, and to keep a fallback model for the project when an agent starts running on
+  one. It asks with the question tool and changes a settings file only if you agree.
 
 ### Fixed
 

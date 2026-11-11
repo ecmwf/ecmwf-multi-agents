@@ -153,7 +153,7 @@ describe("ModelChoices", () => {
 
   test("a usable primary changes nothing and says nothing", () => {
     const choices = new ModelChoices("x", plans, active);
-    expect(choices.update({ providers: ["anthropic", "openai"] })).toEqual({ changed: false, problems: [] });
+    expect(choices.update({ providers: ["anthropic", "openai"] })).toEqual({ changed: false, problems: [], inUse: [] });
     expect(choices.plans()).toEqual(plans);
   });
 
@@ -167,10 +167,12 @@ describe("ModelChoices", () => {
     ]);
     // Both are shown: a review on another model than the one chosen is worth a toast.
     expect(first.problems.map((problem) => problem.notify)).toEqual([true, true]);
+    // The agents now on a fallback, for the offer to keep it; not the switched-off tester.
+    expect(first.inUse).toEqual([{ id: "lead", model: "openai/gpt", effort: "high", own: "anthropic/opus" }]);
     const lead = choices.plans().find((plan) => plan.id === "lead")!;
     expect(lead).toEqual({ id: "lead", model: "openai/gpt", effort: "high", fallback: plans[0]!.fallback });
     expect(choices.plans().find((plan) => plan.id === "stuck")).toEqual(plans[4]!);
-    expect(choices.update({ providers: ["openai"] })).toEqual({ changed: false, problems: [] });
+    expect(choices.update({ providers: ["openai"] })).toEqual({ changed: false, problems: [], inUse: [] });
   });
 
   test("when none is usable and the list is the profile's, the problem goes to doctor only; a list of the user's own is shown", () => {
@@ -196,7 +198,7 @@ describe("ModelChoices", () => {
       expect(choices.plans().find((plan) => plan.id === id)).toEqual(plans.find((plan) => plan.id === id)!);
     }
     const alone = new ModelChoices("x", [plans[1]!, plans[3]!]);
-    expect(alone.update({ providers: [] })).toEqual({ changed: false, problems: [] });
+    expect(alone.update({ providers: [] })).toEqual({ changed: false, problems: [], inUse: [] });
   });
 
   test("the primary comes back when it is usable again, and a fallback without effort has none", () => {
@@ -214,14 +216,14 @@ describe("ModelChoices", () => {
     const choices = new ModelChoices("x", plans);
     choices.update({ providers: ["openai"] });
     expect(choices.plans().find((plan) => plan.id === "lead")!.model).toBe("openai/gpt");
-    expect(choices.update("unknown")).toEqual({ changed: true, problems: [] });
+    expect(choices.update("unknown")).toEqual({ changed: true, problems: [], inUse: [] });
     expect(choices.plans()).toEqual(plans);
-    expect(choices.update("unknown")).toEqual({ changed: false, problems: [] });
+    expect(choices.update("unknown")).toEqual({ changed: false, problems: [], inUse: [] });
   });
 
   test("an unknown snapshot before any read changes nothing", () => {
     const choices = new ModelChoices("x", plans);
-    expect(choices.update("unknown")).toEqual({ changed: false, problems: [] });
+    expect(choices.update("unknown")).toEqual({ changed: false, problems: [], inUse: [] });
     expect(choices.plans()).toEqual(plans);
   });
 

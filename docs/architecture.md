@@ -54,6 +54,16 @@ hook sends that notice to the harness's agents as a user message instead, recogn
 for word (`plugin/step-limit.ts`; `docs/research/opencode-v2.md`, Addendum: helpers that reach
 their step limit). This goes once opencode sends the notice as a user message itself.
 
+The plugin also offers settings changes through `lead` (`plugin/offers.ts`). When the same
+helper reaches its step limit a second time in a session, and when an agent starts running on a
+fallback model, it adds a note to the end of `lead`'s next request in the user's session. The
+note names the file, the entry to set, and its pros and cons. `lead` puts it to the user with
+the question tool and edits the file only on a yes. A step-limit note suggests half as much
+again as the current limit, in the project's file or the user's own, and comes again in a later
+session. A fallback note offers to keep that model in the project's file only, and comes once
+per project: the plugin keeps what it offered in `offers` in the work folder. The note is part
+of one request, not of the session.
+
 Every helper can be switched on or off per project (see Settings); `lead` is always on. The
 optional helpers are off until a settings file switches them on, and the others are on until
 one switches them off. A helper that is off does not exist in the session: `lead`'s

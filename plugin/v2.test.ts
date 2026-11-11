@@ -1007,3 +1007,79 @@ describe("v2 inline commands", () => {
     expect(host.commandTransforms).toHaveLength(1);
   });
 });
+
+describe("v2 settings offers", () => {
+  const user = (text: string): V2ModelMessage => ({ role: "user", content: [{ type: "text", text }] });
+  const said = (text: string): V2ModelMessage => ({ role: "assistant", content: [{ type: "text", text }] });
+  const notice = (): V2ModelMessage => ({ role: "assistant", content: [{ type: "text", text: STEP_LIMIT_NOTICE }] });
+  const last = (messages: V2ModelMessage[]) => messages.at(-1)?.content?.[0]?.text ?? "";
+
+  async function atLimit(host: FakeHost, child: string, agent = "scout") {
+    host.sessions[child] = { parentID: "root" };
+    await host.contextHooks[0]!({ sessionID: child, agent, messages: [user("brief"), said("working"), notice()] });
+  }
+
+  test("the same helper at its step limit twice in a session: lead's next request there ends with the offer, once", async () => {
+    const { host } = await start({});
+    await atLimit(host, "c1");
+    const first = { sessionID: "root", agent: "lead", messages: [user("go on")] };
+    await host.contextHooks[0]!(first);
+    expect(first.messages).toHaveLength(1);
+
+    await atLimit(host, "c2");
+    // Another session's lead hears nothing of it.
+    const other = { sessionID: "elsewhere", agent: "lead", messages: [user("hi")] };
+    await host.contextHooks[0]!(other);
+    expect(other.messages).toHaveLength(1);
+
+    const lead = { sessionID: "root", agent: "lead", messages: [user("go on"), said("ok"), user("and then?")] };
+    await host.contextHooks[0]!(lead);
+    expect(lead.messages).toHaveLength(4);
+    expect(lead.messages.at(-1)!.role).toBe("user");
+    expect(last(lead.messages)).toContain("the scout reached its step limit of 30 twice in this session");
+    expect(last(lead.messages)).toContain('"agents": { "scout": { "steps": 45 } }');
+    expect(last(lead.messages)).toContain(PROJECT);
+    expect(last(lead.messages)).toContain(GLOBAL);
+
+    const again = { sessionID: "root", agent: "lead", messages: [user("go on")] };
+    await host.contextHooks[0]!(again);
+    expect(again.messages).toHaveLength(1);
+  });
+
+  test("the limit in the note is the one the settings give", async () => {
+    const { host } = await start({ [GLOBAL]: '{ "agents": { "scout": { "steps": 9 } } }' });
+    await atLimit(host, "c1");
+    await atLimit(host, "c2");
+    const lead = { sessionID: "root", agent: "lead", messages: [user("go on")] };
+    await host.contextHooks[0]!(lead);
+    expect(last(lead.messages)).toContain("step limit of 9 twice");
+    expect(last(lead.messages)).toContain('"steps": 14');
+  });
+
+  test("an agent on a fallback: lead's next request ends with the offer to keep it for the project, asked once per project", async () => {
+    const files: Record<string, string> = { [GLOBAL]: JSON.stringify({ profile: "anthropic", agents: { scout: { model: "openai/gpt-x", fallback: ["anthropic/claude-sonnet-5-5"] } } }) };
+    const host = new FakeHost();
+    host.providers = ["anthropic"];
+    host.serve();
+    await start(files, host);
+    host.emit("plugin.updated");
+    await settle();
+    const lead = { sessionID: "root", agent: "lead", messages: [user("hello")] };
+    await host.contextHooks[0]!(lead);
+    expect(last(lead.messages)).toContain("the scout runs on anthropic/claude-sonnet-5-5, its fallback, because openai/gpt-x is not available");
+    expect(last(lead.messages)).toContain(`in ${PROJECT},`);
+    expect(last(lead.messages)).not.toContain(GLOBAL);
+    expect(files["/repo/.ecmwf-multi-agents/offers"]).toBe("fallback scout anthropic/claude-sonnet-5-5\n");
+
+    // The next opencode run in this project does not ask again.
+    const next = new FakeHost();
+    next.providers = ["anthropic"];
+    next.serve();
+    await start(files, next);
+    next.emit("plugin.updated");
+    await settle();
+    const later = { sessionID: "root", agent: "lead", messages: [user("hello")] };
+    await next.contextHooks[0]!(later);
+    expect(later.messages).toHaveLength(1);
+  });
+});

@@ -50,14 +50,15 @@ import { ModelChoices, readAvailability } from "./fallback.ts";
 import { enabledHelpers } from "./helper-list.ts";
 import { Activity, helperIds, toolCallBlock } from "./helpers.ts";
 import { Inline } from "./inline.ts";
-import { registerHarness } from "./register.ts";
+import { Offers, fileStore } from "./offers.ts";
+import { registerHarness, unwrap } from "./register.ts";
 import { v2Reporter, type Reporter } from "./report.ts";
 import { ProblemLog, registerRpc } from "./rpc.ts";
 import { RuleOrder } from "./rule-order.ts";
-import { loadSettings, mergeSettings, type LoadedSettings } from "./settings.ts";
+import { SETTINGS_FILE, loadSettings, mergeSettings, type LoadedSettings } from "./settings.ts";
 import { stepLimitAsUser } from "./step-limit.ts";
 import { eventFields, SessionTracker, v2Tools } from "./tools-v2.ts";
-import type { EmbeddedHarness, Environment, Settings, V2AgentEditor, V2Cleanup, V2CommandEditor, V2Context, V2Event, V2Registration } from "./types.ts";
+import type { EmbeddedHarness, Environment, Settings, V2AgentEditor, V2Cleanup, V2CommandEditor, V2Context, V2ContextEvent, V2Event, V2ModelMessage, V2Registration } from "./types.ts";
 
 /** Registers anyway when no `plugin.updated` arrives, in case the first one came before the subscription. */
 export const FALLBACK_MS = 3000;
@@ -68,6 +69,13 @@ export interface V2Options {
   fallbackMs?: number;
   /** The folder of the plugin's entry file; skills are registered at their files next to it. */
   pluginDir?: string;
+}
+
+/** The user's own settings file, the one for every project. */
+function userSettingsFile(environment: Environment | undefined): string {
+  const xdg = environment?.env.XDG_CONFIG_HOME;
+  const config = xdg ? xdg : path.join(environment?.home ?? "~", ".config");
+  return path.join(config, "opencode", SETTINGS_FILE);
 }
 
 /** The folder this module runs from: the plugin folder once bundled. */
@@ -207,6 +215,14 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
       const subagents = helperIds(harness);
       const switchedOn = enabledHelpers(harness, settings);
       const choices = new ModelChoices(harness.name, planned.plans, (id) => !subagents.has(id) || switchedOn.has(id));
+      // Settings changes offered through lead: a higher step limit, keeping a fallback (offers.ts).
+      const projectRoot = v2ProjectRoot(ctx);
+      const offers = new Offers({
+        name: harness.name,
+        files: { ...(projectRoot === undefined ? {} : { project: path.join(projectRoot, ".opencode", SETTINGS_FILE) }), user: userSettingsFile(environment) },
+        store: environment !== undefined && projectRoot !== undefined ? fileStore(environment, path.join(projectRoot, harness.workDir, "offers")) : null,
+        limit: (agent) => planned.plans.find((plan) => plan.id === agent)?.steps ?? harness.agents.find((item) => item.id === agent)?.steps,
+      });
       // The RPC can be asked before the late transform is registered; it registers it first.
       let late: LateTransform<V2AgentEditor> | undefined;
       // opencode's provider list is incomplete while plugins start (config providers arrive after),
@@ -220,6 +236,7 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
           try {
             const update = choices.update(await readAvailability(ctx));
             reporter.report(update.problems);
+            for (const inUse of update.inUse) offers.fallback(inUse);
             // Until the late transform is requested, its first registration uses the new choice.
             // After that, registering it again reruns it, at the end of the list as before.
             if (update.changed && late?.requested === true) void late.register();
@@ -309,25 +326,43 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
         const agentIds = new Set(harness.agents.map((agent) => agent.id));
         /** Replies whose held reports already have a wake queued, by session and request. */
         const woken = new Set<string>();
+        /** The user's session a helper's session belongs to; itself for a session without a parent. */
+        const rootOf = async (sessionID: string): Promise<string> => {
+          const tracked = tracker.get(sessionID)?.parentID;
+          if (tracked !== undefined) return tracked;
+          const info = unwrap<{ parentID?: unknown }>(await ctx.session?.get?.({ sessionID }));
+          return typeof info?.parentID === "string" ? info.parentID : sessionID;
+        };
+        /** Answer first: leave out of lead's request the reports that arrived while it replies. */
+        const holdReports = async (event: V2ContextEvent & { messages: V2ModelMessage[] }): Promise<void> => {
+          const found = heldReportsV2(event.messages);
+          if (found === undefined) return;
+          const sessionID = event.sessionID;
+          const key = `${sessionID}\n${found.reply}`;
+          if (!woken.has(key)) {
+            // Without a queued wake nothing would deliver the reports again: leave them in view.
+            if (typeof sessionID !== "string" || typeof ctx.session?.synthetic !== "function") return;
+            await ctx.session.synthetic({ sessionID, text: WAKE_TEXT, description: "Reports held until lead answered", delivery: "queue" });
+            woken.add(key);
+          }
+          for (const index of [...found.held].reverse()) event.messages.splice(index, 1);
+        };
         await ctx.session.hook("context", async (event) => {
           // A session hook that throws cannot fail cleanly (core/src/plugin/hooks.ts:23-28).
           try {
             // First, for any harness agent: at its step limit it still gets a turn to report.
-            if (typeof event?.agent === "string" && agentIds.has(event.agent) && Array.isArray(event.messages)) stepLimitAsUser(event.messages);
+            if (typeof event?.agent === "string" && agentIds.has(event.agent) && Array.isArray(event.messages) && stepLimitAsUser(event.messages)) {
+              if (helpers.has(event.agent) && typeof event.sessionID === "string") {
+                offers.stepLimit(await rootOf(event.sessionID), event.agent, `${event.sessionID}:${event.messages.length}`);
+              }
+            }
             // A helper answering a command here, else lead answering first: never both.
             if (await inline.context(event)) return;
             if (event?.agent !== harness.defaultAgent || !Array.isArray(event.messages)) return;
-            const found = heldReportsV2(event.messages);
-            if (found === undefined) return;
-            const sessionID = event.sessionID;
-            const key = `${sessionID}\n${found.reply}`;
-            if (!woken.has(key)) {
-              // Without a queued wake nothing would deliver the reports again: leave them in view.
-              if (typeof sessionID !== "string" || typeof ctx.session?.synthetic !== "function") return;
-              await ctx.session.synthetic({ sessionID, text: WAKE_TEXT, description: "Reports held until lead answered", delivery: "queue" });
-              woken.add(key);
-            }
-            for (const index of [...found.held].reverse()) event.messages.splice(index, 1);
+            await holdReports(event as V2ContextEvent & { messages: V2ModelMessage[] });
+            // Last, after what answer first left: an offer for lead to put to the user.
+            const notes = typeof event.sessionID === "string" ? offers.take(event.sessionID) : [];
+            if (notes.length > 0) event.messages.push({ role: "user", content: [{ type: "text", text: notes.join("\n\n") }] });
           } catch (error) {
             reporter.internal("the context hook", error);
           }

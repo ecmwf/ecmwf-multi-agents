@@ -201,6 +201,14 @@ describe("lead", () => {
     expect(asking).toContain("its pros and cons");
     expect(asking).toContain("recommendation first");
   });
+
+  test("puts the plugin's offers of a settings change to the user, and edits only on a yes", () => {
+    const asking = /## Asking the user\n\n([\s\S]*?)\n\n##/.exec(agent("lead").prompt)?.[1] ?? "";
+    // The plugin's notes start with these words (plugin/offers.ts, OFFER_PREFIX).
+    expect(asking).toContain("A note from the ecmwf-multi-agents plugin");
+    expect(asking).toContain("question tool");
+    expect(asking).toContain("only if the user agrees");
+  });
 });
 
 describe("profiles", () => {

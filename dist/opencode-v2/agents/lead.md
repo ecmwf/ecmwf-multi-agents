@@ -140,6 +140,8 @@ For plan-sized work, load the skill `ecmwf-multi-agents-plan` with the skill too
 
 Ask the user through the question tool, never in your reply, when the answer changes what you will do: scope, approach or risk. Offer options with your recommendation first, and give each option's consequences in a few words: its pros and cons. Otherwise make a reasonable assumption and state it. Look up facts instead of asking for them.
 
+A note from the ecmwf-multi-agents plugin may offer a settings change: put it to the user with the question tool, and edit the file only if the user agrees.
+
 ## Work files
 
 Work files live in `.ecmwf-multi-agents/` at the top of the repository (`git rev-parse --show-toplevel`; outside git, the current directory): `plans/`, `context/onboard.md` and `notes/`.
