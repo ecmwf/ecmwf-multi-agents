@@ -841,3 +841,38 @@ export function notWrittenBy(agent: string, title: string, folder: string): Chec
     },
   };
 }
+
+// Settings offers
+
+/** lead asked the user through the question tool, with every term in a question or its options. */
+export function askedUser(id: string, title: string, terms: Term[]): Check {
+  return {
+    id,
+    title,
+    variants: ["harness"],
+    run(ctx) {
+      const asked = ctx.questions.filter((record) => record.agent === "lead");
+      if (asked.length === 0) return fail("lead asked no question");
+      const texts = asked.map((record) => record.questions.map((item) => [item.question, ...item.options].join("\n")).join("\n"));
+      if (texts.some((text) => terms.every((term) => mentions(text, term)))) return ok(`${asked.length} question(s)`);
+      const text = texts.join("\n");
+      return fail(`no question mentions ${terms.filter((term) => !mentions(text, term)).map(termLabel).join(", ") || "every term at once"}`);
+    },
+  };
+}
+
+/** The project's settings file gives the agent a step limit above `before`. */
+export function settingRaised(agent: string, before: number): Check {
+  return {
+    id: `${agent}-steps-raised`,
+    title: `the project's settings raise the ${agent}'s step limit above ${before}`,
+    variants: ["harness"],
+    run(ctx) {
+      const text = ctx.readFile(".opencode/ecmwf-multi-agents.jsonc");
+      if (text === undefined) return fail("no project settings file");
+      const steps = new RegExp(`"${agent}"\\s*:\\s*\\{[^}]*"steps"\\s*:\\s*(\\d+)`).exec(text)?.[1];
+      if (steps === undefined) return fail(`no steps for ${agent}`);
+      return Number(steps) > before ? ok(`${agent} steps: ${steps}`) : fail(`${agent} steps: ${steps}, not above ${before}`);
+    },
+  };
+}

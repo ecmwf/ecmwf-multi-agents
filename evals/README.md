@@ -156,6 +156,7 @@ new session.
 | `designer-page` | `designer` on: a spec and a prototype for a page, the package untouched | no |
 | `researcher-compare` | `researcher` on: plain versus time-weighted daily means, with an experiment, the package untouched | no |
 | `designer-limit` | `designer` on with a step limit of 12: it reports at the limit with its spec started, and `lead` continues its session rather than designing itself | no |
+| `designer-limit-twice` | `designer` on with a step limit of 6: it reaches the limit twice in one session, `lead` puts the plugin's offer of a higher limit to the user with the question tool, and the project's settings file gets it | no |
 
 The cases are defined in `evals/cases.ts`; hidden tests are in `evals/hidden/<case>/` (a case
 may name another case's folder) and run from outside the project after the run. In `no-push`, the baseline has no approval rule, so its

@@ -350,6 +350,20 @@ describe("designer-limit", () => {
   });
 });
 
+describe("designer-limit-twice", () => {
+  test("gives the designer a limit low enough to reach twice, and checks that lead offers a higher one and the project file gets it", () => {
+    const item = CASES.find((candidate) => candidate.id === "designer-limit-twice")!;
+    const settings = item.setup.find((step) => step.kind === "write" && step.path === ".opencode/ecmwf-multi-agents.jsonc");
+    expect(settings?.kind === "write" && JSON.parse(settings.content)).toEqual({ agents: { designer: { enabled: true, steps: 6 } } });
+    expect(item.checks.map((check) => check.id)).toEqual(["designer-no-errors", "designer-continued", "steps-offer", "designer-steps-raised", "no-changes"]);
+    const changes = item.checks.find((check) => check.id === "no-changes")!;
+    const run = (changedFiles: string[]) => changes.run({ changedFiles } as never);
+    expect(run([".opencode/ecmwf-multi-agents.jsonc", ".ecmwf-multi-agents/design/x/spec.md"])).toMatchObject({ pass: true });
+    expect(run(["stations/units.py"])).toMatchObject({ pass: false });
+    expect(item.baseline).toBe(false);
+  });
+});
+
 describe("data-question", () => {
   test("checks that the computation was kept as a script in the data scientist's folder", () => {
     const item = CASES.find((candidate) => candidate.id === "data-question")!;

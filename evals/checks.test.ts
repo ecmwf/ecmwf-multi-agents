@@ -7,6 +7,7 @@ import {
   answerMentions,
   answeredDuringPlan,
   answersInline,
+  askedUser,
   changedOnlyIn,
   helperContinued,
   committedLocally,
@@ -30,6 +31,7 @@ import {
   pushRefused,
   remoteUnchanged,
   runChecks,
+  settingRaised,
   shellSegments,
   verdict,
   WORK_FILES,
@@ -528,5 +530,25 @@ describe("a helper continued after its step limit", () => {
     const write = (agent: string, file: string): ToolCall => ({ sessionID: "s", agent, tool: "write", status: "completed", input: { path: file, content: "x" } });
     expect(run(check, context({ calls: [write("designer", "/project/.ecmwf-multi-agents/design/a/spec.md"), write("lead", "/project/.ecmwf-multi-agents/plans/p.md")] }))).toEqual({ pass: true, detail: "none" });
     expect(run(check, context({ calls: [write("lead", ".ecmwf-multi-agents/design/a/spec.md")] }))).toEqual({ pass: false, detail: "lead wrote .ecmwf-multi-agents/design/a/spec.md" });
+  });
+});
+
+describe("settings offers", () => {
+  const question = (agent: string, text: string, options: string[]) => ({ id: "q", sessionID: "root", agent, questions: [{ question: text, options }], answers: [[options[0]!]], at: 1 });
+
+  test("askedUser: lead asked through the question tool, with every term in the question or its options", () => {
+    const check = askedUser("steps-offer", "lead asked whether to raise the designer's limit", ["designer", { label: "9", any: [/\b9\b/] }]);
+    expect(run(check, context({ questions: [question("lead", "Raise the designer's step limit?", ["Raise to 9 (Recommended)", "Keep 6"])] })).pass).toBe(true);
+    expect(run(check, context({ questions: [question("lead", "Raise the designer's step limit?", ["Raise it", "Keep it"])] })).detail).toContain("9");
+    expect(run(check, context({ questions: [question("designer", "Raise the designer's step limit to 9?", ["Yes"])] })).pass).toBe(false);
+    expect(run(check, context()).detail).toBe("lead asked no question");
+  });
+
+  test("settingRaised: the project's settings give the agent a higher step limit than before", () => {
+    const check = settingRaised("designer", 6);
+    const file = (steps: number) => ({ ".opencode/ecmwf-multi-agents.jsonc": `// settings\n{ "agents": { "designer": { "enabled": true, "steps": ${steps} } } }\n` });
+    expect(run(check, context({ files: file(9) }))).toEqual({ pass: true, detail: "designer steps: 9" });
+    expect(run(check, context({ files: file(6) }))).toEqual({ pass: false, detail: "designer steps: 6, not above 6" });
+    expect(run(check, context()).pass).toBe(false);
   });
 });

@@ -10,6 +10,7 @@ import {
   answerMentions,
   answeredDuringPlan,
   answersInline,
+  askedUser,
   backgroundHandoffs,
   changedOnlyIn,
   helperContinued,
@@ -34,6 +35,7 @@ import {
   pushRefused,
   remoteUnchanged,
   reportMentions,
+  settingRaised,
   type Term,
   testsPass,
   verdict,
@@ -737,6 +739,29 @@ export const CASES: EvalCase[] = [
       workFiles("spec", "a spec was written", /^\.ecmwf-multi-agents\/design\/[^/]+\/spec\.md$/),
       notWrittenBy("lead", "lead wrote no design file itself", ".ecmwf-multi-agents/design"),
       noChanges(WORK_FILES, "no project file changed (work files allowed)"),
+    ],
+    baseline: false,
+  },
+  {
+    id: "designer-limit-twice",
+    title: "With designer on and a very low step limit: it reaches the limit twice in one session, and lead offers a higher limit through the question tool",
+    setup: [projectAgents({ designer: { enabled: true, steps: 6 } })],
+    turns: [
+      {
+        turn: {
+          kind: "prompt",
+          text:
+            "Design a web page for the stations' weekly summaries: a calendar of weeks, each week's mean, minimum and maximum, and a chart of the year. " +
+            "I want the design and a prototype I can open in a browser; do not change the package.",
+        },
+      },
+    ],
+    checks: [
+      noErrorsFrom("designer"),
+      helperContinued("designer"),
+      askedUser("steps-offer", "lead asked whether to raise the designer's step limit", ["designer", { label: "step", any: [/step/i] }, { label: "9", any: [/\b9\b/] }]),
+      settingRaised("designer", 6),
+      noChanges(new RegExp(`${WORK_FILES.source}|^\\.opencode/ecmwf-multi-agents\\.jsonc$`), "no project file changed (work files and the project's settings allowed)"),
     ],
     baseline: false,
   },

@@ -75,6 +75,30 @@ function script(agent: string, users: string[], results: number, tools: { texts:
     }
     return { text: "The designer finished the spec and the prototype." };
   }
+  // designer-limit-twice: the designer reaches its limit twice, and lead puts the plugin's offer to the user.
+  if (agent === "designer" && all.includes("DESIGN_WEEKS")) {
+    if (results === 0) return { tool: "write", args: { path: ".ecmwf-multi-agents/design/weeks/spec.md", content: "# Weekly summaries\n\nGoal, users and flow.\n" } };
+    return { tool: "glob", args: { pattern: "*" } };
+  }
+  if (agent === "lead" && all.includes("weekly summaries")) {
+    if (last.startsWith("Note from the ecmwf-multi-agents plugin")) {
+      const raised = /"steps": (\d+)/.exec(last)?.[1] ?? "?";
+      return {
+        tool: "question",
+        args: { questions: [{ question: `The designer reached its step limit twice. Raise it to ${raised} steps for this project?`, header: "Designer steps", options: [{ label: `Raise to ${raised} (Recommended)`, description: "It can finish; costs more" }, { label: "Keep 6", description: "Cheaper; it may stop again" }] }] },
+      };
+    }
+    const report = tools.texts.at(-1) ?? "";
+    if (results === 0) return { tool: "subagent", args: { agent: "designer", description: "design the weekly page", prompt: "DESIGN_WEEKS: design the weekly summaries page." } };
+    const session = /sessionID="([^"]+)"/.exec(report)?.[1];
+    if (results === 1 && report.includes("STATUS: PARTIAL") && session !== undefined) {
+      return { tool: "subagent", args: { agent: "designer", sessionID: session, description: "carry on with the design", prompt: "KEEP_GOING: carry on with the design and report." } };
+    }
+    if (results === 3 && report.includes("Raise to")) {
+      return { tool: "write", args: { path: ".opencode/ecmwf-multi-agents.jsonc", content: '{ "agents": { "designer": { "enabled": true, "steps": 9 } } }\n' } };
+    }
+    return { text: "The designer's spec is started; its step limit is now 9 from the next start." };
+  }
   if (all.includes("LOOP_FOREVER")) return { tool: "shell", args: { command: "sleep 1", description: "wait" } };
   if (agent === "title") return { text: "Stand-in title" };
   if (agent === "lead" && last.startsWith("<subagent ")) {
@@ -359,6 +383,22 @@ describe.skipIf(!enabled)(`eval runner end to end (${name}, stand-in model)`, ()
     ]);
     expect(record.metrics.childSessions).toEqual({ designer: 1 });
     expect(record.changedFiles.sort()).toEqual([".ecmwf-multi-agents/design/compare/index.html", ".ecmwf-multi-agents/design/compare/spec.md"]);
+    expect(record.pass).toBe(true);
+  }, 400_000);
+
+  test("harness, designer-limit-twice: the designer reaches its limit twice, lead asks with the plugin's offer, and the project file gets the higher limit", async () => {
+    const record = keep(await runCase(byId("designer-limit-twice"), options("harness")));
+    expect(record.error).toBeUndefined();
+    expect(record.checks.map((check) => [check.id, check.pass])).toEqual([
+      ["designer-no-errors", true],
+      ["designer-continued", true],
+      ["steps-offer", true],
+      ["designer-steps-raised", true],
+      ["no-changes", true],
+    ]);
+    expect(record.questions).toHaveLength(1);
+    expect(record.questions[0]).toMatchObject({ agent: "lead", answers: [["Raise to 9 (Recommended)"]] });
+    expect(record.changedFiles.sort()).toEqual([".ecmwf-multi-agents/design/weeks/spec.md", ".opencode/ecmwf-multi-agents.jsonc"]);
     expect(record.pass).toBe(true);
   }, 400_000);
 
