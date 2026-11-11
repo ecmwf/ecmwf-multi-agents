@@ -43,9 +43,10 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { heldReportsV2, WAKE_TEXT } from "./answer-first.ts";
-import { applyToV2Agents, modelRef, planAgents, type AgentPlan } from "./apply.ts";
+import { applyToV2Agents, modelRef, planAgents } from "./apply.ts";
 import { processEnvironment } from "./environment.ts";
 import { excludeWorkDir } from "./git-exclude.ts";
+import { ModelChoices, readAvailability } from "./fallback.ts";
 import { enabledHelpers } from "./helper-list.ts";
 import { Activity, helperIds, toolCallBlock } from "./helpers.ts";
 import { Inline } from "./inline.ts";
@@ -93,6 +94,8 @@ class LateTransform<E> {
   private current: V2Registration | undefined;
   private queue: Promise<void> = Promise.resolve();
   private stopped = false;
+  /** True from the first call to `register`, before the registration has finished. */
+  requested = false;
 
   constructor(
     private readonly transform: (callback: (editor: E) => void) => Promise<V2Registration>,
@@ -107,6 +110,7 @@ class LateTransform<E> {
   }
 
   register(): Promise<void> {
+    this.requested = true;
     this.queue = this.queue.then(async () => {
       if (this.stopped) return;
       try {
@@ -196,8 +200,35 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
       const settings: Settings = loaded.settings;
 
       const ruleOrder = new RuleOrder(harness, environment?.home ?? "");
+      const planned = planAgents(harness, settings);
+      // Each agent's model: its own until opencode's provider list is read, then the first usable
+      // one of [model, ...fallback]. The agent transform, the helper commands and the doctor
+      // check all read it from here, so they agree.
+      const subagents = helperIds(harness);
+      const switchedOn = enabledHelpers(harness, settings);
+      const choices = new ModelChoices(harness.name, planned.plans, (id) => !subagents.has(id) || switchedOn.has(id));
       // The RPC can be asked before the late transform is registered; it registers it first.
       let late: LateTransform<V2AgentEditor> | undefined;
+      // opencode's provider list is incomplete while plugins start (config providers arrive after),
+      // and final at the first `provider.updated`; read it at that event or at activation, never
+      // earlier, and again on every later `provider.updated` and `model.updated`.
+      let availabilityRead = false;
+      let reading: Promise<void> = Promise.resolve();
+      const readProviders = (): Promise<void> => {
+        availabilityRead = true;
+        reading = reading.then(async () => {
+          try {
+            const update = choices.update(await readAvailability(ctx));
+            reporter.report(update.problems);
+            // Until the late transform is requested, its first registration uses the new choice.
+            // After that, registering it again reruns it, at the end of the list as before.
+            if (update.changed && late?.requested === true) void late.register();
+          } catch (error) {
+            reporter.internal("reading the providers", error);
+          }
+        });
+        return reading;
+      };
       await registerHarness(ctx, harness, {
         home: environment?.home ?? "",
         ruleOrder,
@@ -220,8 +251,11 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
             ready: async () => {
               if (late === undefined) return;
               ruleOrder.start();
+              if (!availabilityRead) void readProviders();
+              await reading;
               await late.ensure();
             },
+            plans: () => choices.plans(),
           });
         } catch (error) {
           reporter.internal("registering the RPC", error);
@@ -229,8 +263,6 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
       }
 
       reporter.report(loaded.problems);
-      const planned = planAgents(harness, settings);
-      const plans: AgentPlan[] = planned.plans;
       reporter.report(planned.problems);
 
       const helpers = helperIds(harness);
@@ -269,7 +301,7 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
         enabled: enabledHelpers(harness, settings),
         reporter,
         plannedModel: (agent) => {
-          const plan = plans.find((item) => item.id === agent);
+          const plan = choices.plans().find((item) => item.id === agent);
           return plan?.model === undefined ? undefined : modelRef(plan.model, plan.effort);
         },
       });
@@ -312,7 +344,7 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
             reporter.internal("ordering the agents' rules", error);
           }
           try {
-            reporter.report(applyToV2Agents(editor, harness, settings, plans));
+            reporter.report(applyToV2Agents(editor, harness, settings, choices.plans()));
           } catch (error) {
             reporter.internal("the agent transform", error);
           }
@@ -339,13 +371,21 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
       const agentTransform = late;
       const onActivation = () => {
         ruleOrder.start();
-        void agentTransform.register();
-        void lateCommands?.register();
+        void (async () => {
+          // The first read, or the one a `provider.updated` started, comes before the
+          // registration, so the agents never show a model that is not usable.
+          if (!availabilityRead) void readProviders();
+          await reading;
+          void agentTransform.register();
+          void lateCommands?.register();
+        })();
       };
       const keepOut = keepWorkDirOutOfGit(ctx, harness, environment, reporter);
       const onEvent = (event: V2Event) => {
         tracker.observe(event);
         keepOut(event);
+        // Without a payload and sometimes twice: reading again is harmless, a repeat changes nothing.
+        if (event?.type === "provider.updated" || event?.type === "model.updated") void readProviders();
       };
       const stopWatching = watchEvents(ctx, onActivation, onEvent, reporter, options.fallbackMs ?? FALLBACK_MS);
       return async () => {

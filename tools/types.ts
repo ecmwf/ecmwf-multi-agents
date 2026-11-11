@@ -5,7 +5,7 @@
 // core turns src/manifest.jsonc into a ResolvedHarness; the emitter turns a ResolvedHarness into
 // files for opencode 2. Emitters are pure functions.
 
-import type { ReviewPolicy } from "../plugin/types.ts";
+import type { FallbackEntry, ReviewPolicy } from "../plugin/types.ts";
 
 export type Effect = "allow" | "ask" | "deny";
 
@@ -116,6 +116,8 @@ export interface ProfileAgent {
   model?: string;
   /** Reasoning effort, written to opencode as the model variant. Only set with a model. */
   effort?: string;
+  /** Models to try, in order, when the model is not usable. Only set with a model. */
+  fallback?: FallbackEntry[];
 }
 
 export interface Profile {

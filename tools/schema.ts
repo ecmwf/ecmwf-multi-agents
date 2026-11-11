@@ -70,6 +70,52 @@ function enabledSchema(agent: ResolvedAgent, harness: ResolvedHarness): JsonSche
   };
 }
 
+/**
+ * The ordered list of fallback models; each entry is `provider/model` or { model, effort }. Keep
+ * it in step with validateFallback (plugin/settings.ts).
+ */
+function fallbackSchema(agent: ResolvedAgent): JsonSchema {
+  const model: JsonSchema = {
+    title: "Model",
+    description: 'Written as provider/model. No "#" and no spaces.',
+    type: "string",
+    pattern: MODEL_PATTERN.source,
+  };
+  return {
+    title: "Fallback models",
+    description:
+      `Models ${agent.id} tries, in order, when its own model is not usable. Each entry is provider/model, ` +
+      'or an object with "model" and an optional "effort". Needs a model in this same entry. ' +
+      "Setting a model without a fallback list drops the profile's list; an empty list means no fallbacks. " +
+      "A list here replaces any list from the profile or from an earlier settings file.",
+    type: "array",
+    items: {
+      title: "Fallback model",
+      description: "A model, or a model with its reasoning effort.",
+      oneOf: [
+        model,
+        {
+          title: "Model with effort",
+          description: "A fallback model and the reasoning effort to use on it.",
+          type: "object",
+          additionalProperties: false,
+          required: ["model"],
+          properties: {
+            model,
+            effort: {
+              title: "Reasoning effort",
+              description: 'Reasoning effort for this model, such as "high". No "#" and no spaces. Leave it out for the model\'s own default.',
+              type: "string",
+              minLength: 1,
+              pattern: EFFORT_PATTERN.source,
+            },
+          },
+        },
+      ],
+    },
+  };
+}
+
 function agentSchema(agent: ResolvedAgent, harness: ResolvedHarness): JsonSchema {
   const profile = harness.profiles.find((candidate) => candidate.id === harness.defaultProfile);
   const example = profile === undefined ? undefined : own(profile.agents, agent.id)?.model;
@@ -79,6 +125,8 @@ function agentSchema(agent: ResolvedAgent, harness: ResolvedHarness): JsonSchema
     description: `${agent.description} Settings here override the profile for ${agent.id}.`,
     type: "object",
     additionalProperties: false,
+    // The plugin refuses fallback models without a model in the same entry.
+    dependentRequired: { fallback: ["model"] },
     properties: {
       ...(agent.id === harness.defaultAgent ? {} : { enabled: enabledSchema(agent, harness) }),
       model: {
@@ -97,6 +145,7 @@ function agentSchema(agent: ResolvedAgent, harness: ResolvedHarness): JsonSchema
         minLength: 1,
         pattern: EFFORT_PATTERN.source,
       },
+      fallback: fallbackSchema(agent),
       steps: {
         title: "Step limit",
         description: `Most model turns ${agent.id} may take before it stops and reports. A whole number of at least 1. Default: ${steps}.`,

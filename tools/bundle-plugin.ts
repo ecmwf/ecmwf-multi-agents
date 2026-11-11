@@ -152,9 +152,11 @@ export function embedHarness(harness: ResolvedHarness): EmbeddedHarness {
       const entry = profile.agents[id];
       if (entry === undefined) continue;
       if (entry.effort !== undefined && entry.model === undefined) fail(`profile ${profile.id}: ${id} has an effort but no model`);
+      if (entry.fallback !== undefined && entry.model === undefined) fail(`profile ${profile.id}: ${id} has a fallback but no model`);
       agents[id] = {
         ...(entry.model !== undefined ? { model: entry.model } : {}),
         ...(entry.effort !== undefined ? { effort: entry.effort } : {}),
+        ...(entry.fallback !== undefined ? { fallback: entry.fallback.map((item) => ({ ...item })) } : {}),
       };
     }
     return { id: profile.id, description: profile.description, agents };

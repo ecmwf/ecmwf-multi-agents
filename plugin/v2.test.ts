@@ -36,12 +36,38 @@ class FakeHost {
   /** Command transforms in registration order, as opencode keeps them (core/src/command.ts). */
   commandTransforms: Array<(editor: V2CommandEditor) => void> = [];
   switches: string[] = [];
+  /** How many times an agent transform was registered. */
+  registrations = 0;
+  /** What opencode lists as available, when `serve` is called: provider ids, and optionally models. */
+  providers: string[] = [];
+  models: Array<{ id: string; providerID: string }> | undefined;
+  providerCalls = 0;
+  modelCalls = 0;
+
+  /** Give the plugin context `provider.list`, and `model.list` when `models` is set: only entries, as 2.2.6 lists them. */
+  serve(): void {
+    this.ctx.provider = {
+      list: async () => {
+        this.providerCalls++;
+        return { location: {}, data: this.providers.map((id) => ({ id, activation: "auto" })) };
+      },
+    };
+    if (this.models !== undefined) {
+      this.ctx.model = {
+        list: async () => {
+          this.modelCalls++;
+          return { location: {}, data: this.models!.map((model) => ({ ...model, enabled: true })) };
+        },
+      };
+    }
+  }
 
   readonly ctx: V2Context = {
     location: { directory: "/repo/sub", project: { directory: "/repo" } },
     agent: {
       transform: async (callback) => {
         const entry = (editor: V2AgentEditor) => callback(editor);
+        this.registrations++;
         this.transforms.push(entry);
         this.build();
         return {
@@ -412,6 +438,297 @@ describe("v2 setup", () => {
     host.emit("plugin.updated");
     await settle();
     expect(host.transforms).toHaveLength(2);
+  });
+});
+
+describe("v2 fallback models", () => {
+  const SCOUT = { model: "openai/gpt-x", effort: "high", fallback: ["anthropic/claude-sonnet-5-5", { model: "github-copilot/sonnet", effort: "low" }] };
+  const settingsFile = (agents: Record<string, unknown> = { scout: SCOUT }) => ({ [GLOBAL]: JSON.stringify({ profile: "anthropic", agents }) });
+  const PRIMARY = { id: "gpt-x", providerID: "openai", variant: "high" };
+  const FALLBACK = { id: "claude-sonnet-5-5", providerID: "anthropic" };
+  const FALLBACK_NOTE = "ecmwf-multi-agents: scout runs on anthropic/claude-sonnet-5-5, its fallback number 1: openai/gpt-x skipped: provider openai is not available";
+
+  async function run(providers: string[] | undefined, files = settingsFile(), models?: FakeHost["models"]) {
+    const host = new FakeHost();
+    if (providers !== undefined) {
+      host.providers = providers;
+      host.models = models;
+      host.serve();
+    }
+    const { write } = await start(files, host);
+    host.loader();
+    return { host, write };
+  }
+  const scout = (host: FakeHost) => host.build().agents.get("scout")!.model;
+
+  test("the primary is listed: it stays, and nothing is said", async () => {
+    const { host, write } = await run(["openai", "anthropic"]);
+    host.emit("plugin.updated");
+    await settle();
+    expect(scout(host)).toEqual(PRIMARY);
+    expect(write).toEqual([]);
+  });
+
+  test("the primary's provider is not listed: the first fallback runs, with its own effort, and is announced once", async () => {
+    const { host, write } = await run(["anthropic"]);
+    host.emit("plugin.updated");
+    await settle();
+    expect(scout(host)).toEqual(FALLBACK);
+    expect(write).toEqual([FALLBACK_NOTE]);
+    host.build();
+    host.build();
+    expect(write).toEqual([FALLBACK_NOTE]);
+
+    // A fallback with an effort carries it.
+    const second = await run(["github-copilot"], settingsFile({ scout: { ...SCOUT, fallback: [{ model: "github-copilot/sonnet", effort: "low" }] } }));
+    second.host.emit("plugin.updated");
+    await settle();
+    expect(scout(second.host)).toEqual({ id: "sonnet", providerID: "github-copilot", variant: "low" });
+  });
+
+  test("none usable: the primary stays and one problem is reported, however often providers change", async () => {
+    const { host, write } = await run(["elsewhere"]);
+    host.emit("plugin.updated");
+    await settle();
+    expect(scout(host)).toEqual(PRIMARY);
+    const mine = () => write.filter((line) => line.includes(": scout: "));
+    expect(mine()).toEqual([
+      "ecmwf-multi-agents: scout: none of its model and 2 fallbacks is usable, so openai/gpt-x stays: openai/gpt-x skipped: provider openai is not available; " +
+        "anthropic/claude-sonnet-5-5 skipped: provider anthropic is not available; github-copilot/sonnet skipped: provider github-copilot is not available",
+    ]);
+    host.emit("provider.updated");
+    host.emit("provider.updated");
+    await settle();
+    expect(mine()).toHaveLength(1);
+  });
+
+  test("without provider.list, or with one that fails, the primary applies and nothing is said", async () => {
+    const absent = await run(undefined);
+    absent.host.emit("plugin.updated");
+    await settle();
+    expect(scout(absent.host)).toEqual(PRIMARY);
+    expect(absent.write).toEqual([]);
+
+    const failing = await run(undefined);
+    failing.host.ctx.provider = { list: async () => Promise.reject(new Error("unavailable")) };
+    failing.host.emit("provider.updated");
+    failing.host.emit("plugin.updated");
+    await settle();
+    expect(scout(failing.host)).toEqual(PRIMARY);
+    expect(failing.write).toEqual([]);
+  });
+
+  test("no fallback configured: an unavailable primary is kept, and nothing is said or re-registered", async () => {
+    for (const agents of [{ scout: { model: "openai/gpt-x", effort: "high" } }, { scout: { model: "openai/gpt-x", effort: "high", fallback: [] } }]) {
+      const { host, write } = await run(["elsewhere"], settingsFile(agents));
+      host.emit("plugin.updated");
+      await settle();
+      const registrations = host.registrations;
+      host.emit("provider.updated");
+      host.emit("model.updated");
+      await settle();
+      expect(scout(host)).toEqual(PRIMARY);
+      expect(host.registrations).toBe(registrations);
+      expect(write).toEqual([]);
+    }
+  });
+
+  test("a later failing provider.list restores the primary once", async () => {
+    const { host, write } = await run(["anthropic"]);
+    host.emit("plugin.updated");
+    await settle();
+    expect(scout(host)).toEqual(FALLBACK);
+    const registrations = host.registrations;
+
+    host.ctx.provider = { list: async () => Promise.reject(new Error("unavailable")) };
+    host.emit("provider.updated");
+    host.emit("provider.updated");
+    await settle();
+    expect(scout(host)).toEqual(PRIMARY);
+    expect(host.registrations).toBe(registrations + 1);
+    expect(write).toEqual([FALLBACK_NOTE]);
+  });
+
+  test("availability is read at the first event, once: not at setup, and not again on plugin.updated", async () => {
+    const { host, write } = await run(["anthropic"]);
+    await settle();
+    expect(host.providerCalls).toBe(0);
+    host.emit("provider.updated");
+    await settle();
+    expect(host.providerCalls).toBe(1);
+    host.emit("plugin.updated");
+    await settle();
+    expect(host.providerCalls).toBe(1);
+    // The registration after the provider event already used the fallback.
+    expect(scout(host)).toEqual(FALLBACK);
+    expect(host.registrations).toBe(2);
+    expect(write).toEqual([FALLBACK_NOTE]);
+  });
+
+  test("the first read at plugin.updated comes before the registration, so the agents never show an unusable model", async () => {
+    const { host } = await run(["anthropic"]);
+    host.emit("plugin.updated");
+    await settle();
+    expect(host.providerCalls).toBe(1);
+    expect(host.registrations).toBe(2);
+    expect(scout(host)).toEqual(FALLBACK);
+  });
+
+  test("a provider.updated that changes the choice re-applies it; a repeat does not", async () => {
+    const { host, write } = await run(["anthropic"]);
+    host.emit("plugin.updated");
+    await settle();
+    expect(scout(host)).toEqual(FALLBACK);
+    const registrations = host.registrations;
+
+    host.emit("provider.updated");
+    host.emit("provider.updated");
+    await settle();
+    expect(host.registrations).toBe(registrations);
+    expect(write).toEqual([FALLBACK_NOTE]);
+
+    host.providers = ["openai", "anthropic"];
+    host.emit("provider.updated");
+    host.emit("provider.updated");
+    await settle();
+    expect(host.registrations).toBe(registrations + 1);
+    expect(scout(host)).toEqual(PRIMARY);
+    expect(write).toEqual([FALLBACK_NOTE]);
+
+    host.providers = ["anthropic"];
+    host.emit("provider.updated");
+    await settle();
+    expect(host.registrations).toBe(registrations + 2);
+    expect(scout(host)).toEqual(FALLBACK);
+  });
+
+  test("a model list decides on models: a missing model falls back, and model.updated recomputes", async () => {
+    const all = [{ id: "claude-sonnet-5-5", providerID: "anthropic" }];
+    const { host } = await run(["openai", "anthropic"], settingsFile(), all);
+    host.emit("plugin.updated");
+    await settle();
+    expect(scout(host)).toEqual(FALLBACK);
+    expect(host.modelCalls).toBe(1);
+
+    host.models!.push({ id: "gpt-x", providerID: "openai" });
+    host.emit("model.updated");
+    await settle();
+    expect(scout(host)).toEqual(PRIMARY);
+  });
+
+  test("activation while an event's read is still going waits for it, so the agents never show an unusable model", async () => {
+    const { host } = await run(["anthropic"]);
+    const list = host.ctx.provider!.list!;
+    let release = () => {};
+    host.ctx.provider = { list: () => new Promise<void>((resolve) => (release = resolve)).then(() => list()) };
+    const before = host.registrations;
+    host.emit("provider.updated");
+    await settle();
+    host.emit("plugin.updated");
+    await settle();
+    expect(host.registrations).toBe(before);
+    release();
+    await settle();
+    expect(scout(host)).toEqual(FALLBACK);
+    expect(host.registrations).toBe(before + 1);
+  });
+
+  test("registering again runs the old and the new transform in one rebuild, and lead's rules are not doubled", async () => {
+    const { host } = await run(["anthropic"]);
+    host.emit("plugin.updated");
+    await settle();
+    const settled = host.build().agents.get("lead")!.system;
+    const transform = host.ctx.agent.transform;
+    const during: unknown[] = [];
+    host.ctx.agent.transform = async (callback) => {
+      const registration = await transform(callback);
+      during.push(host.build().agents.get("lead")!.system);
+      return registration;
+    };
+    host.providers = ["openai", "anthropic"];
+    host.emit("provider.updated");
+    await settle();
+    expect(during).toEqual([settled]);
+    expect(host.build().agents.get("lead")!.system).toBe(settled);
+  });
+
+  test("a helper command run inline uses the chosen fallback when opencode does not name the agent's model", async () => {
+    const { host } = await run(["anthropic"]);
+    const switched: unknown[] = [];
+    host.ctx.session!.switchModel = async ({ model }) => void switched.push(model);
+    host.sessions.root = { agent: "lead" };
+    host.emit("plugin.updated");
+    await settle();
+    await host.commands().get("progress")!.execute({ sessionID: "root", prompt: { text: "export" } });
+    await settle();
+    expect(switched[0]).toEqual(FALLBACK);
+  });
+
+  test("a failing model list leaves the choice to the providers", async () => {
+    const { host } = await run(["openai", "anthropic"]);
+    host.ctx.model = { list: async () => Promise.reject(new Error("unavailable")) };
+    host.emit("plugin.updated");
+    await settle();
+    expect(scout(host)).toEqual(PRIMARY);
+  });
+
+  describe("the doctor check", () => {
+    const LEAD = { lead: { model: "openai/gpt-x", fallback: ["anthropic/claude-opus-5-5"] } };
+
+    async function doctorRun(providers: string[]) {
+      const host = new FakeHost();
+      host.providers = providers;
+      host.serve();
+      let handlers: Record<string, (input: unknown) => Promise<unknown>> = {};
+      host.ctx.rpc = {
+        register: async (_definition, given) => {
+          handlers = given;
+          return { dispose: async () => {}, events: { emit: async () => {} } };
+        },
+      };
+      host.ctx.agent.list = async () => [...host.build().agents.values()];
+      await start(settingsFile(LEAD), host);
+      const doctor = async () => (await handlers.doctor!({})) as { leadChanged: string[]; leadModel: string | null; leadDefinition: string };
+      return { host, doctor };
+    }
+
+    test("a lead on its fallback is not reported as changed, and the model shown is the fallback", async () => {
+      const { host, doctor } = await doctorRun(["anthropic"]);
+      // Asked before any event: the doctor makes the first read itself.
+      expect(await doctor()).toMatchObject({ leadChanged: [], leadDefinition: "harness", leadModel: "anthropic/claude-opus-5-5" });
+      host.emit("plugin.updated");
+      await settle();
+      expect(await doctor()).toMatchObject({ leadChanged: [], leadModel: "anthropic/claude-opus-5-5" });
+    });
+
+    test("also after a provider change, in both directions", async () => {
+      const { host, doctor } = await doctorRun(["anthropic"]);
+      host.emit("plugin.updated");
+      await settle();
+      expect(await doctor()).toMatchObject({ leadChanged: [], leadModel: "anthropic/claude-opus-5-5" });
+
+      host.providers = ["openai"];
+      host.emit("provider.updated");
+      await settle();
+      expect(await doctor()).toMatchObject({ leadChanged: [], leadModel: "openai/gpt-x" });
+
+      host.providers = ["anthropic"];
+      host.emit("provider.updated");
+      await settle();
+      expect(await doctor()).toMatchObject({ leadChanged: [], leadModel: "anthropic/claude-opus-5-5" });
+    });
+
+    test("after a failing provider.list the lead is back on its primary, and the doctor agrees", async () => {
+      const { host, doctor } = await doctorRun(["anthropic"]);
+      host.emit("plugin.updated");
+      await settle();
+      expect(await doctor()).toMatchObject({ leadChanged: [], leadModel: "anthropic/claude-opus-5-5" });
+
+      host.ctx.provider = { list: async () => Promise.reject(new Error("unavailable")) };
+      host.emit("provider.updated");
+      await settle();
+      expect(await doctor()).toMatchObject({ leadChanged: [], leadModel: "openai/gpt-x" });
+    });
   });
 });
 

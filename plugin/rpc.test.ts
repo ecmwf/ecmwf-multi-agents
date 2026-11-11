@@ -176,6 +176,26 @@ describe("doctor", () => {
     expect(lead.system).toContain(`- tester: ${TESTER_ROUTING}`);
   });
 
+  test("the model the plugin chose, a fallback, is the expected one: no change, and another model is a change", async () => {
+    const files = { [`${GLOBAL}/ecmwf-multi-agents.jsonc`]: '{ "agents": { "lead": { "model": "openai/gpt-x", "fallback": ["anthropic/claude-opus-5-5"] } } }' };
+    const { settings } = loadSettings(harness, fakeEnvironment(files), "/repo");
+    const lead = loadedLead(files);
+    expect(lead.model).toEqual({ providerID: "openai", id: "gpt-x" });
+    // The lead as opencode shows it once the plugin chose the fallback.
+    const onFallback = structuredClone(lead);
+    onFallback.model = { providerID: "anthropic", id: "claude-opus-5-5" };
+    const chosen = planAgents(harness, settings).plans.map((plan) => (plan.id === "lead" ? { id: "lead", model: "anthropic/claude-opus-5-5" } : plan));
+
+    // Without the choice the settings' own model is expected.
+    const doctor = input(files, [onFallback]);
+    expect((await doctorReport(doctor)).leadChanged).toEqual(["model"]);
+    doctor.plans = () => chosen;
+    expect((await doctorReport(doctor)).leadChanged).toEqual([]);
+    // A model that is neither the primary nor the chosen one is still a change.
+    doctor.ctx.agent.list = async () => [{ ...onFallback, model: { providerID: "p", id: "m" } }];
+    expect((await doctorReport(doctor)).leadChanged).toEqual(["model"]);
+  });
+
   test("lead missing", async () => {
     expect(await doctorReport(input({}, [{ id: "build" }]))).toMatchObject({ defaultAgent: "build", leadLoaded: false, leadDefinition: null, leadChanged: [], helperSlotsLine: null });
   });

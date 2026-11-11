@@ -15,7 +15,7 @@
 //   problem   an event published for each new problem; the TUI entry shows it (tui.ts)
 
 import path from "node:path";
-import { effectiveReview, helperSlotsLine, helpersSwitched, modelRef, planAgents, rewriteHelperSlotsLine, rewriteReviewLine } from "./apply.ts";
+import { effectiveReview, helperSlotsLine, helpersSwitched, modelRef, planAgents, rewriteHelperSlotsLine, rewriteReviewLine, type AgentPlan } from "./apply.ts";
 import { gitExcludeFile, workDirListed } from "./git-exclude.ts";
 import { enabledHelpers, helpersOf, rewriteHelperList } from "./helper-list.ts";
 import { parseJsonc } from "./jsonc.ts";
@@ -156,9 +156,10 @@ function sameModel(a: V2ModelRef | undefined, b: V2ModelRef | undefined): boolea
  * The fields in which the lead opencode loaded differs from the harness's own lead as the plugin
  * registers it and the settings then make it: review policy, helper limit, model, effort and
  * step limit. Rules after or before the harness's own are expected, from the user's config;
- * the harness's own must all be there, in order.
+ * the harness's own must all be there, in order. `plans` are the agents' plans with the models
+ * the plugin chose (a fallback when the model is not usable); without them, the settings' own.
  */
-export function leadChanges(lead: V2AgentInfo, harness: EmbeddedHarness, settings: Settings, home: string): string[] {
+export function leadChanges(lead: V2AgentInfo, harness: EmbeddedHarness, settings: Settings, home: string, plans?: readonly AgentPlan[]): string[] {
   const embedded = harness.agents.find((agent) => agent.id === harness.defaultAgent);
   if (embedded === undefined) return [];
   // An agent opencode creates starts as primary and not hidden (Agent.Info.default).
@@ -170,7 +171,7 @@ export function leadChanges(lead: V2AgentInfo, harness: EmbeddedHarness, setting
     expected.system = rewriteHelperSlotsLine(expected.system, settings.maxHelperSlots, embedded.id).prompt ?? expected.system;
     if (helpersSwitched(harness, on)) expected.system = rewriteHelperList(expected.system, helpersOf(harness), on, harness.helperOff, embedded.id).prompt ?? expected.system;
   }
-  const plan = planAgents(harness, settings).plans.find((item) => item.id === embedded.id);
+  const plan = (plans ?? planAgents(harness, settings).plans).find((item) => item.id === embedded.id);
   const model = plan?.model === undefined ? undefined : modelRef(plan.model, plan.effort);
   if (plan?.steps !== undefined) expected.steps = plan.steps;
 
@@ -198,6 +199,8 @@ export interface DoctorInput {
   projectRoot: string | undefined;
   /** Resolves once the agents show the settings; awaited before the agents are read. */
   ready?: () => Promise<void>;
+  /** The agents' plans with the models currently chosen (ModelChoices.plans); read after `ready`. */
+  plans?: () => readonly AgentPlan[];
 }
 
 function modelText(agent: V2AgentInfo | undefined): string | null {
@@ -213,7 +216,7 @@ export async function doctorReport(input: DoctorInput): Promise<DoctorView> {
   const lead = agents.find((agent) => agent.id === harness.defaultAgent);
   const plugins = (await Promise.resolve(ctx.plugin?.list?.()).then((value) => unwrap<V2PluginState[]>(value), () => undefined)) ?? [];
   const { settings } = loaded;
-  const changed = lead === undefined ? [] : leadChanges(lead, harness, settings, input.environment.home);
+  const changed = lead === undefined ? [] : leadChanges(lead, harness, settings, input.environment.home, input.plans?.());
   const helpers = helpersOf(harness);
   const on = enabledHelpers(harness, settings);
   const loadedIds = new Set(agents.map((agent) => agent.id));

@@ -130,7 +130,7 @@ describe("validateSettings", () => {
     expect(problemsOf({ agents: { "scout-deep": {} } })).toEqual([
       '"agents" names "scout-deep", which is not one of the agents lead, scout, builder, reviewer and tester',
     ]);
-    expect(problemsOf({ agents: { scout: "fast" } })).toEqual(['"agents.scout" must be an object with enabled, model, effort or steps, not "fast"']);
+    expect(problemsOf({ agents: { scout: "fast" } })).toEqual(['"agents.scout" must be an object with enabled, model, effort, fallback or steps, not "fast"']);
   });
 
   test("enabled switches a helper on or off; lead is always on", () => {
@@ -168,6 +168,60 @@ describe("validateSettings", () => {
     }
   });
 
+  test("fallback is a list of provider/model texts or { model, effort } objects, checked into objects", () => {
+    const value = { agents: { reviewer: { model: "openai/gpt-6.1-sol", fallback: ["acme/a", { model: "acme/b" }, { model: "acme/c", effort: "high" }] } } };
+    expect(validateSettings(value, harness)).toEqual({
+      settings: {
+        agents: {
+          reviewer: { model: "openai/gpt-6.1-sol", fallback: [{ model: "acme/a" }, { model: "acme/b" }, { model: "acme/c", effort: "high" }] },
+        },
+      },
+      problems: [],
+    });
+  });
+
+  test("an empty fallback list is valid and kept", () => {
+    expect(validateSettings({ agents: { scout: { model: "acme/a", fallback: [] } } }, harness)).toEqual({
+      settings: { agents: { scout: { model: "acme/a", fallback: [] } } },
+      problems: [],
+    });
+  });
+
+  test("fallback needs a model in the same entry, even when empty", () => {
+    for (const fallback of [["acme/b"], []]) {
+      expect(problemsOf({ agents: { scout: { fallback } } })).toEqual([
+        '"agents.scout.fallback" needs a model in the same entry: the fallbacks are for that model',
+      ]);
+    }
+    expect(problemsOf({ agents: { scout: { effort: "high", fallback: ["acme/b"] } } })).toHaveLength(1);
+  });
+
+  test("fallback entries are checked like model and effort", () => {
+    const ask = (fallback: unknown) => problemsOf({ agents: { scout: { model: "acme/a", fallback } } });
+    expect(ask("acme/b")).toEqual([
+      '"agents.scout.fallback" must be a list of models, each provider/model or { "model": "provider/model", "effort": "high" }, not "acme/b"',
+    ]);
+    expect(ask({ model: "acme/b" })).toHaveLength(1);
+    for (const model of ["claude", "acme/b#high", "acme/b c", "", 5]) {
+      expect(ask([model])[0]).toBe(
+        typeof model === "string"
+          ? `"agents.scout.fallback[0]" must look like provider/model, without "#" or spaces, not ${JSON.stringify(model)}`
+          : `"agents.scout.fallback[0]" must be provider/model or an object with model and effort, not ${JSON.stringify(model)}`,
+      );
+    }
+    expect(ask([null, ["acme/b"]])).toHaveLength(2);
+    expect(ask([{ model: "claude" }])).toEqual(['"agents.scout.fallback[0].model" must look like provider/model, without "#" or spaces, not "claude"']);
+    expect(ask([{ effort: "high" }])).toEqual(['"agents.scout.fallback[0]" needs a "model", written as provider/model']);
+    expect(ask([{}])).toEqual(['"agents.scout.fallback[0]" needs a "model", written as provider/model']);
+    for (const effort of ["", "hi#gh", "very high", 3]) {
+      expect(ask([{ model: "acme/b", effort }])).toEqual([
+        `"agents.scout.fallback[0].effort" must be a non-empty name such as "high", without "#" or spaces, not ${JSON.stringify(effort)}`,
+      ]);
+    }
+    expect(ask([{ model: "acme/b", steps: 2 }])).toEqual(['"agents.scout.fallback[0]" has the unknown setting "steps"; an entry takes model and effort']);
+    expect(ask(["acme/ok", { model: "bad" }])[0]).toContain('"agents.scout.fallback[1].model"');
+  });
+
   test("the old name variant is refused with a pointer to effort", () => {
     expect(problemsOf({ agents: { reviewer: { model: "openai/gpt-6.1-sol", variant: "high" } } })).toEqual([
       '"agents.reviewer" has the unknown key "variant"; it is now called "effort"',
@@ -187,7 +241,7 @@ describe("validateSettings", () => {
   test("no other keys, at the top or in an agent", () => {
     expect(problemsOf({ reviews: "auto" })).toEqual(['unknown setting "reviews"; the settings are $schema, review, profile, default_agent, max_helper_slots and agents']);
     expect(problemsOf({ agents: { scout: { temperature: 0.2 } } })).toEqual([
-      '"agents.scout" has the unknown setting "temperature"; an agent takes enabled, model, effort or steps',
+      '"agents.scout" has the unknown setting "temperature"; an agent takes enabled, model, effort, fallback or steps',
     ]);
   });
 
@@ -218,11 +272,47 @@ describe("mergeSettings", () => {
       maxHelperSlots: 4,
       maxHelperSlotsSet: false,
       agents: {
-        reviewer: { model: "openai/gpt-x", effort: "low", steps: 12 },
+        // A model without a fallback list clears the list: [] means "cleared", undefined "not given".
+        reviewer: { model: "openai/gpt-x", effort: "low", steps: 12, fallback: [] },
         scout: { steps: 5 },
         builder: { steps: 60 },
       },
     });
+  });
+
+  test("a later file's fallback list replaces an earlier one as a whole", () => {
+    const merged = mergeSettings(
+      [
+        { agents: { scout: { model: "acme/a", fallback: [{ model: "acme/b" }, { model: "acme/c", effort: "high" }] } } },
+        { agents: { scout: { model: "acme/a", fallback: [{ model: "acme/d" }] } } },
+      ],
+      harness,
+    );
+    expect(merged.agents.scout).toEqual({ model: "acme/a", fallback: [{ model: "acme/d" }] });
+  });
+
+  test("a model without a fallback list drops the lists of earlier files; [] stays []", () => {
+    const earlier = { agents: { scout: { model: "acme/a", fallback: [{ model: "acme/b" }] } } };
+    expect(mergeSettings([earlier, { agents: { scout: { model: "acme/z" } } }], harness).agents.scout).toEqual({ model: "acme/z", fallback: [] });
+    expect(mergeSettings([earlier, { agents: { scout: { model: "acme/z", fallback: [] } } }], harness).agents.scout).toEqual({
+      model: "acme/z",
+      fallback: [],
+    });
+  });
+
+  test("a file with no model keeps the fallback list: effort and steps do not clear it", () => {
+    const merged = mergeSettings(
+      [{ agents: { scout: { model: "acme/a", fallback: [{ model: "acme/b" }] } } }, { agents: { scout: { effort: "low", steps: 3 } } }, { agents: { builder: { steps: 4 } } }],
+      harness,
+    );
+    expect(merged.agents.scout).toEqual({ model: "acme/a", fallback: [{ model: "acme/b" }], effort: "low", steps: 3 });
+  });
+
+  test("the fallback stays undefined for an agent that no file gives a model", () => {
+    const merged = mergeSettings([{ agents: { scout: { steps: 5 }, builder: { effort: "low" } } }], harness);
+    expect(merged.agents.scout).toEqual({ steps: 5 });
+    expect(merged.agents.scout!.fallback).toBeUndefined();
+    expect(merged.agents.builder!.fallback).toBeUndefined();
   });
 });
 

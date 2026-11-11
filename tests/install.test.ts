@@ -725,11 +725,14 @@ describe("doctor asks opencode through the plugin's RPC", () => {
         problems: [
           { problem: `${NAME}: ignoring /x/${NAME}.jsonc: "review" must be auto, ask, always or never, not "often"`, notify: true },
           { problem: "second problem", notify: false },
+          { problem: `${NAME}: reviewer runs on anthropic/claude-opus-5-5, its fallback number 1: github-copilot/gpt-6.1-sol skipped: provider github-copilot is not available`, notify: true },
         ],
       },
     });
     const { code, out } = run(box, ["doctor"]);
     expect(code).toBe(0);
+    // A fallback in use is how the settings ask it to work: information, not a warning.
+    expect(out).toContain(`OK    ${NAME}: reviewer runs on anthropic/claude-opus-5-5, its fallback number 1`);
     expect(out).toContain("OK    lead is the harness's, with the plugin 9.9.9 active");
     expect(out).toContain("WARN  the default agent is build, not lead");
     expect(out).toContain(`WARN  ${NAME}: ignoring /x/${NAME}.jsonc: "review" must be auto, ask, always or never, not "often"`);

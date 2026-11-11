@@ -1045,3 +1045,28 @@ conversation must end with a user message." (HTTP 400). It wrote no report. Chec
 5. Which models? The fix sends the notice as a user message for every harness agent, whatever
    its model: a user message works for every provider, so no list of models that refuse a
    prefill is needed, and no paid request was made to find out about Claude Sonnet 5.5.
+
+## Addendum: fallback models
+
+What the plugin's per-agent fallback models rely on, checked in the `v2.2.5` and `v2.2.6`
+source; both versions agree on every point.
+
+1. What does the plugin read? `provider.list` answers `providers.available()` and `model.list`
+   answers `models.available()` (`core/src/plugin/host.ts`, lines 198 and 236 in `v2.2.5`, 203
+   and 238 in `v2.2.6`). Both read state opencode already holds; neither calls a provider.
+2. What does "available" mean? A provider is listed when it is not disabled and, unless it is
+   enabled outright, has a connection (`core/src/provider.ts:486-510`); a model is listed when it
+   is enabled (`core/src/model.ts:249`). Being listed is therefore being usable, and the plugin
+   does not repeat opencode's rule. The plugin reads ids only, never credentials or settings.
+3. When does the list change? `provider.updated` is published when the provider snapshot
+   changes after an integration or credential event (`core/src/provider.ts:515-533`).
+   `provider.updated` and `model.updated` carry no payload (`schema/src/provider.ts:29`,
+   `schema/src/model.ts:13`), so the plugin reads both lists again on each, and a repeat that
+   changes nothing is harmless.
+4. When is the first read? At the plugin's activation (`plugin.updated`), when every plugin has
+   loaded, or at an earlier `provider.updated`; activation waits for a read already in
+   progress, so the agent transform is first registered with the chosen models. A read that
+   does not answer within 5 seconds counts as missing, and every agent keeps its own model.
+5. What does it not cover? A model that is listed but fails while it runs (a rate limit, an
+   outage): opencode does not tell plugins about it before the request, so fallbacks apply to
+   what is set up, not to errors at run time.

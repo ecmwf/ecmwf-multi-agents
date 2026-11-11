@@ -62,6 +62,7 @@ export function profileJson(harness: ResolvedHarness, profile: Profile): string 
     const entry: ProfileAgent = {};
     if (choice.model !== undefined) entry.model = choice.model;
     if (choice.effort !== undefined) entry.effort = choice.effort;
+    if (choice.fallback !== undefined) entry.fallback = choice.fallback;
     agents[agent.id] = entry;
   }
   return JSON.stringify({ id: profile.id, description: profile.description, agents }, null, 2);

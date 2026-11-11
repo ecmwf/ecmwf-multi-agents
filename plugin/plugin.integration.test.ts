@@ -319,6 +319,46 @@ describe.skipIf(!enabled)(`plugin in opencode ${V2_VERSION}`, () => {
     await stop();
   }, 180_000);
 
+  test("fallback models: an agent whose provider or model is not set up runs on the first listed fallback, and on its own again once it is", async () => {
+    // Stand-in providers from opencode's config, with a placeholder key: listed as set up, never contacted.
+    const standIn = (models: string[]) => ({
+      name: "Stand-in",
+      npm: "@ai-sdk/openai-compatible",
+      options: { baseURL: "http://127.0.0.1:9/v1", apiKey: "placeholder" },
+      models: Object.fromEntries(models.map((id) => [id, { name: id, tool_call: true, limit: { context: 100000, output: 4096 } }])),
+    });
+    const config = path.join(box.config, "opencode.json");
+    writeFileSync(config, JSON.stringify({ provider: { standin: standIn(["m1", "m2"]) } }));
+    writeSettings(
+      box,
+      JSON.stringify({
+        profile: "anthropic",
+        agents: {
+          scout: { model: "later/x", fallback: ["missing/y", "standin/m1"] },
+          reviewer: { model: "standin/absent", effort: "high", fallback: [{ model: "standin/m2", effort: "low" }] },
+        },
+      }),
+    );
+    try {
+      await start();
+      const list = await until("the fallbacks", (items) => find(items, "scout")?.model?.providerID === "standin" && find(items, "reviewer")?.model?.id === "m2");
+      expect(find(list, "scout")!.model).toEqual({ id: "m1", providerID: "standin" });
+      expect(find(list, "reviewer")!.model).toEqual({ id: "m2", providerID: "standin", variant: "low" });
+      // An agent without fallbacks keeps its model, set up or not.
+      expect(find(list, "builder")!.model).toEqual({ id: "claude-sonnet-5-5", providerID: "anthropic", variant: "high" });
+      expect(server!.stderr()).toContain("ecmwf-multi-agents: scout runs on standin/m1, its fallback number 2: later/x skipped: provider later is not available; missing/y skipped: provider missing is not available");
+
+      // The scout's own provider is set up while opencode runs: the plugin chooses again.
+      writeFileSync(config, JSON.stringify({ provider: { standin: standIn(["m1", "m2"]), later: standIn(["x"]) } }));
+      const after = await until("the scout's own model", (items) => find(items, "scout")?.model?.providerID === "later", 60_000);
+      expect(find(after, "scout")!.model).toEqual({ id: "x", providerID: "later" });
+      expect(find(after, "reviewer")!.model).toEqual({ id: "m2", providerID: "standin", variant: "low" });
+    } finally {
+      await stop();
+      rmSync(config, { force: true });
+    }
+  }, 180_000);
+
   test("an invalid settings file leaves the defaults", async () => {
     writeSettings(box, INVALID);
     await start();

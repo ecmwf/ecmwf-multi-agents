@@ -36,7 +36,9 @@
   // - lead 1900 -> 1800, lead-all 2250 -> 2150, lowered to the measured size: lead's prompt
   //   carries only the review policy in force (reviewPolicies), and the plugin, not lead, adds
   //   the work folder to git's exclude file. Measured 1795 and 2142.
-  "budgets": { "lead": 1800, "helper": 750, "command": 500, "skill": 1750, "routing": 100, "lead-all": 2150 },
+  // - skill 1750 -> 1850: the users' guide to fallback models, keeping what it says about a
+  //   project switching helpers, the helper limit and the folders kept out of git. Measured 1835.
+  "budgets": { "lead": 1800, "helper": 750, "command": 500, "skill": 1850, "routing": 100, "lead-all": 2150 },
 
   // Named lists of {action, resource}. A permission entry {"use": name, "effect": e}
   // expands to one rule per item, all with effect e.

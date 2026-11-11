@@ -72,6 +72,8 @@ function orderedProfile(profile: Profile, agents: readonly SourceAgent[]): Profi
     const entry: ProfileAgent = {};
     if (choice.model !== undefined) entry.model = choice.model;
     if (choice.effort !== undefined) entry.effort = choice.effort;
+    // Not written to the agent files, which carry only the primary model; the plugin embeds it.
+    if (choice.fallback !== undefined) entry.fallback = choice.fallback.map((item) => ({ ...item }));
     out[agent.id] = entry;
   }
   return { id: profile.id, description: profile.description, agents: out };

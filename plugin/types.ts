@@ -29,8 +29,21 @@ export interface EmbeddedHarness {
 export interface EmbeddedProfile {
   id: string;
   description: string;
-  /** Model and reasoning effort per agent; the effort goes to opencode as the model variant. */
-  agents: Record<string, { model?: string; effort?: string }>;
+  /** Model, reasoning effort and fallback models per agent; the effort goes to opencode as the model variant. */
+  agents: Record<string, { model?: string; effort?: string; fallback?: FallbackEntry[] }>;
+}
+
+/**
+ * One fallback model: what an agent may run on when its own model is not usable, with the
+ * reasoning effort to use on it. The one shape that settings, profiles and the embedded
+ * profiles share. A settings file may write an entry as the bare `provider/model` text; the
+ * check turns it into this object.
+ */
+export interface FallbackEntry {
+  /** `provider/model`, without "#" or spaces. */
+  model: string;
+  /** Reasoning effort, applied as opencode's model variant. Left out: the model's own default. */
+  effort?: string;
 }
 
 /** A permission rule as an agent file's `permissions` list holds it; the last match wins. */
@@ -87,6 +100,13 @@ export interface AgentOverride {
   model?: string;
   /** Reasoning effort, applied as opencode's model variant. */
   effort?: string;
+  /**
+   * Models to try, in order, when `model` is not usable. Only valid together with `model` in
+   * the same settings entry. In a checked file the entries are always objects. After merging:
+   * undefined means no file said anything, so the profile's list (if any) applies; an array,
+   * even an empty one, replaces the profile's list (see mergeSettings).
+   */
+  fallback?: FallbackEntry[];
   steps?: number;
 }
 
@@ -330,8 +350,13 @@ export interface V2Context {
     register?: (definition: V2RpcDefinition, handlers: Record<string, (input: unknown) => Promise<unknown>>) => Promise<V2RpcRegistration>;
   };
   plugin?: { list?: () => Promise<unknown> };
-  /** `default` is the model a session without a model of its own runs on. */
-  model?: { default?: () => Promise<unknown> };
+  /**
+   * `default` is the model a session without a model of its own runs on. `list` gives the
+   * enabled chat models that are available (`{ data: [{ id, providerID, ... }] }`, 2.2.6).
+   */
+  model?: { default?: () => Promise<unknown>; list?: () => Promise<unknown> };
+  /** `list` gives the providers that are set up (`{ data: [{ id, activation, ... }] }`, 2.2.6): only ids are read. */
+  provider?: { list?: () => Promise<unknown> };
   event?: { subscribe?: (options?: { signal?: AbortSignal }) => AsyncIterable<V2Event> };
   tool?: {
     transform?: (callback: (editor: V2ToolEditor) => void) => Promise<V2Registration>;

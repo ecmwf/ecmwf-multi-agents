@@ -161,11 +161,16 @@ function planAgents(harness, settings) {
       plan.model = override.model;
       if (override.effort !== undefined)
         plan.effort = override.effort;
+      if (override.fallback !== undefined && override.fallback.length > 0)
+        plan.fallback = override.fallback;
     } else if (fromProfile?.model !== undefined) {
       plan.model = fromProfile.model;
       const effort = override.effort ?? fromProfile.effort;
       if (effort !== undefined)
         plan.effort = effort;
+      const fallback = override.fallback ?? fromProfile.fallback;
+      if (fallback !== undefined && fallback.length > 0)
+        plan.fallback = fallback;
     } else if (override.effort !== undefined) {
       problems.push({
         message: `${harness.name}: the effort ${JSON.stringify(override.effort)} for ${agent.id} was ignored: ` + `profile ${JSON.stringify(settings.profile)} gives ${agent.id} no model and the settings name none, ` + `so it uses the session model`,
@@ -375,6 +380,359 @@ function excludeWorkDir(directory, workDir, environment) {
     return { state: "added", file };
   } catch (error) {
     return { state: "failed", file: file ?? directory, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+// plugin/register.ts
+import path3 from "path";
+function parseModel(input) {
+  const providerEnd = input.indexOf("/");
+  if (providerEnd <= 0)
+    return;
+  const providerID = input.slice(0, providerEnd);
+  const variantStart = input.indexOf("#", providerEnd + 1);
+  const id = input.slice(providerEnd + 1, variantStart === -1 ? undefined : variantStart);
+  const variant = variantStart === -1 ? undefined : input.slice(variantStart + 1);
+  if (!id || providerID.includes("#") || variant !== undefined && (!variant || variant.includes("#")))
+    return;
+  return { id, providerID, ...variant ? { variant } : {} };
+}
+var PATH_ACTIONS = ["external_directory", "read", "edit"];
+function expandHome(resource, home) {
+  if (resource === "~" || resource === "$HOME")
+    return home;
+  const relative = resource.startsWith("~/") ? resource.slice(2) : resource.startsWith("$HOME/") || resource.startsWith("$HOME\\") ? resource.slice(6) : undefined;
+  if (relative !== undefined)
+    return (path3.posix.isAbsolute(home) ? path3.posix : path3.win32).join(home, relative);
+  return resource;
+}
+function expandPermissions(rules, home) {
+  return rules.map((rule) => PATH_ACTIONS.includes(rule.action) ? { ...rule, resource: expandHome(rule.resource, home) } : { ...rule });
+}
+function applyAgent(agent, embedded, home) {
+  if (embedded.model !== undefined) {
+    const model = parseModel(embedded.model);
+    if (model !== undefined)
+      agent.model = model;
+  }
+  if (embedded.system !== undefined)
+    agent.system = embedded.system;
+  if (embedded.description !== undefined)
+    agent.description = embedded.description;
+  agent.mode = embedded.mode;
+  if (embedded.hidden !== undefined)
+    agent.hidden = embedded.hidden;
+  if (embedded.color !== undefined)
+    agent.color = embedded.color;
+  if (embedded.steps !== undefined)
+    agent.steps = embedded.steps;
+  if (embedded.permissions !== undefined) {
+    if (!Array.isArray(agent.permissions))
+      agent.permissions = [];
+    agent.permissions.push(...expandPermissions(embedded.permissions, home));
+  }
+}
+var ARGS = /(?:\[Image\s+\d+\]|"[^"]*"|'[^']*'|[^\s"']+)/gi;
+var PLACEHOLDER = /\$(\d+)/g;
+var QUOTES = /^["']|["']$/g;
+function fillTemplate(template, input) {
+  const args = (input.match(ARGS) ?? []).map((arg) => arg.replace(QUOTES, ""));
+  const placeholders = template.match(PLACEHOLDER) ?? [];
+  const last = Math.max(0, ...placeholders.map((item) => Number(item.slice(1))));
+  const expanded = template.replaceAll(PLACEHOLDER, (_, index) => {
+    const position = Number(index);
+    const argIndex = position - 1;
+    if (argIndex >= args.length)
+      return "";
+    if (position === last)
+      return args.slice(argIndex).join(" ");
+    return args[argIndex];
+  });
+  const withArguments = expanded.replaceAll("$ARGUMENTS", () => input);
+  return placeholders.length === 0 && !template.includes("$ARGUMENTS") && input.trim() ? `${withArguments}
+
+${input}`.trim() : withArguments.trim();
+}
+function skillInfo(skill, pluginDir) {
+  return {
+    id: skill.id,
+    name: skill.name,
+    ...skill.description === undefined ? {} : { description: skill.description },
+    ...skill.autoinvoke === undefined ? {} : { autoinvoke: skill.autoinvoke },
+    path: path3.resolve(pluginDir, "..", "..", "skills", skill.id, "SKILL.md"),
+    content: skill.content
+  };
+}
+function unwrap(value) {
+  if (value !== null && typeof value === "object" && "data" in value && !("id" in value))
+    return value.data;
+  return value;
+}
+var NO_TEXT = "Subagent completed without a text response.";
+var SUBAGENT_PREFIX = "You are a subagent spawned by another session.";
+function childOutcome(messages) {
+  const assistants = messages.filter((message) => message?.type === "assistant");
+  const latest = assistants.at(-1);
+  if (latest?.error !== undefined)
+    return { state: "error", text: latest.error.message || "Subagent failed" };
+  if (latest !== undefined && latest.time?.completed === undefined)
+    return { state: "cancelled", text: "Subagent cancelled" };
+  const done = [...assistants].reverse().find((message) => message.time?.completed !== undefined && message.error === undefined);
+  const text = (done?.content ?? []).filter((part) => part?.type === "text" && typeof part.text === "string" && part.text.length > 0).map((part) => part.text).join(`
+
+`);
+  return { state: "completed", text: text || NO_TEXT };
+}
+function subagentReport(childID, state, description, text) {
+  return `<subagent sessionID="${childID}" state="${state}" description="${description}">
+${text}
+</subagent>`;
+}
+async function reportBack(ctx, parentID, childID, agent, description, reporter) {
+  const session = ctx.session;
+  let outcome;
+  try {
+    await session.wait({ sessionID: childID });
+    outcome = childOutcome(unwrap(await session.context({ sessionID: childID })) ?? []);
+  } catch (error) {
+    outcome = { state: "error", text: error instanceof Error ? error.message : String(error) };
+  }
+  try {
+    await session.synthetic({
+      sessionID: parentID,
+      description,
+      text: subagentReport(childID, outcome.state, description, outcome.text),
+      metadata: { source: "subagent", childID, agent, state: outcome.state },
+      delivery: "queue"
+    });
+  } catch (error) {
+    reporter.internal(`reporting the ${description} back`, error);
+  }
+}
+function commandDefinition(ctx, harness, command, options) {
+  return {
+    name: command.name,
+    ...command.description === undefined ? {} : { description: command.description },
+    execute: async (input) => {
+      const session = ctx.session;
+      if (session?.prompt === undefined)
+        throw new Error(`${harness.name}: this opencode cannot run /${command.name}`);
+      const agentID = command.agent;
+      const commandAgent = agentID === undefined || ctx.agent.get === undefined ? undefined : unwrap(await ctx.agent.get({ agentID }).catch(() => {
+        return;
+      }));
+      const model = command.model === undefined ? commandAgent?.model : parseModel(command.model);
+      const text = fillTemplate(command.template, input.prompt?.text ?? "");
+      if (command.subagent ?? commandAgent?.mode === "subagent") {
+        const parent = unwrap(await session.get({ sessionID: input.sessionID }));
+        const agent = agentID ?? parent?.agent;
+        const description = command.description ?? command.name;
+        const childModel = model ?? parent?.model;
+        const child = unwrap(await session.create({
+          parentID: input.sessionID,
+          title: description,
+          ...agent === undefined ? {} : { agent },
+          ...childModel === undefined ? {} : { model: childModel }
+        }));
+        if (child?.id === undefined)
+          throw new Error(`${harness.name}: /${command.name} could not start its helper`);
+        await session.prompt({ ...input.prompt, sessionID: child.id, text: [SUBAGENT_PREFIX, text].join(`
+`) });
+        reportBack(ctx, input.sessionID, child.id, agent ?? "", description, options.reporter);
+        return;
+      }
+      if (agentID !== undefined) {
+        const current = unwrap(await session.get?.({ sessionID: input.sessionID }));
+        if (current?.agent !== agentID)
+          await session.switchAgent?.({ sessionID: input.sessionID, agent: agentID });
+      }
+      if (model !== undefined)
+        await session.switchModel?.({ sessionID: input.sessionID, model });
+      await session.prompt({ ...input.prompt, sessionID: input.sessionID, text, ...input.delivery === undefined ? {} : { delivery: input.delivery } });
+    }
+  };
+}
+async function registerHarness(ctx, harness, options) {
+  const { reporter } = options;
+  const on = options.helpers ?? enabledHelpers(harness, { agents: {} });
+  const helpers = new Set(helpersOf(harness).map((helper) => helper.id));
+  const agents = harness.agents.filter((agent) => !helpers.has(agent.id) || on.has(agent.id));
+  try {
+    await ctx.agent.transform((editor) => {
+      try {
+        for (const embedded of agents)
+          editor.update(embedded.id, (agent) => applyAgent(agent, embedded, options.home));
+        if (options.defaultAgent)
+          editor.default(harness.defaultAgent);
+        options.ruleOrder?.addProbe(editor);
+      } catch (error) {
+        reporter.internal("registering the agents", error);
+      }
+    });
+  } catch (error) {
+    reporter.internal("registering the agents", error);
+  }
+  if (typeof ctx.skill?.transform === "function") {
+    const skills = harness.skills.map((skill) => skillInfo(skill, options.pluginDir));
+    try {
+      await ctx.skill.transform((editor) => {
+        try {
+          for (const skill of skills)
+            editor.add(skill);
+        } catch (error) {
+          reporter.internal("registering the skills", error);
+        }
+      });
+    } catch (error) {
+      reporter.internal("registering the skills", error);
+    }
+  }
+  if (typeof ctx.command?.transform === "function") {
+    const commands = harness.commands.map((command) => commandDefinition(ctx, harness, command, { reporter }));
+    try {
+      await ctx.command.transform((editor) => {
+        try {
+          for (const command of commands)
+            editor.add(command);
+        } catch (error) {
+          reporter.internal("registering the commands", error);
+        }
+      });
+    } catch (error) {
+      reporter.internal("registering the commands", error);
+    }
+  }
+}
+
+// plugin/fallback.ts
+function parts(model) {
+  const slash = model.indexOf("/");
+  if (slash < 0)
+    return;
+  const hash = model.indexOf("#", slash);
+  return { providerID: model.slice(0, slash), id: model.slice(slash + 1, hash < 0 ? undefined : hash) };
+}
+function unusableReason(model, available) {
+  const ref = parts(model);
+  if (ref === undefined)
+    return "it is not written as provider/model";
+  if (!available.providers.includes(ref.providerID))
+    return `provider ${ref.providerID} is not available`;
+  if (available.models !== undefined && !available.models.some((item) => item.providerID === ref.providerID && item.id === ref.id)) {
+    return `model ${ref.id} is not available for provider ${ref.providerID}`;
+  }
+  return;
+}
+function chooseModel(primary, fallback, available) {
+  if (available === "unknown")
+    return { choice: primary, index: 0, notes: [] };
+  const candidates = [primary, ...fallback];
+  const notes = [];
+  for (const [index, candidate] of candidates.entries()) {
+    const reason = unusableReason(candidate.model, available);
+    if (reason === undefined)
+      return { choice: candidate, index, notes };
+    notes.push(`${candidate.model} skipped: ${reason}`);
+  }
+  const tried = candidates.length === 1 ? "its model" : `its model and ${candidates.length - 1} fallback${candidates.length === 2 ? "" : "s"}`;
+  return {
+    choice: primary,
+    index: 0,
+    notes,
+    problem: { message: `none of ${tried} is usable, so ${primary.model} stays: ${notes.join("; ")}`, notify: true }
+  };
+}
+var READ_TIMEOUT_MS = 5000;
+async function entriesOf(read, timeoutMs) {
+  let timer;
+  try {
+    const timeout = new Promise((resolve) => {
+      timer = setTimeout(() => resolve(undefined), timeoutMs);
+      timer.unref?.();
+    });
+    const value = unwrap(await Promise.race([Promise.resolve().then(read), timeout]));
+    return Array.isArray(value) ? value : undefined;
+  } catch {
+    return;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function text(entry, key) {
+  const value = entry !== null && typeof entry === "object" ? entry[key] : undefined;
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+async function readAvailability(source, timeoutMs = READ_TIMEOUT_MS) {
+  const providers = await entriesOf(() => source.provider?.list?.(), timeoutMs);
+  if (providers === undefined)
+    return "unknown";
+  const ids = providers.flatMap((entry) => {
+    const id = text(entry, "id");
+    return id === undefined || text(entry, "activation") === "disabled" ? [] : [id];
+  });
+  const models = await entriesOf(() => source.model?.list?.(), timeoutMs);
+  if (models === undefined)
+    return { providers: ids };
+  return {
+    providers: ids,
+    models: models.flatMap((entry) => {
+      const id = text(entry, "id");
+      const providerID = text(entry, "providerID");
+      return id === undefined || providerID === undefined ? [] : [{ id, providerID }];
+    })
+  };
+}
+
+class ModelChoices {
+  name;
+  base;
+  active;
+  chosen = new Map;
+  results = new Map;
+  told = new Map;
+  constructor(name, base, active = () => true) {
+    this.name = name;
+    this.base = base;
+    this.active = active;
+  }
+  plans() {
+    return this.base.map((plan) => {
+      const result = this.results.get(plan.id);
+      if (result === undefined || plan.model === undefined)
+        return plan;
+      const { effort: _own, ...rest } = plan;
+      return { ...rest, model: result.model, ...result.effort === undefined ? {} : { effort: result.effort } };
+    });
+  }
+  update(availability) {
+    const update = { changed: false, problems: [] };
+    for (const plan of this.base) {
+      if (plan.model === undefined || plan.fallback === undefined || plan.fallback.length === 0)
+        continue;
+      const primary = { model: plan.model, ...plan.effort === undefined ? {} : { effort: plan.effort } };
+      const result = chooseModel(primary, plan.fallback, availability);
+      const signature = `${result.choice.model}
+${result.choice.effort ?? ""}`;
+      const before = this.chosen.get(plan.id) ?? `${primary.model}
+${primary.effort ?? ""}`;
+      this.chosen.set(plan.id, signature);
+      this.results.set(plan.id, result.choice);
+      if (signature !== before)
+        update.changed = true;
+      if (!this.active(plan.id))
+        continue;
+      if (signature !== before && result.index > 0) {
+        update.problems.push({ message: `${this.name}: ${plan.id} runs on ${result.choice.model}, its fallback number ${result.index}: ${result.notes.join("; ")}`, notify: true });
+      }
+      const problem = result.problem === undefined ? undefined : `${this.name}: ${plan.id}: ${result.problem.message}`;
+      if (problem === undefined)
+        this.told.delete(plan.id);
+      else if (this.told.get(plan.id) !== problem) {
+        this.told.set(plan.id, problem);
+        update.problems.push({ message: problem, notify: true });
+      }
+    }
+    return update;
   }
 }
 
@@ -824,227 +1182,6 @@ function toolCallBlock(harness, agentId, tool) {
   const agent = harness.agents.find((item) => item.id === agentId);
   const who = agent?.mode === "subagent" ? "helpers" : agentId ?? "an unknown agent";
   return `${harness.name}: ${who} may not use ${tool}; only ${harness.defaultAgent} sees, redirects or stops helpers. Do not try another way: say in your report what is needed.`;
-}
-
-// plugin/register.ts
-import path3 from "path";
-function parseModel(input) {
-  const providerEnd = input.indexOf("/");
-  if (providerEnd <= 0)
-    return;
-  const providerID = input.slice(0, providerEnd);
-  const variantStart = input.indexOf("#", providerEnd + 1);
-  const id = input.slice(providerEnd + 1, variantStart === -1 ? undefined : variantStart);
-  const variant = variantStart === -1 ? undefined : input.slice(variantStart + 1);
-  if (!id || providerID.includes("#") || variant !== undefined && (!variant || variant.includes("#")))
-    return;
-  return { id, providerID, ...variant ? { variant } : {} };
-}
-var PATH_ACTIONS = ["external_directory", "read", "edit"];
-function expandHome(resource, home) {
-  if (resource === "~" || resource === "$HOME")
-    return home;
-  const relative = resource.startsWith("~/") ? resource.slice(2) : resource.startsWith("$HOME/") || resource.startsWith("$HOME\\") ? resource.slice(6) : undefined;
-  if (relative !== undefined)
-    return (path3.posix.isAbsolute(home) ? path3.posix : path3.win32).join(home, relative);
-  return resource;
-}
-function expandPermissions(rules, home) {
-  return rules.map((rule) => PATH_ACTIONS.includes(rule.action) ? { ...rule, resource: expandHome(rule.resource, home) } : { ...rule });
-}
-function applyAgent(agent, embedded, home) {
-  if (embedded.model !== undefined) {
-    const model = parseModel(embedded.model);
-    if (model !== undefined)
-      agent.model = model;
-  }
-  if (embedded.system !== undefined)
-    agent.system = embedded.system;
-  if (embedded.description !== undefined)
-    agent.description = embedded.description;
-  agent.mode = embedded.mode;
-  if (embedded.hidden !== undefined)
-    agent.hidden = embedded.hidden;
-  if (embedded.color !== undefined)
-    agent.color = embedded.color;
-  if (embedded.steps !== undefined)
-    agent.steps = embedded.steps;
-  if (embedded.permissions !== undefined) {
-    if (!Array.isArray(agent.permissions))
-      agent.permissions = [];
-    agent.permissions.push(...expandPermissions(embedded.permissions, home));
-  }
-}
-var ARGS = /(?:\[Image\s+\d+\]|"[^"]*"|'[^']*'|[^\s"']+)/gi;
-var PLACEHOLDER = /\$(\d+)/g;
-var QUOTES = /^["']|["']$/g;
-function fillTemplate(template, input) {
-  const args = (input.match(ARGS) ?? []).map((arg) => arg.replace(QUOTES, ""));
-  const placeholders = template.match(PLACEHOLDER) ?? [];
-  const last = Math.max(0, ...placeholders.map((item) => Number(item.slice(1))));
-  const expanded = template.replaceAll(PLACEHOLDER, (_, index) => {
-    const position = Number(index);
-    const argIndex = position - 1;
-    if (argIndex >= args.length)
-      return "";
-    if (position === last)
-      return args.slice(argIndex).join(" ");
-    return args[argIndex];
-  });
-  const withArguments = expanded.replaceAll("$ARGUMENTS", () => input);
-  return placeholders.length === 0 && !template.includes("$ARGUMENTS") && input.trim() ? `${withArguments}
-
-${input}`.trim() : withArguments.trim();
-}
-function skillInfo(skill, pluginDir) {
-  return {
-    id: skill.id,
-    name: skill.name,
-    ...skill.description === undefined ? {} : { description: skill.description },
-    ...skill.autoinvoke === undefined ? {} : { autoinvoke: skill.autoinvoke },
-    path: path3.resolve(pluginDir, "..", "..", "skills", skill.id, "SKILL.md"),
-    content: skill.content
-  };
-}
-function unwrap(value) {
-  if (value !== null && typeof value === "object" && "data" in value && !("id" in value))
-    return value.data;
-  return value;
-}
-var NO_TEXT = "Subagent completed without a text response.";
-var SUBAGENT_PREFIX = "You are a subagent spawned by another session.";
-function childOutcome(messages) {
-  const assistants = messages.filter((message) => message?.type === "assistant");
-  const latest = assistants.at(-1);
-  if (latest?.error !== undefined)
-    return { state: "error", text: latest.error.message || "Subagent failed" };
-  if (latest !== undefined && latest.time?.completed === undefined)
-    return { state: "cancelled", text: "Subagent cancelled" };
-  const done = [...assistants].reverse().find((message) => message.time?.completed !== undefined && message.error === undefined);
-  const text = (done?.content ?? []).filter((part) => part?.type === "text" && typeof part.text === "string" && part.text.length > 0).map((part) => part.text).join(`
-
-`);
-  return { state: "completed", text: text || NO_TEXT };
-}
-function subagentReport(childID, state, description, text) {
-  return `<subagent sessionID="${childID}" state="${state}" description="${description}">
-${text}
-</subagent>`;
-}
-async function reportBack(ctx, parentID, childID, agent, description, reporter) {
-  const session = ctx.session;
-  let outcome;
-  try {
-    await session.wait({ sessionID: childID });
-    outcome = childOutcome(unwrap(await session.context({ sessionID: childID })) ?? []);
-  } catch (error) {
-    outcome = { state: "error", text: error instanceof Error ? error.message : String(error) };
-  }
-  try {
-    await session.synthetic({
-      sessionID: parentID,
-      description,
-      text: subagentReport(childID, outcome.state, description, outcome.text),
-      metadata: { source: "subagent", childID, agent, state: outcome.state },
-      delivery: "queue"
-    });
-  } catch (error) {
-    reporter.internal(`reporting the ${description} back`, error);
-  }
-}
-function commandDefinition(ctx, harness, command, options) {
-  return {
-    name: command.name,
-    ...command.description === undefined ? {} : { description: command.description },
-    execute: async (input) => {
-      const session = ctx.session;
-      if (session?.prompt === undefined)
-        throw new Error(`${harness.name}: this opencode cannot run /${command.name}`);
-      const agentID = command.agent;
-      const commandAgent = agentID === undefined || ctx.agent.get === undefined ? undefined : unwrap(await ctx.agent.get({ agentID }).catch(() => {
-        return;
-      }));
-      const model = command.model === undefined ? commandAgent?.model : parseModel(command.model);
-      const text = fillTemplate(command.template, input.prompt?.text ?? "");
-      if (command.subagent ?? commandAgent?.mode === "subagent") {
-        const parent = unwrap(await session.get({ sessionID: input.sessionID }));
-        const agent = agentID ?? parent?.agent;
-        const description = command.description ?? command.name;
-        const childModel = model ?? parent?.model;
-        const child = unwrap(await session.create({
-          parentID: input.sessionID,
-          title: description,
-          ...agent === undefined ? {} : { agent },
-          ...childModel === undefined ? {} : { model: childModel }
-        }));
-        if (child?.id === undefined)
-          throw new Error(`${harness.name}: /${command.name} could not start its helper`);
-        await session.prompt({ ...input.prompt, sessionID: child.id, text: [SUBAGENT_PREFIX, text].join(`
-`) });
-        reportBack(ctx, input.sessionID, child.id, agent ?? "", description, options.reporter);
-        return;
-      }
-      if (agentID !== undefined) {
-        const current = unwrap(await session.get?.({ sessionID: input.sessionID }));
-        if (current?.agent !== agentID)
-          await session.switchAgent?.({ sessionID: input.sessionID, agent: agentID });
-      }
-      if (model !== undefined)
-        await session.switchModel?.({ sessionID: input.sessionID, model });
-      await session.prompt({ ...input.prompt, sessionID: input.sessionID, text, ...input.delivery === undefined ? {} : { delivery: input.delivery } });
-    }
-  };
-}
-async function registerHarness(ctx, harness, options) {
-  const { reporter } = options;
-  const on = options.helpers ?? enabledHelpers(harness, { agents: {} });
-  const helpers = new Set(helpersOf(harness).map((helper) => helper.id));
-  const agents = harness.agents.filter((agent) => !helpers.has(agent.id) || on.has(agent.id));
-  try {
-    await ctx.agent.transform((editor) => {
-      try {
-        for (const embedded of agents)
-          editor.update(embedded.id, (agent) => applyAgent(agent, embedded, options.home));
-        if (options.defaultAgent)
-          editor.default(harness.defaultAgent);
-        options.ruleOrder?.addProbe(editor);
-      } catch (error) {
-        reporter.internal("registering the agents", error);
-      }
-    });
-  } catch (error) {
-    reporter.internal("registering the agents", error);
-  }
-  if (typeof ctx.skill?.transform === "function") {
-    const skills = harness.skills.map((skill) => skillInfo(skill, options.pluginDir));
-    try {
-      await ctx.skill.transform((editor) => {
-        try {
-          for (const skill of skills)
-            editor.add(skill);
-        } catch (error) {
-          reporter.internal("registering the skills", error);
-        }
-      });
-    } catch (error) {
-      reporter.internal("registering the skills", error);
-    }
-  }
-  if (typeof ctx.command?.transform === "function") {
-    const commands = harness.commands.map((command) => commandDefinition(ctx, harness, command, { reporter }));
-    try {
-      await ctx.command.transform((editor) => {
-        try {
-          for (const command of commands)
-            editor.add(command);
-        } catch (error) {
-          reporter.internal("registering the commands", error);
-        }
-      });
-    } catch (error) {
-      reporter.internal("registering the commands", error);
-    }
-  }
 }
 
 // plugin/inline.ts
@@ -1753,7 +1890,7 @@ function workDirExcluded(harness, environment, directory) {
 function sameModel2(a, b) {
   return a?.providerID === b?.providerID && a?.id === b?.id;
 }
-function leadChanges(lead, harness, settings, home) {
+function leadChanges(lead, harness, settings, home, plans) {
   const embedded = harness.agents.find((agent) => agent.id === harness.defaultAgent);
   if (embedded === undefined)
     return [];
@@ -1766,7 +1903,7 @@ function leadChanges(lead, harness, settings, home) {
     if (helpersSwitched(harness, on))
       expected.system = rewriteHelperList(expected.system, helpersOf(harness), on, harness.helperOff, embedded.id).prompt ?? expected.system;
   }
-  const plan = planAgents(harness, settings).plans.find((item) => item.id === embedded.id);
+  const plan = (plans ?? planAgents(harness, settings).plans).find((item) => item.id === embedded.id);
   const model = plan?.model === undefined ? undefined : modelRef(plan.model, plan.effort);
   if (plan?.steps !== undefined)
     expected.steps = plan.steps;
@@ -1811,7 +1948,7 @@ async function doctorReport(input) {
     return;
   }) ?? [];
   const { settings } = loaded;
-  const changed = lead === undefined ? [] : leadChanges(lead, harness, settings, input.environment.home);
+  const changed = lead === undefined ? [] : leadChanges(lead, harness, settings, input.environment.home, input.plans?.());
   const helpers = helpersOf(harness);
   const on = enabledHelpers(harness, settings);
   const loadedIds = new Set(agents.map((agent) => agent.id));
@@ -1882,7 +2019,8 @@ var DEFAULT_MAX_HELPER_SLOTS = 4;
 var MODEL_PATTERN = /^[^/#\s]+\/[^#\s]+$/;
 var EFFORT_PATTERN = /^[^#\s]+$/;
 var TOP_KEYS = ["$schema", "review", "profile", "default_agent", "max_helper_slots", "agents"];
-var AGENT_KEYS = ["enabled", "model", "effort", "steps"];
+var AGENT_KEYS = ["enabled", "model", "effort", "fallback", "steps"];
+var FALLBACK_KEYS = ["model", "effort"];
 var RENAMED_AGENT_KEYS = { variant: "effort" };
 function listWords(words, last = "or") {
   if (words.length <= 1)
@@ -2011,6 +2149,11 @@ function validateAgent(id, entry, problems, isDefaultAgent) {
         else
           problems.push(`${name} must be a non-empty name such as "high", without "#" or spaces, not ${shown(item)}`);
         break;
+      case "fallback":
+        if (!has(entry, "model"))
+          problems.push(`${name} needs a model in the same entry: the fallbacks are for that model`);
+        out.fallback = validateFallback(`agents.${id}.fallback`, item, problems);
+        break;
       case "steps":
         if (typeof item === "number" && Number.isInteger(item) && item >= 1)
           out.steps = item;
@@ -2023,6 +2166,49 @@ function validateAgent(id, entry, problems, isDefaultAgent) {
       }
     }
   }
+  return out;
+}
+function validateFallback(path, item, problems) {
+  const out = [];
+  if (!Array.isArray(item)) {
+    problems.push(`"${path}" must be a list of models, each provider/model or { "model": "provider/model", "effort": "high" }, not ${shown(item)}`);
+    return out;
+  }
+  item.forEach((candidate, index) => {
+    const at = `${path}[${index}]`;
+    if (typeof candidate === "string") {
+      if (MODEL_PATTERN.test(candidate))
+        out.push({ model: candidate });
+      else
+        problems.push(`"${at}" must look like provider/model, without "#" or spaces, not ${shown(candidate)}`);
+      return;
+    }
+    if (!isObject(candidate)) {
+      problems.push(`"${at}" must be provider/model or an object with ${listWords(FALLBACK_KEYS, "and")}, not ${shown(candidate)}`);
+      return;
+    }
+    const entry = {};
+    for (const key of Object.keys(candidate)) {
+      const value = candidate[key];
+      if (key === "model") {
+        if (typeof value === "string" && MODEL_PATTERN.test(value))
+          entry.model = value;
+        else
+          problems.push(`"${at}.model" must look like provider/model, without "#" or spaces, not ${shown(value)}`);
+      } else if (key === "effort") {
+        if (typeof value === "string" && EFFORT_PATTERN.test(value))
+          entry.effort = value;
+        else
+          problems.push(`"${at}.effort" must be a non-empty name such as "high", without "#" or spaces, not ${shown(value)}`);
+      } else {
+        problems.push(`"${at}" has the unknown setting ${shown(key)}; an entry takes ${listWords(FALLBACK_KEYS, "and")}`);
+      }
+    }
+    if (!has(candidate, "model"))
+      problems.push(`"${at}" needs a "model", written as provider/model`);
+    else if (entry.model !== undefined)
+      out.push(entry);
+  });
   return out;
 }
 function mergeSettings(files, harness) {
@@ -2049,7 +2235,8 @@ function mergeSettings(files, harness) {
       settings.maxHelperSlotsSet = true;
     }
     for (const [id, override] of Object.entries(file.agents ?? {})) {
-      settings.agents[id] = { ...settings.agents[id], ...override };
+      const cleared = override.model !== undefined && override.fallback === undefined ? { fallback: [] } : {};
+      settings.agents[id] = { ...settings.agents[id], ...override, ...cleared };
     }
   }
   return settings;
@@ -2336,6 +2523,7 @@ class LateTransform {
   current;
   queue = Promise.resolve();
   stopped = false;
+  requested = false;
   constructor(transform, callback, reporter, what) {
     this.transform = transform;
     this.callback = callback;
@@ -2346,6 +2534,7 @@ class LateTransform {
     return this.current === undefined ? this.register() : this.queue;
   }
   register() {
+    this.requested = true;
     this.queue = this.queue.then(async () => {
       if (this.stopped)
         return;
@@ -2437,7 +2626,27 @@ function createSetup(harness, options = {}) {
       }
       const settings = loaded.settings;
       const ruleOrder = new RuleOrder(harness, environment?.home ?? "");
+      const planned = planAgents(harness, settings);
+      const subagents = helperIds(harness);
+      const switchedOn = enabledHelpers(harness, settings);
+      const choices = new ModelChoices(harness.name, planned.plans, (id) => !subagents.has(id) || switchedOn.has(id));
       let late;
+      let availabilityRead = false;
+      let reading = Promise.resolve();
+      const readProviders = () => {
+        availabilityRead = true;
+        reading = reading.then(async () => {
+          try {
+            const update = choices.update(await readAvailability(ctx));
+            reporter.report(update.problems);
+            if (update.changed && late?.requested === true)
+              late.register();
+          } catch (error) {
+            reporter.internal("reading the providers", error);
+          }
+        });
+        return reading;
+      };
       await registerHarness(ctx, harness, {
         home: environment?.home ?? "",
         ruleOrder,
@@ -2460,16 +2669,18 @@ function createSetup(harness, options = {}) {
               if (late === undefined)
                 return;
               ruleOrder.start();
+              if (!availabilityRead)
+                readProviders();
+              await reading;
               await late.ensure();
-            }
+            },
+            plans: () => choices.plans()
           });
         } catch (error) {
           reporter.internal("registering the RPC", error);
         }
       }
       reporter.report(loaded.problems);
-      const planned = planAgents(harness, settings);
-      const plans = planned.plans;
       reporter.report(planned.problems);
       const helpers = helperIds(harness);
       const tracker = new SessionTracker;
@@ -2508,7 +2719,7 @@ function createSetup(harness, options = {}) {
         enabled: enabledHelpers(harness, settings),
         reporter,
         plannedModel: (agent) => {
-          const plan = plans.find((item) => item.id === agent);
+          const plan = choices.plans().find((item) => item.id === agent);
           return plan?.model === undefined ? undefined : modelRef(plan.model, plan.effort);
         }
       });
@@ -2549,7 +2760,7 @@ ${found.reply}`;
           reporter.internal("ordering the agents' rules", error);
         }
         try {
-          reporter.report(applyToV2Agents(editor, harness, settings, plans));
+          reporter.report(applyToV2Agents(editor, harness, settings, choices.plans()));
         } catch (error) {
           reporter.internal("the agent transform", error);
         }
@@ -2566,13 +2777,20 @@ ${found.reply}`;
       const agentTransform = late;
       const onActivation = () => {
         ruleOrder.start();
-        agentTransform.register();
-        lateCommands?.register();
+        (async () => {
+          if (!availabilityRead)
+            readProviders();
+          await reading;
+          agentTransform.register();
+          lateCommands?.register();
+        })();
       };
       const keepOut = keepWorkDirOutOfGit(ctx, harness, environment, reporter);
       const onEvent = (event) => {
         tracker.observe(event);
         keepOut(event);
+        if (event?.type === "provider.updated" || event?.type === "model.updated")
+          readProviders();
       };
       const stopWatching = watchEvents(ctx, onActivation, onEvent, reporter, options.fallbackMs ?? FALLBACK_MS);
       return async () => {
@@ -2855,15 +3073,17 @@ Settings live in \`~/.config/opencode/ecmwf-multi-agents.jsonc\`. A project can 
   "max_helper_slots": 4, // helpers at once, integer at least 1
   "agents": { // per-agent overrides, after the profile
     "builder": { "effort": "xhigh" },
-    "reviewer": { "model": "provider/model-name", "steps": 40 },
+    "reviewer": { "model": "provider/model-name", "fallback": ["provider/other-model"], "steps": 40 },
     "tester": { "enabled": true } // switch a helper on or off
   }
 }
 \`\`\`
 
-Each agent takes \`model\`, \`effort\` and \`steps\`; a helper also takes \`enabled\`, \`true\` or \`false\`. A project's file can switch on a helper that is off in yours, or the other way round. Effort is how hard a model thinks: more effort is slower and costs more. Values: \`low\`, \`medium\`, \`high\`, \`xhigh\`, \`max\`; some models also \`none\`. Defaults: \`lead\` xhigh, \`builder\` high, \`scout\` and reviewer medium. Effort needs a model, so under \`inherit\` set \`model\` too. \`steps\` caps an agent's turns, which limits cost.
+Each agent takes \`model\`, \`effort\`, \`fallback\` and \`steps\`; a helper also takes \`enabled\`, \`true\` or \`false\`. A project's file can switch on a helper that is off in yours, or the other way round. Effort is how hard a model thinks: more effort is slower and costs more. Values: \`low\`, \`medium\`, \`high\`, \`xhigh\`, \`max\`; some models also \`none\`. Defaults: \`lead\` xhigh, \`builder\` high, \`scout\` and reviewer medium. Effort needs a model, so under \`inherit\` set \`model\` too. \`steps\` caps an agent's turns, which limits cost.
 
 \`max_helper_slots\` tells \`lead\` how many helpers may run at once (default 4). More slots can run more builders, databases, dev servers and builds on the same machine; raise it with care. \`/execute\` and \`/onboard\` follow this limit.
+
+\`fallback\` lists models to try in order when an agent's \`model\` is not available: \`"provider/model"\` or \`{ "model": "...", "effort": "..." }\`. The plugin picks the first usable one at startup and when providers change, and shows a notice. It ignores rate limits and outages, needs \`model\` in the same entry, and does nothing without the plugin.
 
 Profiles give each agent a model and an effort:
 

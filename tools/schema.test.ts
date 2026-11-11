@@ -57,6 +57,8 @@ function hasType(type: JsonValue | undefined, value: unknown): boolean {
       return true;
     case "object":
       return isObject(value);
+    case "array":
+      return Array.isArray(value);
     case "string":
       return typeof value === "string";
     case "integer":
@@ -68,7 +70,23 @@ function hasType(type: JsonValue | undefined, value: unknown): boolean {
   }
 }
 
-const KNOWN = new Set(["$schema", "title", "description", "type", "enum", "default", "pattern", "minLength", "minimum", "properties", "additionalProperties"]);
+const KNOWN = new Set([
+  "$schema",
+  "title",
+  "description",
+  "type",
+  "enum",
+  "default",
+  "pattern",
+  "minLength",
+  "minimum",
+  "properties",
+  "additionalProperties",
+  "required",
+  "dependentRequired",
+  "items",
+  "oneOf",
+]);
 
 /** A small validator for the keywords the settings schema uses; returns the failing paths. */
 function validate(schema: JsonSchema, value: unknown, at = "$"): string[] {
@@ -91,6 +109,23 @@ function validate(schema: JsonSchema, value: unknown, at = "$"): string[] {
       if (child !== undefined) errors.push(...validate(child, item, `${at}.${key}`));
       else if (schema.additionalProperties === false) errors.push(`${at}.${key}: additionalProperties`);
     }
+    if (Array.isArray(schema.required)) {
+      for (const key of schema.required) if (!Object.hasOwn(value, String(key))) errors.push(`${at}.${key}: required`);
+    }
+    if (isObject(schema.dependentRequired)) {
+      for (const [key, needed] of Object.entries(schema.dependentRequired)) {
+        if (!Object.hasOwn(value, key)) continue;
+        for (const other of needed as string[]) if (!Object.hasOwn(value, other)) errors.push(`${at}.${other}: dependentRequired`);
+      }
+    }
+  }
+  if (Array.isArray(value) && isObject(schema.items)) {
+    value.forEach((item, index) => errors.push(...validate(schema.items as JsonSchema, item, `${at}[${index}]`)));
+  }
+  if (Array.isArray(schema.oneOf)) {
+    // Exactly one branch must accept the value; the failures of each branch are kept for the path.
+    const results = (schema.oneOf as JsonSchema[]).map((branch) => validate(branch, value, at));
+    if (results.filter((result) => result.length === 0).length !== 1) errors.push(`${at}: oneOf`, ...results.flat());
   }
   return errors;
 }
@@ -110,6 +145,9 @@ const GOOD: unknown[] = [
   { agents: { scout: { model: "My-Proxy/qwen:27b" } } },
   { agents: {} },
   { agents: { scout: { enabled: false }, tester: { enabled: true, effort: "low" } } },
+  { agents: { scout: { model: "acme/a", fallback: [] } } },
+  { agents: { scout: { model: "acme/a", fallback: ["acme/b", { model: "acme/c" }, { model: "acme/d", effort: "high" }] } } },
+  { agents: { lead: { model: "acme/big", effort: "low", fallback: [{ model: "acme/small", effort: "none" }] } } },
 ];
 
 const BAD: [unknown, string][] = [
@@ -137,6 +175,15 @@ const BAD: [unknown, string][] = [
   [{ agents: { scout: { effort: 2 } } }, "$.agents.scout.effort: type"],
   // The old name of effort.
   [{ agents: { lead: { model: "acme/big", variant: "high" } } }, "$.agents.lead.variant: additionalProperties"],
+  [{ agents: { scout: { fallback: ["acme/b"] } } }, "$.agents.scout.model: dependentRequired"],
+  [{ agents: { scout: { fallback: [] } } }, "$.agents.scout.model: dependentRequired"],
+  [{ agents: { scout: { model: "acme/a", fallback: "acme/b" } } }, "$.agents.scout.fallback: type"],
+  [{ agents: { scout: { model: "acme/a", fallback: ["gpt"] } } }, "$.agents.scout.fallback[0]: oneOf"],
+  [{ agents: { scout: { model: "acme/a", fallback: ["acme/b#high"] } } }, "$.agents.scout.fallback[0]: oneOf"],
+  [{ agents: { scout: { model: "acme/a", fallback: [3] } } }, "$.agents.scout.fallback[0]: oneOf"],
+  [{ agents: { scout: { model: "acme/a", fallback: [{ effort: "high" }] } } }, "$.agents.scout.fallback[0]: oneOf"],
+  [{ agents: { scout: { model: "acme/a", fallback: [{ model: "acme/b", effort: "" }] } } }, "$.agents.scout.fallback[0]: oneOf"],
+  [{ agents: { scout: { model: "acme/a", fallback: [{ model: "acme/b", steps: 3 }] } } }, "$.agents.scout.fallback[0]: oneOf"],
   [{ agents: { scout: { steps: 0 } } }, "$.agents.scout.steps: minimum"],
   [{ agents: { scout: { steps: 1.5 } } }, "$.agents.scout.steps: type"],
   [{ agents: { scout: { enabled: "yes" } } }, "$.agents.scout.enabled: type"],
@@ -172,6 +219,19 @@ describe("settings schema", () => {
     expect(effort.pattern).toBe(EFFORT_PATTERN.source);
   });
 
+  test("describes the fallback list: strings or model and effort objects, only with a model", () => {
+    const agent = sub(schema, "properties", "agents", "properties", "scout");
+    expect(agent.dependentRequired).toEqual({ fallback: ["model"] });
+    const fallback = sub(agent, "properties", "fallback");
+    expect(fallback.type).toBe("array");
+    const [text, object] = (sub(fallback, "items").oneOf as JsonSchema[]) as [JsonSchema, JsonSchema];
+    expect(text).toMatchObject({ type: "string", pattern: MODEL_PATTERN.source });
+    expect(object).toMatchObject({ type: "object", additionalProperties: false, required: ["model"] });
+    expect(sub(object, "properties", "model").pattern).toBe(MODEL_PATTERN.source);
+    expect(sub(object, "properties", "effort").pattern).toBe(EFFORT_PATTERN.source);
+    expect(String(fallback.description)).toContain("scout tries, in order");
+  });
+
   test("is draft 2020-12 and closed at every level", () => {
     expect(schema.$schema).toBe(SCHEMA_DIALECT);
     expect(SCHEMA_DIALECT).toBe("https://json-schema.org/draft/2020-12/schema");
@@ -201,9 +261,10 @@ describe("settings schema", () => {
       "enabled",
       "model",
       "effort",
+      "fallback",
       "steps",
     ]);
-    expect(Object.keys(sub(schema, "properties", "agents", "properties", "lead", "properties"))).toEqual(["model", "effort", "steps"]);
+    expect(Object.keys(sub(schema, "properties", "agents", "properties", "lead", "properties"))).toEqual(["model", "effort", "fallback", "steps"]);
     expect(sub(schema, "properties", "agents", "properties", "scout", "properties", "enabled")).toMatchObject({ type: "boolean", default: true });
     expect(sub(schema, "properties", "agents", "properties", "tester", "properties", "enabled")).toMatchObject({ type: "boolean", default: false });
     expect(sub(schema, "properties", "agents", "properties", "scout", "properties", "steps")).toMatchObject({

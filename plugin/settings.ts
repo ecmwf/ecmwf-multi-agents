@@ -12,6 +12,7 @@ import {
   type AgentOverride,
   type EmbeddedHarness,
   type Environment,
+  type FallbackEntry,
   type Problem,
   type ReviewPolicy,
   type Settings,
@@ -27,7 +28,8 @@ export const MODEL_PATTERN = /^[^/#\s]+\/[^#\s]+$/;
 export const EFFORT_PATTERN = /^[^#\s]+$/;
 
 const TOP_KEYS = ["$schema", "review", "profile", "default_agent", "max_helper_slots", "agents"];
-const AGENT_KEYS = ["enabled", "model", "effort", "steps"];
+const AGENT_KEYS = ["enabled", "model", "effort", "fallback", "steps"];
+const FALLBACK_KEYS = ["model", "effort"];
 /** Agent keys that were renamed, to the name they have now. */
 const RENAMED_AGENT_KEYS: Readonly<Record<string, string>> = { variant: "effort" };
 
@@ -152,6 +154,10 @@ function validateAgent(id: string, entry: Record<string, unknown>, problems: str
         if (typeof item === "string" && EFFORT_PATTERN.test(item)) out.effort = item;
         else problems.push(`${name} must be a non-empty name such as "high", without "#" or spaces, not ${shown(item)}`);
         break;
+      case "fallback":
+        if (!has(entry, "model")) problems.push(`${name} needs a model in the same entry: the fallbacks are for that model`);
+        out.fallback = validateFallback(`agents.${id}.fallback`, item, problems);
+        break;
       case "steps":
         if (typeof item === "number" && Number.isInteger(item) && item >= 1) out.steps = item;
         else problems.push(`${name} must be a whole number of at least 1, not ${shown(item)}`);
@@ -166,6 +172,47 @@ function validateAgent(id: string, entry: Record<string, unknown>, problems: str
       }
     }
   }
+  return out;
+}
+
+/**
+ * The fallback list of one agent: an array of `provider/model` texts or { model, effort } objects,
+ * returned as objects. Entries that break a rule are reported and left out.
+ */
+function validateFallback(path: string, item: unknown, problems: string[]): FallbackEntry[] {
+  const out: FallbackEntry[] = [];
+  if (!Array.isArray(item)) {
+    problems.push(`"${path}" must be a list of models, each provider/model or { "model": "provider/model", "effort": "high" }, not ${shown(item)}`);
+    return out;
+  }
+  item.forEach((candidate: unknown, index) => {
+    const at = `${path}[${index}]`;
+    if (typeof candidate === "string") {
+      if (MODEL_PATTERN.test(candidate)) out.push({ model: candidate });
+      else problems.push(`"${at}" must look like provider/model, without "#" or spaces, not ${shown(candidate)}`);
+      return;
+    }
+    if (!isObject(candidate)) {
+      problems.push(`"${at}" must be provider/model or an object with ${listWords(FALLBACK_KEYS, "and")}, not ${shown(candidate)}`);
+      return;
+    }
+    // A problem makes the whole file invalid, so a bad entry's value never reaches `out`.
+    const entry: Partial<FallbackEntry> = {};
+    for (const key of Object.keys(candidate)) {
+      const value = candidate[key];
+      if (key === "model") {
+        if (typeof value === "string" && MODEL_PATTERN.test(value)) entry.model = value;
+        else problems.push(`"${at}.model" must look like provider/model, without "#" or spaces, not ${shown(value)}`);
+      } else if (key === "effort") {
+        if (typeof value === "string" && EFFORT_PATTERN.test(value)) entry.effort = value;
+        else problems.push(`"${at}.effort" must be a non-empty name such as "high", without "#" or spaces, not ${shown(value)}`);
+      } else {
+        problems.push(`"${at}" has the unknown setting ${shown(key)}; an entry takes ${listWords(FALLBACK_KEYS, "and")}`);
+      }
+    }
+    if (!has(candidate, "model")) problems.push(`"${at}" needs a "model", written as provider/model`);
+    else if (entry.model !== undefined) out.push(entry as FallbackEntry);
+  });
   return out;
 }
 
@@ -192,7 +239,13 @@ export function mergeSettings(files: readonly SettingsFile[], harness: EmbeddedH
       settings.maxHelperSlotsSet = true;
     }
     for (const [id, override] of Object.entries(file.agents ?? {})) {
-      settings.agents[id] = { ...settings.agents[id], ...override };
+      // `fallback` is undefined until a file says something: the profile's list then applies. A
+      // file that sets `model` without `fallback` chose a new model, so the old list (from the
+      // profile or from an earlier file) no longer fits it: record that as [], which a later
+      // step reads as "cleared", not as "not given". A later file's `fallback` replaces the whole
+      // list; a file that sets only `effort` or `steps` leaves it alone.
+      const cleared = override.model !== undefined && override.fallback === undefined ? { fallback: [] } : {};
+      settings.agents[id] = { ...settings.agents[id], ...override, ...cleared };
     }
   }
   return settings;

@@ -1431,7 +1431,10 @@ doctor_live() {
 	json_values problem <"$DOCTOR_TMP/live" >"$DOCTOR_TMP/problems"
 	while IFS= read -r live_problem; do
 		[ -n "$live_problem" ] || continue
-		note "$live_problem"
+		case $live_problem in
+		*" runs on "*", its fallback number "*) ok "$live_problem" ;;
+		*) note "$live_problem" ;;
+		esac
 	done <"$DOCTOR_TMP/problems"
 	if [ "$MASKED" = 0 ] && grep -q "Duplicate plugin ID: $NAME" "$DOCTOR_TMP/live"; then
 		note "opencode loaded $NAME twice and kept the first (\"Duplicate plugin ID\"): a global install masks a project's plugins line"

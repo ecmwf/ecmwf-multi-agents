@@ -105,6 +105,49 @@ describe("planAgents", () => {
     expect(plans.find((plan) => plan.id === "reviewer")).toEqual({ id: "reviewer", model: "openai/gpt-x", effort: "high", steps: 40 });
     expect(plans.find((plan) => plan.id === "lead")).toEqual({ id: "lead" });
   });
+
+  describe("fallback models", () => {
+    const withFallback = structuredClone(harness);
+    const profile = withFallback.profiles.find((item) => item.id === "default")!;
+    profile.agents.scout!.fallback = [{ model: "openai/gpt-a", effort: "low" }, { model: "openai/gpt-b" }];
+    const plan = (settings: Settings, id = "scout") => planAgents(withFallback, settings).plans.find((item) => item.id === id)!;
+
+    test("the profile's list goes with the profile's model", () => {
+      expect(plan(mergeSettings([], withFallback))).toEqual({
+        id: "scout",
+        model: "anthropic/claude-sonnet-5-5",
+        effort: "medium",
+        fallback: [{ model: "openai/gpt-a", effort: "low" }, { model: "openai/gpt-b" }],
+      });
+      // An agent whose profile gives no list has none, and no empty list is carried.
+      expect("fallback" in plan(mergeSettings([], withFallback), "builder")).toBe(false);
+    });
+
+    test("an effort override alone keeps the profile's list", () => {
+      expect(plan(mergeSettings([{ agents: { scout: { effort: "high" } } }], withFallback))).toMatchObject({ effort: "high", fallback: [{ model: "openai/gpt-a", effort: "low" }, { model: "openai/gpt-b" }] });
+    });
+
+    test("a settings model without a list drops the profile's list", () => {
+      const result = plan(mergeSettings([{ agents: { scout: { model: "openai/gpt-x" } } }], withFallback));
+      expect(result).toEqual({ id: "scout", model: "openai/gpt-x" });
+    });
+
+    test("a settings model with its own list uses it, and a later file's list replaces an earlier one", () => {
+      const settings = mergeSettings(
+        [
+          { agents: { scout: { model: "openai/gpt-x", fallback: [{ model: "a/1" }] } } },
+          { agents: { scout: { model: "openai/gpt-x", fallback: [{ model: "b/2", effort: "max" }] } } },
+        ],
+        withFallback,
+      );
+      expect(plan(settings)).toEqual({ id: "scout", model: "openai/gpt-x", fallback: [{ model: "b/2", effort: "max" }] });
+    });
+
+    test("an empty list in the settings clears the profile's list", () => {
+      const settings = mergeSettings([{ agents: { scout: { model: "anthropic/claude-sonnet-5-5", fallback: [] } } }], withFallback);
+      expect("fallback" in plan(settings)).toBe(false);
+    });
+  });
 });
 
 describe("rewriteReviewLine", () => {

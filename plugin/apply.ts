@@ -8,7 +8,7 @@
 // changes nothing.
 
 import { enabledHelpers, helpersOf, rewriteHelperList } from "./helper-list.ts";
-import type { EmbeddedHarness, Problem, ReviewPolicy, Settings, V2AgentEditor, V2ModelRef } from "./types.ts";
+import type { EmbeddedHarness, FallbackEntry, Problem, ReviewPolicy, Settings, V2AgentEditor, V2ModelRef } from "./types.ts";
 
 /** The model, reasoning effort and step limit one agent ends up with. */
 export interface AgentPlan {
@@ -17,14 +17,18 @@ export interface AgentPlan {
   model?: string;
   /** Written to opencode as the model variant. */
   effort?: string;
+  /** Models to try, in order, when `model` is not usable (see ModelChoices); only with a model. */
+  fallback?: FallbackEntry[];
   /** undefined: keep the agent's own step limit. */
   steps?: number;
 }
 
 /**
- * The chosen profile, then the per-agent overrides. Model and effort go together: an override
- * model replaces the profile's model and effort; an override effort alone applies to the
- * profile's model, and is reported and ignored when there is no model at all.
+ * The chosen profile, then the per-agent overrides. Model, effort and fallbacks go together: an
+ * override model replaces the profile's model, effort and fallbacks (its own fallbacks, if
+ * any, take their place); an override effort alone applies to the profile's model, and is
+ * reported and ignored when there is no model at all. An override `fallback`, even an empty
+ * one, replaces the profile's list; none given leaves the profile's.
  */
 export function planAgents(harness: EmbeddedHarness, settings: Settings): { plans: AgentPlan[]; problems: Problem[] } {
   const profile = harness.profiles.find((item) => item.id === settings.profile);
@@ -36,10 +40,13 @@ export function planAgents(harness: EmbeddedHarness, settings: Settings): { plan
     if (override.model !== undefined) {
       plan.model = override.model;
       if (override.effort !== undefined) plan.effort = override.effort;
+      if (override.fallback !== undefined && override.fallback.length > 0) plan.fallback = override.fallback;
     } else if (fromProfile?.model !== undefined) {
       plan.model = fromProfile.model;
       const effort = override.effort ?? fromProfile.effort;
       if (effort !== undefined) plan.effort = effort;
+      const fallback = override.fallback ?? fromProfile.fallback;
+      if (fallback !== undefined && fallback.length > 0) plan.fallback = fallback;
     } else if (override.effort !== undefined) {
       problems.push({
         message:

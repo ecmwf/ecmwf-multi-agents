@@ -5,7 +5,10 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { embedHarness } from "./bundle-plugin.ts";
+import { v2AgentFile } from "./emit-v2.ts";
 import { lineColumn, load, markdownProblem, parseJsonc, parseVersion, templateProblem } from "./load.ts";
+import { resolveHarness } from "./resolve.ts";
 import { GeneratorError } from "./util.ts";
 
 // Fixtures are loose JSON on purpose: the tests break them in every way.
@@ -262,7 +265,7 @@ describe("unknown keys", () => {
       "src/manifest.jsonc: commands.execute.model: unknown key",
       "src/manifest.jsonc: skills.test-plan.license: unknown key",
       "src/profiles/default.jsonc: models: unknown key; allowed keys are description and agents",
-      "src/profiles/default.jsonc: agents.lead.steps: unknown key; allowed keys are model and effort",
+      "src/profiles/default.jsonc: agents.lead.steps: unknown key; allowed keys are model, effort and fallback",
     );
     expect(problems).toHaveLength(9);
   });
@@ -276,7 +279,7 @@ describe("unknown keys", () => {
     expect(await problemsOf({ manifest: m, profiles: { default: profile } })).toEqual([
       "src/manifest.jsonc: version: unknown key; allowed keys are name, defaultAgent, defaultProfile, workDir, marker, budgets, ruleSets, agents, commands, skills, helperOff and reviewPolicies",
       "src/manifest.jsonc: agents.builder.base: unknown key; allowed keys are mode, description, prompt, budget, steps, color, permissions, optional and routing",
-      "src/profiles/default.jsonc: agents.lead.variant: unknown key; allowed keys are model and effort",
+      "src/profiles/default.jsonc: agents.lead.variant: unknown key; allowed keys are model, effort and fallback",
     ]);
   });
 });
@@ -658,6 +661,72 @@ describe("profiles", () => {
       'src/profiles/other.jsonc: agents.scout.effort: "very high" must be one word without "#", such as high',
       "src/profiles/other.jsonc: agents.builder.effort: must be a non-empty string, not an empty string",
     ]);
+  });
+
+  test("an agent may carry a fallback list, written as texts or objects and read as objects", async () => {
+    const profile = {
+      description: "Fallbacks.",
+      agents: {
+        lead: { model: "acme/big-1", effort: "high", fallback: ["acme/big-0", { model: "acme/mid-1" }, { model: "acme/small-1", effort: "low" }] },
+        scout: { model: "acme/small-1", fallback: [] },
+        builder: { model: "acme/small-1" },
+      },
+    };
+    const source = await load(await fixture({ profiles: { default: DEFAULT_PROFILE, fb: profile } }));
+    const agents = source.profiles.find((item) => item.id === "fb")!.agents;
+    expect(agents.lead).toEqual({
+      model: "acme/big-1",
+      effort: "high",
+      fallback: [{ model: "acme/big-0" }, { model: "acme/mid-1" }, { model: "acme/small-1", effort: "low" }],
+    });
+    expect(agents.scout).toEqual({ model: "acme/small-1", fallback: [] });
+    expect(agents.builder).toEqual({ model: "acme/small-1" });
+  });
+
+  test("a broken fallback list is reported entry by entry", async () => {
+    const broken = {
+      description: "Broken.",
+      agents: {
+        lead: { model: "acme/big-1", fallback: "acme/x" },
+        scout: {
+          model: "acme/small-1",
+          fallback: ["acme", "acme/x#high", 3, { effort: "high" }, { model: "acme/y", effort: "hi gh" }, { model: "acme/z", steps: 2 }],
+        },
+        builder: { fallback: ["acme/x"] },
+      },
+    };
+    const problems = await problemsOf({ profiles: { default: DEFAULT_PROFILE, broken } });
+    expect(problems).toEqual([
+      "src/profiles/broken.jsonc: agents.lead.fallback: must be a list of models, each provider/model or {\"model\", \"effort\"}, not \"acme/x\"",
+      'src/profiles/broken.jsonc: agents.scout.fallback[0]: "acme" must look like provider/model, with a lowercase provider id and no spaces',
+      'src/profiles/broken.jsonc: agents.scout.fallback[1]: "acme/x#high" must not contain "#"; set the effort separately',
+      "src/profiles/broken.jsonc: agents.scout.fallback[2]: must be an object, not the number 3",
+      "src/profiles/broken.jsonc: agents.scout.fallback[3].model: required key is missing",
+      'src/profiles/broken.jsonc: agents.scout.fallback[4].effort: "hi gh" must be one word without "#", such as high',
+      "src/profiles/broken.jsonc: agents.scout.fallback[5].steps: unknown key; allowed keys are model and effort",
+      "src/profiles/broken.jsonc: agents.builder.fallback: a fallback needs a model in the same entry: the fallbacks are for that model",
+    ]);
+  });
+
+  test("the fallback list reaches the embedded profile data but not the agent files", async () => {
+    const profile = {
+      description: "Fallbacks.",
+      agents: { lead: { model: "acme/big-1", effort: "high", fallback: ["acme/big-0", { model: "acme/small-1", effort: "low" }] } },
+    };
+    const harness = resolveHarness(await load(await fixture({ profiles: { default: profile } })));
+    expect(embedHarness(harness).profiles[0]!.agents.lead).toEqual({
+      model: "acme/big-1",
+      effort: "high",
+      fallback: [{ model: "acme/big-0" }, { model: "acme/small-1", effort: "low" }],
+    });
+    const lead = harness.agents.find((agent) => agent.id === "lead")!;
+    expect(lead.model).toBe("acme/big-1");
+    expect(Object.keys(lead)).not.toContain("fallback");
+    const file = v2AgentFile(lead, harness.marker).content;
+    expect(file).toContain("acme/big-1");
+    expect(file).not.toContain("acme/big-0");
+    expect(file).not.toContain("acme/small-1");
+    expect(file).not.toContain("fallback");
   });
 
   test("profile ids come from file names; description and agents are required", async () => {

@@ -58,6 +58,11 @@
           "description": "Talks to you, plans, hands work to helpers and checks the results. Start here. Settings here override the profile for lead.",
           "type": "object",
           "additionalProperties": false,
+          "dependentRequired": {
+            "fallback": [
+              "model"
+            ]
+          },
           "properties": {
             "model": {
               "title": "Model",
@@ -72,6 +77,47 @@
               "minLength": 1,
               "pattern": "^[^#\\s]+$"
             },
+            "fallback": {
+              "title": "Fallback models",
+              "description": "Models lead tries, in order, when its own model is not usable. Each entry is provider/model, or an object with \"model\" and an optional \"effort\". Needs a model in this same entry. Setting a model without a fallback list drops the profile's list; an empty list means no fallbacks. A list here replaces any list from the profile or from an earlier settings file.",
+              "type": "array",
+              "items": {
+                "title": "Fallback model",
+                "description": "A model, or a model with its reasoning effort.",
+                "oneOf": [
+                  {
+                    "title": "Model",
+                    "description": "Written as provider/model. No \"#\" and no spaces.",
+                    "type": "string",
+                    "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
+                  },
+                  {
+                    "title": "Model with effort",
+                    "description": "A fallback model and the reasoning effort to use on it.",
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "model"
+                    ],
+                    "properties": {
+                      "model": {
+                        "title": "Model",
+                        "description": "Written as provider/model. No \"#\" and no spaces.",
+                        "type": "string",
+                        "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
+                      },
+                      "effort": {
+                        "title": "Reasoning effort",
+                        "description": "Reasoning effort for this model, such as \"high\". No \"#\" and no spaces. Leave it out for the model's own default.",
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "^[^#\\s]+$"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
             "steps": {
               "title": "Step limit",
               "description": "Most model turns lead may take before it stops and reports. A whole number of at least 1. Default: no limit.",
@@ -85,6 +131,11 @@
           "description": "Read-only lookups and investigations in code, docs or the web. Returns a short answer with file:line evidence; long findings go to a notes file. Settings here override the profile for scout.",
           "type": "object",
           "additionalProperties": false,
+          "dependentRequired": {
+            "fallback": [
+              "model"
+            ]
+          },
           "properties": {
             "enabled": {
               "title": "On or off",
@@ -105,6 +156,47 @@
               "minLength": 1,
               "pattern": "^[^#\\s]+$"
             },
+            "fallback": {
+              "title": "Fallback models",
+              "description": "Models scout tries, in order, when its own model is not usable. Each entry is provider/model, or an object with \"model\" and an optional \"effort\". Needs a model in this same entry. Setting a model without a fallback list drops the profile's list; an empty list means no fallbacks. A list here replaces any list from the profile or from an earlier settings file.",
+              "type": "array",
+              "items": {
+                "title": "Fallback model",
+                "description": "A model, or a model with its reasoning effort.",
+                "oneOf": [
+                  {
+                    "title": "Model",
+                    "description": "Written as provider/model. No \"#\" and no spaces.",
+                    "type": "string",
+                    "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
+                  },
+                  {
+                    "title": "Model with effort",
+                    "description": "A fallback model and the reasoning effort to use on it.",
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "model"
+                    ],
+                    "properties": {
+                      "model": {
+                        "title": "Model",
+                        "description": "Written as provider/model. No \"#\" and no spaces.",
+                        "type": "string",
+                        "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
+                      },
+                      "effort": {
+                        "title": "Reasoning effort",
+                        "description": "Reasoning effort for this model, such as \"high\". No \"#\" and no spaces. Leave it out for the model's own default.",
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "^[^#\\s]+$"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
             "steps": {
               "title": "Step limit",
               "description": "Most model turns scout may take before it stops and reports. A whole number of at least 1. Default: 30.",
@@ -118,6 +210,11 @@
           "description": "Makes one clearly specified change, runs its checks and reports. Never commits. Settings here override the profile for builder.",
           "type": "object",
           "additionalProperties": false,
+          "dependentRequired": {
+            "fallback": [
+              "model"
+            ]
+          },
           "properties": {
             "enabled": {
               "title": "On or off",
@@ -138,6 +235,47 @@
               "minLength": 1,
               "pattern": "^[^#\\s]+$"
             },
+            "fallback": {
+              "title": "Fallback models",
+              "description": "Models builder tries, in order, when its own model is not usable. Each entry is provider/model, or an object with \"model\" and an optional \"effort\". Needs a model in this same entry. Setting a model without a fallback list drops the profile's list; an empty list means no fallbacks. A list here replaces any list from the profile or from an earlier settings file.",
+              "type": "array",
+              "items": {
+                "title": "Fallback model",
+                "description": "A model, or a model with its reasoning effort.",
+                "oneOf": [
+                  {
+                    "title": "Model",
+                    "description": "Written as provider/model. No \"#\" and no spaces.",
+                    "type": "string",
+                    "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
+                  },
+                  {
+                    "title": "Model with effort",
+                    "description": "A fallback model and the reasoning effort to use on it.",
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "model"
+                    ],
+                    "properties": {
+                      "model": {
+                        "title": "Model",
+                        "description": "Written as provider/model. No \"#\" and no spaces.",
+                        "type": "string",
+                        "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
+                      },
+                      "effort": {
+                        "title": "Reasoning effort",
+                        "description": "Reasoning effort for this model, such as \"high\". No \"#\" and no spaces. Leave it out for the model's own default.",
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "^[^#\\s]+$"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
             "steps": {
               "title": "Step limit",
               "description": "Most model turns builder may take before it stops and reports. A whole number of at least 1. Default: 60.",
@@ -151,6 +289,11 @@
           "description": "Independent review of a plan or a change. Answers APPROVE or REJECT with at most three blockers. Settings here override the profile for reviewer.",
           "type": "object",
           "additionalProperties": false,
+          "dependentRequired": {
+            "fallback": [
+              "model"
+            ]
+          },
           "properties": {
             "enabled": {
               "title": "On or off",
@@ -171,6 +314,47 @@
               "minLength": 1,
               "pattern": "^[^#\\s]+$"
             },
+            "fallback": {
+              "title": "Fallback models",
+              "description": "Models reviewer tries, in order, when its own model is not usable. Each entry is provider/model, or an object with \"model\" and an optional \"effort\". Needs a model in this same entry. Setting a model without a fallback list drops the profile's list; an empty list means no fallbacks. A list here replaces any list from the profile or from an earlier settings file.",
+              "type": "array",
+              "items": {
+                "title": "Fallback model",
+                "description": "A model, or a model with its reasoning effort.",
+                "oneOf": [
+                  {
+                    "title": "Model",
+                    "description": "Written as provider/model. No \"#\" and no spaces.",
+                    "type": "string",
+                    "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
+                  },
+                  {
+                    "title": "Model with effort",
+                    "description": "A fallback model and the reasoning effort to use on it.",
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "model"
+                    ],
+                    "properties": {
+                      "model": {
+                        "title": "Model",
+                        "description": "Written as provider/model. No \"#\" and no spaces.",
+                        "type": "string",
+                        "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
+                      },
+                      "effort": {
+                        "title": "Reasoning effort",
+                        "description": "Reasoning effort for this model, such as \"high\". No \"#\" and no spaces. Leave it out for the model's own default.",
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "^[^#\\s]+$"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
             "steps": {
               "title": "Step limit",
               "description": "Most model turns reviewer may take before it stops and reports. A whole number of at least 1. Default: 30.",
@@ -184,6 +368,11 @@
           "description": "Deep investigation of a hard question: compares options, may run experiments in a scratch folder, and writes a report. Settings here override the profile for researcher.",
           "type": "object",
           "additionalProperties": false,
+          "dependentRequired": {
+            "fallback": [
+              "model"
+            ]
+          },
           "properties": {
             "enabled": {
               "title": "On or off",
@@ -204,6 +393,47 @@
               "minLength": 1,
               "pattern": "^[^#\\s]+$"
             },
+            "fallback": {
+              "title": "Fallback models",
+              "description": "Models researcher tries, in order, when its own model is not usable. Each entry is provider/model, or an object with \"model\" and an optional \"effort\". Needs a model in this same entry. Setting a model without a fallback list drops the profile's list; an empty list means no fallbacks. A list here replaces any list from the profile or from an earlier settings file.",
+              "type": "array",
+              "items": {
+                "title": "Fallback model",
+                "description": "A model, or a model with its reasoning effort.",
+                "oneOf": [
+                  {
+                    "title": "Model",
+                    "description": "Written as provider/model. No \"#\" and no spaces.",
+                    "type": "string",
+                    "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
+                  },
+                  {
+                    "title": "Model with effort",
+                    "description": "A fallback model and the reasoning effort to use on it.",
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "model"
+                    ],
+                    "properties": {
+                      "model": {
+                        "title": "Model",
+                        "description": "Written as provider/model. No \"#\" and no spaces.",
+                        "type": "string",
+                        "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
+                      },
+                      "effort": {
+                        "title": "Reasoning effort",
+                        "description": "Reasoning effort for this model, such as \"high\". No \"#\" and no spaces. Leave it out for the model's own default.",
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "^[^#\\s]+$"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
             "steps": {
               "title": "Step limit",
               "description": "Most model turns researcher may take before it stops and reports. A whole number of at least 1. Default: 80.",
@@ -217,6 +447,11 @@
           "description": "Tries to break a change or a piece of code with edge cases and new tests; never fixes product code; drafts issues. Settings here override the profile for tester.",
           "type": "object",
           "additionalProperties": false,
+          "dependentRequired": {
+            "fallback": [
+              "model"
+            ]
+          },
           "properties": {
             "enabled": {
               "title": "On or off",
@@ -237,6 +472,47 @@
               "minLength": 1,
               "pattern": "^[^#\\s]+$"
             },
+            "fallback": {
+              "title": "Fallback models",
+              "description": "Models tester tries, in order, when its own model is not usable. Each entry is provider/model, or an object with \"model\" and an optional \"effort\". Needs a model in this same entry. Setting a model without a fallback list drops the profile's list; an empty list means no fallbacks. A list here replaces any list from the profile or from an earlier settings file.",
+              "type": "array",
+              "items": {
+                "title": "Fallback model",
+                "description": "A model, or a model with its reasoning effort.",
+                "oneOf": [
+                  {
+                    "title": "Model",
+                    "description": "Written as provider/model. No \"#\" and no spaces.",
+                    "type": "string",
+                    "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
+                  },
+                  {
+                    "title": "Model with effort",
+                    "description": "A fallback model and the reasoning effort to use on it.",
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "model"
+                    ],
+                    "properties": {
+                      "model": {
+                        "title": "Model",
+                        "description": "Written as provider/model. No \"#\" and no spaces.",
+                        "type": "string",
+                        "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
+                      },
+                      "effort": {
+                        "title": "Reasoning effort",
+                        "description": "Reasoning effort for this model, such as \"high\". No \"#\" and no spaces. Leave it out for the model's own default.",
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "^[^#\\s]+$"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
             "steps": {
               "title": "Step limit",
               "description": "Most model turns tester may take before it stops and reports. A whole number of at least 1. Default: 60.",
@@ -250,6 +526,11 @@
           "description": "Designs user interfaces and interactions: a spec, a standalone prototype and screenshots. Never changes the project's code. Settings here override the profile for designer.",
           "type": "object",
           "additionalProperties": false,
+          "dependentRequired": {
+            "fallback": [
+              "model"
+            ]
+          },
           "properties": {
             "enabled": {
               "title": "On or off",
@@ -270,6 +551,47 @@
               "minLength": 1,
               "pattern": "^[^#\\s]+$"
             },
+            "fallback": {
+              "title": "Fallback models",
+              "description": "Models designer tries, in order, when its own model is not usable. Each entry is provider/model, or an object with \"model\" and an optional \"effort\". Needs a model in this same entry. Setting a model without a fallback list drops the profile's list; an empty list means no fallbacks. A list here replaces any list from the profile or from an earlier settings file.",
+              "type": "array",
+              "items": {
+                "title": "Fallback model",
+                "description": "A model, or a model with its reasoning effort.",
+                "oneOf": [
+                  {
+                    "title": "Model",
+                    "description": "Written as provider/model. No \"#\" and no spaces.",
+                    "type": "string",
+                    "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
+                  },
+                  {
+                    "title": "Model with effort",
+                    "description": "A fallback model and the reasoning effort to use on it.",
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "model"
+                    ],
+                    "properties": {
+                      "model": {
+                        "title": "Model",
+                        "description": "Written as provider/model. No \"#\" and no spaces.",
+                        "type": "string",
+                        "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
+                      },
+                      "effort": {
+                        "title": "Reasoning effort",
+                        "description": "Reasoning effort for this model, such as \"high\". No \"#\" and no spaces. Leave it out for the model's own default.",
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "^[^#\\s]+$"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
             "steps": {
               "title": "Step limit",
               "description": "Most model turns designer may take before it stops and reports. A whole number of at least 1. Default: 60.",
@@ -283,6 +605,11 @@
           "description": "Answers questions about datasets with scripts it writes and runs, keeping the data out of its context. Settings here override the profile for data-scientist.",
           "type": "object",
           "additionalProperties": false,
+          "dependentRequired": {
+            "fallback": [
+              "model"
+            ]
+          },
           "properties": {
             "enabled": {
               "title": "On or off",
@@ -302,6 +629,47 @@
               "type": "string",
               "minLength": 1,
               "pattern": "^[^#\\s]+$"
+            },
+            "fallback": {
+              "title": "Fallback models",
+              "description": "Models data-scientist tries, in order, when its own model is not usable. Each entry is provider/model, or an object with \"model\" and an optional \"effort\". Needs a model in this same entry. Setting a model without a fallback list drops the profile's list; an empty list means no fallbacks. A list here replaces any list from the profile or from an earlier settings file.",
+              "type": "array",
+              "items": {
+                "title": "Fallback model",
+                "description": "A model, or a model with its reasoning effort.",
+                "oneOf": [
+                  {
+                    "title": "Model",
+                    "description": "Written as provider/model. No \"#\" and no spaces.",
+                    "type": "string",
+                    "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
+                  },
+                  {
+                    "title": "Model with effort",
+                    "description": "A fallback model and the reasoning effort to use on it.",
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "model"
+                    ],
+                    "properties": {
+                      "model": {
+                        "title": "Model",
+                        "description": "Written as provider/model. No \"#\" and no spaces.",
+                        "type": "string",
+                        "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
+                      },
+                      "effort": {
+                        "title": "Reasoning effort",
+                        "description": "Reasoning effort for this model, such as \"high\". No \"#\" and no spaces. Leave it out for the model's own default.",
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "^[^#\\s]+$"
+                      }
+                    }
+                  }
+                ]
+              }
             },
             "steps": {
               "title": "Step limit",

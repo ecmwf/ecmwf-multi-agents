@@ -206,10 +206,10 @@ in `.opencode/ecmwf-multi-agents.jsonc`.
   // Helpers lead may run at once: an integer of at least 1, default 4.
   "max_helper_slots": 4,
   // Optional per-agent overrides, applied after the profile: enabled (helpers only), model,
-  // effort and steps.
+  // effort, fallback and steps.
   "agents": {
     "builder": { "effort": "xhigh" },
-    "reviewer": { "model": "openai/gpt-6.1-sol", "effort": "high" },
+    "reviewer": { "model": "openai/gpt-6.1-sol", "effort": "high", "fallback": ["anthropic/claude-opus-5-5"] },
     "tester": { "enabled": true }
   }
 }
@@ -222,6 +222,11 @@ Effort values are `low`, `medium`, `high`, `xhigh` and `max` (some models also o
 The defaults are `lead` xhigh, `builder` high, `scout` and `reviewer` medium. An effort needs a
 model to apply to, so with the `inherit` profile give the agent a `model` as well. `steps`
 caps how many turns an agent may take, which limits its cost.
+
+`fallback` lists other models, in order, for when an agent's `model` is not set up in opencode:
+each is `"provider/model"` or `{ "model": "provider/model", "effort": "high" }`. The plugin uses
+the first one opencode lists as available, at startup and whenever providers change, and shows
+a notice when it does. It does not switch on rate limits or outages during a run.
 
 | Review policy | Effect |
 |---|---|

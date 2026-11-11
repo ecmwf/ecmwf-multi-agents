@@ -10,7 +10,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { type Node, type ParseError, parseTree, printParseErrorCode } from "jsonc-parser";
 import { EFFORT_PATTERN, MODEL_PATTERN } from "../plugin/settings.ts";
-import { REVIEW_POLICIES, type ReviewPolicy } from "../plugin/types.ts";
+import { REVIEW_POLICIES, type FallbackEntry, type ReviewPolicy } from "../plugin/types.ts";
 import { ACTIONS, PLATFORM_TOOL_IDS, TOOL_ID, type Action, type AgentMode, type Effect, type Profile, type ProfileAgent } from "./types.ts";
 import {
   compareBytes,
@@ -149,7 +149,8 @@ const COMMAND_REQUIRED = ["description", "agent", "template"];
 const SKILL_KEYS = ["description", "body", "hidden"];
 const SKILL_REQUIRED = ["description", "body"];
 const PROFILE_KEYS = ["description", "agents"];
-const PROFILE_AGENT_KEYS = ["model", "effort"];
+const PROFILE_AGENT_KEYS = ["model", "effort", "fallback"];
+const FALLBACK_KEYS = ["model", "effort"];
 
 // ---------------------------------------------------------------------------------------------
 // JSONC
@@ -733,6 +734,36 @@ function readProfileEffort(value: unknown, c: Checker, at: KeyPath): string | un
   return effort;
 }
 
+/**
+ * The fallback list of one profile agent, as objects: each entry is `provider/model` or
+ * { model, effort }, with the same model and effort rules as the agent's own. An empty list is
+ * valid. Entries that break a rule are reported and left out.
+ */
+function readProfileFallback(value: unknown, c: Checker, at: KeyPath): FallbackEntry[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    c.fail(at, `must be a list of models, each provider/model or {"model", "effort"}, not ${kind(value)}`);
+    return undefined;
+  }
+  const out: FallbackEntry[] = [];
+  value.forEach((item: unknown, index) => {
+    const itemAt = [...at, index];
+    if (typeof item === "string") {
+      const model = readProfileModel(item, c, itemAt);
+      if (model !== undefined) out.push({ model });
+      return;
+    }
+    const entry = c.object(item, itemAt);
+    if (entry === undefined) return;
+    c.keys(entry, itemAt, FALLBACK_KEYS, ["model"]);
+    const model = readProfileModel(entry.model, c, [...itemAt, "model"]);
+    const effort = readProfileEffort(entry.effort, c, [...itemAt, "effort"]);
+    if (model === undefined) return;
+    out.push(effort === undefined ? { model } : { model, effort });
+  });
+  return out;
+}
+
 function readProfile(
   id: string,
   value: unknown,
@@ -757,9 +788,14 @@ function readProfile(
     if (entry.effort !== undefined && entry.model === undefined) {
       c.fail([...at, "effort"], "an effort needs a model in the same entry");
     }
+    const fallback = readProfileFallback(entry.fallback, c, [...at, "fallback"]);
+    if (entry.fallback !== undefined && entry.model === undefined) {
+      c.fail([...at, "fallback"], "a fallback needs a model in the same entry: the fallbacks are for that model");
+    }
     const agent: ProfileAgent = {};
     if (model !== undefined) agent.model = model;
     if (effort !== undefined) agent.effort = effort;
+    if (fallback !== undefined) agent.fallback = fallback;
     // Only manifest agent ids are stored, so a key such as "__proto__" never reaches the record.
     if (knownAgent) agents[agentId] = agent;
   }
