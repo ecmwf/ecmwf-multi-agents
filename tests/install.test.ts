@@ -726,6 +726,8 @@ describe("doctor asks opencode through the plugin's RPC", () => {
           { problem: `${NAME}: ignoring /x/${NAME}.jsonc: "review" must be auto, ask, always or never, not "often"`, notify: true },
           { problem: "second problem", notify: false },
           { problem: `${NAME}: reviewer runs on anthropic/claude-opus-5-5, its fallback number 1: github-copilot/gpt-6.1-sol skipped: provider github-copilot is not available`, notify: true },
+          { problem: `${NAME}: scout runs on anthropic/claude-haiku-5, its fallback number 1: openai/gpt-x skipped: provider openai is not available`, notify: true },
+          { problem: `${NAME}: tester runs on openai/gpt-x, its fallback number 1: github-copilot/gpt-6.1-sol skipped: provider github-copilot is not available`, notify: true },
         ],
       },
     });
@@ -733,6 +735,11 @@ describe("doctor asks opencode through the plugin's RPC", () => {
     expect(code).toBe(0);
     // A fallback in use is how the settings ask it to work: information, not a warning.
     expect(out).toContain(`OK    ${NAME}: reviewer runs on anthropic/claude-opus-5-5, its fallback number 1`);
+    // On lead's provider, the reviewer's checks no longer come from another model family.
+    expect(out).toContain("WARN  the reviewer runs on anthropic, as lead does, so its checks no longer come from another model family; set up github-copilot to restore that");
+    // Only for the reviewer and the tester, and only on lead's provider.
+    expect(out).not.toContain("the scout runs on");
+    expect(out).not.toContain("the tester runs on");
     expect(out).toContain("OK    lead is the harness's, with the plugin 9.9.9 active");
     expect(out).toContain("WARN  the default agent is build, not lead");
     expect(out).toContain(`WARN  ${NAME}: ignoring /x/${NAME}.jsonc: "review" must be auto, ask, always or never, not "often"`);

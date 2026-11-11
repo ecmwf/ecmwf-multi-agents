@@ -1,6 +1,6 @@
 {
   "id": "default",
-  "description": "Anthropic for lead, scout and builder; GitHub Copilot GPT for the reviewer and the tester, so they check work with a different model family.",
+  "description": "Anthropic for lead, scout and builder; GitHub Copilot GPT for the reviewer and the tester, so they check work with a different model family, or Claude Opus where GitHub Copilot is not set up.",
   "agents": {
     "lead": {
       "model": "anthropic/claude-opus-5-5",
@@ -16,7 +16,13 @@
     },
     "reviewer": {
       "model": "github-copilot/gpt-6.1-sol",
-      "effort": "medium"
+      "effort": "medium",
+      "fallback": [
+        {
+          "model": "anthropic/claude-opus-5-5",
+          "effort": "high"
+        }
+      ]
     },
     "researcher": {
       "model": "anthropic/claude-opus-5-5",
@@ -24,7 +30,13 @@
     },
     "tester": {
       "model": "github-copilot/gpt-6.1-sol",
-      "effort": "high"
+      "effort": "high",
+      "fallback": [
+        {
+          "model": "anthropic/claude-opus-5-5",
+          "effort": "high"
+        }
+      ]
     },
     "designer": {
       "model": "anthropic/claude-opus-5-5",

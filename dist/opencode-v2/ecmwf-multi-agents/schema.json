@@ -24,7 +24,7 @@
     },
     "profile": {
       "title": "Model profile",
-      "description": "Which models the agents use. Default: default. anthropic: Anthropic models only. The reviewer and the tester use the strongest model, since a different family is not available. copilot: GitHub Copilot models only, with the same split as the default profile. default: Anthropic for lead, scout and builder; GitHub Copilot GPT for the reviewer and the tester, so they check work with a different model family. inherit: Every agent uses the model selected in the session. Helpers still differ by step limit.",
+      "description": "Which models the agents use. Default: default. anthropic: Anthropic models only. The reviewer and the tester use the strongest model, since a different family is not available. copilot: GitHub Copilot models only, with the same split as the default profile. default: Anthropic for lead, scout and builder; GitHub Copilot GPT for the reviewer and the tester, so they check work with a different model family, or Claude Opus where GitHub Copilot is not set up. inherit: Every agent uses the model selected in the session. Helpers still differ by step limit.",
       "type": "string",
       "enum": [
         "anthropic",

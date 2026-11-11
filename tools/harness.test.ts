@@ -210,7 +210,7 @@ describe("profiles", () => {
   test("give the optional helpers the models ADR 0005 names", () => {
     expect(models("default")).toEqual({
       researcher: { model: "anthropic/claude-opus-5-5", effort: "xhigh" },
-      tester: { model: "github-copilot/gpt-6.1-sol", effort: "high" },
+      tester: { model: "github-copilot/gpt-6.1-sol", effort: "high", fallback: [{ model: "anthropic/claude-opus-5-5", effort: "high" }] },
       designer: { model: "anthropic/claude-opus-5-5", effort: "high" },
       "data-scientist": { model: "anthropic/claude-sonnet-5-5", effort: "high" },
     });
@@ -227,6 +227,16 @@ describe("profiles", () => {
       "data-scientist": { model: "github-copilot/claude-sonnet-5.5", effort: "high" },
     });
     expect(models("inherit")).toEqual({ researcher: undefined, tester: undefined, designer: undefined, "data-scientist": undefined });
+  });
+
+  test("the default profile's Copilot agents fall back to the anthropic profile's model; no other agent or profile has a fallback", () => {
+    const withFallback = harness.profiles.flatMap((profile) => Object.entries(profile.agents).flatMap(([id, agent]) => (agent?.fallback === undefined ? [] : [`${profile.id}/${id}`])));
+    expect(withFallback.sort()).toEqual(["default/reviewer", "default/tester"]);
+    const profile = (id: string) => harness.profiles.find((item) => item.id === id)!;
+    for (const id of ["reviewer", "tester"]) {
+      const { model, effort } = profile("anthropic").agents[id]!;
+      expect(profile("default").agents[id]!.fallback).toEqual([{ model: model!, effort }]);
+    }
   });
 });
 

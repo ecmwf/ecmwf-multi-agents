@@ -19,6 +19,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
   does. It needs the plugin and does not react to rate limits or outages. Contributed by
   Harrison Cook (#7).
 
+### Changed
+
+- The `default` profile's reviewer and tester fall back to Claude Opus 5.5 at high effort when
+  GitHub Copilot is not set up, instead of failing; `install.sh doctor` warns that their checks
+  then no longer come from another model family.
+
 ## [0.9.1] - 2026-11-08
 
 ### Fixed

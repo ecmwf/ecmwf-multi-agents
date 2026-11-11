@@ -1343,6 +1343,18 @@ json_value() {
 	json_values "$1" <"$DOCTOR_TMP/live" | sed -n '1p'
 }
 
+# A reviewer or tester on a fallback from lead's provider no longer checks with another model
+# family. $1: the plugin's "<name>: <agent> runs on <provider/model>, its fallback number N:
+# <provider/model> skipped: ..." line; $2: lead's model.
+fallback_note() {
+	fallback_agent=$(printf '%s\n' "$1" | sed -n 's/^[^:]*: \([^ ]*\) runs on .*/\1/p')
+	case $fallback_agent in reviewer | tester) ;; *) return 0 ;; esac
+	fallback_provider=$(printf '%s\n' "$1" | sed -n 's/^.* runs on \([^/]*\)\/.*/\1/p')
+	own_provider=$(printf '%s\n' "$1" | sed -n 's/^.*, its fallback number [0-9]*: \([^/]*\)\/.*/\1/p')
+	[ -n "$fallback_provider" ] && [ "$fallback_provider" = "${2%%/*}" ] || return 0
+	note "the $fallback_agent runs on $fallback_provider, as lead does, so its checks no longer come from another model family; set up $own_provider to restore that"
+}
+
 # Every item of a list in the answer, separated by commas.
 json_list() {
 	json_values "$1" all <"$DOCTOR_TMP/live" | awk 'NF { printf "%s%s", (n++ ? ", " : ""), $0 }'
@@ -1432,7 +1444,10 @@ doctor_live() {
 	while IFS= read -r live_problem; do
 		[ -n "$live_problem" ] || continue
 		case $live_problem in
-		*" runs on "*", its fallback number "*) ok "$live_problem" ;;
+		*" runs on "*", its fallback number "*)
+			ok "$live_problem"
+			fallback_note "$live_problem" "$(json_value leadModel)"
+			;;
 		*) note "$live_problem" ;;
 		esac
 	done <"$DOCTOR_TMP/problems"

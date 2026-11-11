@@ -78,7 +78,7 @@ Each agent takes `model`, `effort`, `fallback` and `steps`; a helper also takes 
 
 Profiles give each agent a model and an effort:
 
-- `default`: Anthropic for `lead`, `scout` and `builder`; GitHub Copilot for the reviewer. Needs both connected.
+- `default`: Anthropic for `lead`, `scout` and `builder`; GitHub Copilot for the reviewer and tester, else Claude Opus, which loses their other model family.
 - `anthropic`: Anthropic only; the reviewer uses the strongest model.
 - `copilot`: GitHub Copilot only.
 - `inherit`: every agent uses the model you pick in the session.

@@ -237,7 +237,7 @@ a notice when it does. It does not switch on rate limits or outages during a run
 
 | Profile | Models |
 |---|---|
-| `default` | Anthropic for `lead`, `scout` and `builder`; GitHub Copilot GPT for the reviewer |
+| `default` | Anthropic for `lead`, `scout` and `builder`; GitHub Copilot GPT for the reviewer and the tester, or Claude Opus where GitHub Copilot is not set up |
 | `anthropic` | Anthropic models only |
 | `copilot` | GitHub Copilot models only |
 | `inherit` | Every agent uses the model you pick in the session |
