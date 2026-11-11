@@ -1195,8 +1195,12 @@ var INLINE_MARK = "ecmwf-multi-agents.inline";
 var HELD_NOTE = "A message for lead arrived and was held back for it. Your answer above stands: reply only with the word done.";
 var isReport = (message) => message?.role === "user" && firstText(message).startsWith(V2_REPORT_PREFIX);
 var USER_WAKES = [INLINE_USER_WAKE_TEXT, INLINE_USER_AND_REPORTS_WAKE_TEXT];
-function isUserMessage(message) {
-  if (message?.role !== "user" || message.metadata === null || typeof message.metadata !== "object")
+function isUserMessage(message, typed) {
+  if (message?.role !== "user")
+    return false;
+  const marked = message.metadata !== null && typeof message.metadata === "object";
+  const stored = typed !== undefined && typeof message.id === "string" && typed.has(message.id);
+  if (!marked && !stored)
     return false;
   if (USER_WAKES.some((wake) => firstText(message).startsWith(wake)))
     return false;
@@ -1217,7 +1221,7 @@ function briefIndex(messages, brief) {
   }
   return -1;
 }
-function isolateHelperRequest(messages, brief, known) {
+function isolateHelperRequest(messages, brief, known, typed) {
   const start = briefIndex(messages, brief);
   let marker = -1;
   if (known !== undefined) {
@@ -1233,7 +1237,7 @@ function isolateHelperRequest(messages, brief, known) {
       return;
     if (isReport(message))
       return isNew(index) || start < 0 && known === undefined ? "reports" : undefined;
-    return isNew(index) && isUserMessage(message) ? "user" : undefined;
+    return isNew(index) && isUserMessage(message, typed) ? "user" : undefined;
   });
   const cut = start >= 0 ? start : known !== undefined ? marker + 1 : 0;
   const leftOut = (index) => index < cut || kinds[index] !== undefined;
@@ -1404,15 +1408,21 @@ class Inline {
       await this.wake(sessionID, { reports: [...run.held], user: [...run.heldUser] });
     }
   }
-  async knownMessages(sessionID) {
+  async storedMessages(sessionID, type) {
     try {
       const messages = unwrap(await this.deps.ctx.session?.context?.({ sessionID }));
       if (!Array.isArray(messages))
         return;
-      return new Set(messages.flatMap((message) => typeof message?.id === "string" ? [message.id] : []));
+      return new Set(messages.flatMap((message) => typeof message?.id === "string" && (type === undefined || message.type === type) ? [message.id] : []));
     } catch {
       return;
     }
+  }
+  knownMessages(sessionID) {
+    return this.storedMessages(sessionID);
+  }
+  typedMessages(sessionID) {
+    return this.storedMessages(sessionID, "user");
   }
   async restore(sessionID, run) {
     const session = this.deps.ctx.session;
@@ -1468,15 +1478,16 @@ class Inline {
     const kind = classifyHelperRequest(agent, run, before !== undefined, await this.isRoot(sessionID), this.deps.helpers);
     if (kind === "leave")
       return false;
+    const typed = await this.typedMessages(sessionID);
     if (kind === "inline") {
-      const held = isolateHelperRequest(event.messages, run.brief, run.known);
+      const held = isolateHelperRequest(event.messages, run.brief, run.known, typed);
       for (const key of held.reports)
         run.held.add(key);
       for (const key of held.user)
         run.heldUser.add(key);
       return true;
     }
-    const held = isolateHelperRequest(event.messages, (run ?? before).brief);
+    const held = isolateHelperRequest(event.messages, (run ?? before).brief, undefined, typed);
     const owner = run ?? before;
     this.restore(sessionID, owner).then(() => this.wake(sessionID, held));
     return true;

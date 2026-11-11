@@ -19,8 +19,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
   does. It needs the plugin and does not react to rate limits or outages. Contributed by
   Harrison Cook (#7).
 
+### Fixed
+
+- On opencode 2.2.6, a message you type while `/review` or `/progress` runs inline is held for
+  `lead` again instead of reaching the helper: 2.2.6 no longer passes message metadata to
+  plugins, so the plugin now asks opencode which messages are yours.
+
 ### Changed
 
+- Tested with opencode 2.2.6 (was 2.2.5); other 2.x versions still install with a warning.
 - The `default` profile's reviewer and tester fall back to Claude Opus 5.5 at high effort when
   GitHub Copilot is not set up, instead of failing; `install.sh doctor` warns that their checks
   then no longer come from another model family.

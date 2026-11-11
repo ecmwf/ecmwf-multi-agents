@@ -159,6 +159,22 @@ test("a user's message is a request with metadata; reports, notes and the plugin
   expect(isUserMessage(undefined)).toBe(false);
 });
 
+test("without metadata (opencode 2.2.6), a user's message is one that opencode stores as the user's", () => {
+  const typedIds = new Set(["u1", "r1", "w"]);
+  expect(isUserMessage(user("Is it safe?", "u1"), typedIds)).toBe(true);
+  expect(isUserMessage(user("Is it safe?", "s1"), typedIds)).toBe(false);
+  expect(isUserMessage(user("Is it safe?"), typedIds)).toBe(false);
+  expect(isUserMessage(user(report("r1").content![0]!.text!, "r1"), typedIds)).toBe(false);
+  expect(isUserMessage(user(INLINE_USER_WAKE_TEXT, "w"), typedIds)).toBe(false);
+});
+
+test("without metadata (opencode 2.2.6), the user's messages after the brief are still held back", () => {
+  const messages = [user("hello", "u0"), said("hi"), user("Review main", "msg_b"), ...step("c1"), user("Is main safe to merge?", "u1"), user(V2_CONTINUE_NOTES[0]!, "n1"), ...step("c2")];
+  expect(isolateHelperRequest(messages, "Review main", undefined, new Set(["u0", "msg_b", "u1"]))).toEqual({ reports: [], user: ["u1"] });
+  expect(messages.map(text)).not.toContain("Is main safe to merge?");
+  expect(messages.map(text)).toContain(V2_CONTINUE_NOTES[0]);
+});
+
 describe("classifyHelperRequest", () => {
   const run: InlineRun = { command: "review", helper: "reviewer", owner: "lead", switchedModel: false, brief: "b", held: new Set(), heldUser: new Set() };
   test("inline for the running command's helper in the user's session; stray after a run; leave otherwise", () => {
@@ -408,6 +424,28 @@ describe("Inline", () => {
     expect(inline.runs.last("s")?.heldUser).toEqual(new Set(["u1"]));
   });
 
+  test("without metadata (opencode 2.2.6), a message the user typed during the run is found by the session's stored messages", async () => {
+    const sessions = new FakeSessions();
+    sessions.autoRelease = false;
+    const { inline, review } = makeInline(sessions);
+    await review.execute({ sessionID: "s", prompt: { text: "main" } });
+    sessions.release();
+    await settle();
+    sessions.stored = [
+      { id: "msg_b", type: "user" },
+      { id: "u1", type: "user" },
+      { id: "n1", type: "synthetic" },
+    ];
+    const messages = [user("Review main", "msg_b"), ...step("c1"), user("Is main safe to merge?", "u1"), user(V2_CONTINUE_NOTES[0]!, "n1"), ...step("c2")];
+    expect(await inline.context({ sessionID: "s", agent: "reviewer", messages })).toBe(true);
+    expect(messages.map(text)).not.toContain("Is main safe to merge?");
+    expect(messages.map(text)).toContain(V2_CONTINUE_NOTES[0]);
+    sessions.release();
+    await settle();
+    expect(sessions.synthetics.map((item) => item.text)).toEqual([INLINE_USER_WAKE_TEXT]);
+    expect(inline.runs.last("s")?.heldUser).toEqual(new Set(["u1"]));
+  });
+
   test("a user's message and reports held in one run: one wake, to answer the user first", async () => {
     const { sessions } = await runWith([user("Review main", "msg_b"), ...step("c1"), report("r1"), typed("And the tests?", "u1"), ...step("c2")]);
     expect(sessions.synthetics.map((item) => item.text)).toEqual([INLINE_USER_AND_REPORTS_WAKE_TEXT]);
@@ -483,6 +521,21 @@ describe("Inline", () => {
     await inline.context({ sessionID: "s", agent: "reviewer", messages: [user("Review x"), said("VERDICT"), typed("thanks, now fix it", "u9")] });
     await settle();
     expect(sessions.calls).toEqual(["agent:lead", "wake", "agent:lead"]);
+    expect(sessions.synthetics.map((item) => item.text)).toEqual([INLINE_USER_WAKE_TEXT]);
+  });
+
+  test("without metadata (opencode 2.2.6), a stray request with the user's message: held back, lead woken", async () => {
+    const sessions = new FakeSessions();
+    const { inline, review } = makeInline(sessions);
+    await review.execute({ sessionID: "s", prompt: { text: "x" } });
+    await settle();
+    sessions.calls = [];
+    sessions.agent = "reviewer";
+    sessions.stored = [{ id: "u9", type: "user" }];
+    const messages = [user("Review x", "msg_b"), said("VERDICT"), user("thanks, now fix it", "u9")];
+    expect(await inline.context({ sessionID: "s", agent: "reviewer", messages })).toBe(true);
+    expect(messages.map(text)).toEqual(["Review x", "VERDICT", HELD_NOTE]);
+    await settle();
     expect(sessions.synthetics.map((item) => item.text)).toEqual([INLINE_USER_WAKE_TEXT]);
   });
 

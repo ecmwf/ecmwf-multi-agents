@@ -13,7 +13,7 @@ NAME=ecmwf-multi-agents
 NPM_NAME=@ecmwf.int/multi-agents
 MARKER_MD="# managed by $NAME"
 MARKER_JS="// managed by $NAME"
-V2_PINNED=2.2.5
+V2_PINNED=2.2.6
 # The plugin is a folder. opencode loads it only when its entry's real path lies inside it, so in
 # link mode the folder itself is the link. Earlier releases installed one file instead.
 PLUGIN_REL=plugins/$NAME

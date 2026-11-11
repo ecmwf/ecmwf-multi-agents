@@ -1070,3 +1070,24 @@ source; both versions agree on every point.
 5. What does it not cover? A model that is listed but fails while it runs (a rate limit, an
    outage): opencode does not tell plugins about it before the request, so fallbacks apply to
    what is set up, not to errors at run time.
+
+## Addendum: 2.2.6
+
+Seen on 2.2.6: a message the user types while `/review` runs inline reached the reviewer. Two
+plugin integration tests failed, and the cause is in `core/src/session/runner/to-llm-message.ts`.
+
+1. What changed? `v2.2.5` builds a request's user message with the stored message's
+   `metadata` (plus its `agents`); `v2.2.6` builds it with `id`, `role` and `content` only.
+   Synthetic messages had no metadata in either version. So in a 2.2.6 request a message the
+   user typed and a note opencode or a plugin added look the same, and the plugin's
+   `isUserMessage`, which told them apart by metadata, found no user message to hold back.
+2. What is still there? The `id`: both versions copy the stored message's id into the request
+   message. `session.context` (`core/src/plugin/host.ts`, `sessions.context`) returns the
+   stored messages with their `type`, `user` or `synthetic`. During an inline run the plugin
+   reads it for each request of the helper, and a request message whose id is stored as
+   `user` counts as the user's. The metadata check stays first, so 2.2.5 works as before.
+3. And the brief? The plugin marks its brief with metadata, which 2.2.6 also leaves out; the
+   brief is still found by its exact text, the fallback that was already there.
+4. Anything else? The step-limit notice is unchanged, and the integration suites pass on
+   2.2.6 with this change, so the pin moves to 2.2.6. opencode 2.2.7 (2026-11-10) still sends
+   the step-limit notice as an assistant message.

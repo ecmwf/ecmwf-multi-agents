@@ -20,11 +20,12 @@ The evidence behind every decision here is in `docs/research/opencode-v1.md`,
 ### Supported versions
 
 - opencode 1.x from 1.18.35 is the main target, tested on 1.18.35 and 1.19.0.
-- opencode 2 is pinned to 2.2.5 since the release after 0.7.0, after the integration tests
-  passed on it. It was pinned to 2.0.29 from the release after 0.5.3 to 0.7.0, to 2.0.28 in
-  0.5.2 and 0.5.3, and before that to 2.0.16, the version weave's v2 adapter is built
-  against; these still work and get the installer's warning for an untested version. The pin
-  moves only after the integration tests pass on a newer version.
+- opencode 2 is pinned to 2.2.6 since the release after 0.9.1, after the integration tests
+  passed on it. It was pinned to 2.2.5 from the release after 0.7.0 to 0.9.1, to 2.0.29 from the
+  release after 0.5.3 to 0.7.0, to 2.0.28 in 0.5.2 and 0.5.3, and before that to 2.0.16, the
+  version weave's v2 adapter is built against; these still work and get the installer's warning
+  for an untested version. The pin moves only after the integration tests pass on a newer
+  version.
 
 ### Two outputs that never share a directory
 

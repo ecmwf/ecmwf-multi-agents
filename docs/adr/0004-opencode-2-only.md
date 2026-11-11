@@ -34,9 +34,11 @@ migration notice: the release that lands this change says "opencode 2 only".
 - The harness supports opencode 2 only. `dist/opencode-v1/`, the v1 emitter, the v1 plugin
   modules and the installer's platform detection go.
 - The pinned version moves deliberately, after the integration suites pass on the new
-  version: 2.2.5 now. It moved from 2.0.28 to 2.0.29 once the answer-first rule let 2.0.29's
-  output-limit note through, and to 2.2.5 after 0.7.0, when only tests that expected the rules
-  opencode appends to every agent needed a change (2.2.x also denies its browser skill).
+  version: 2.2.6 now. It moved from 2.0.28 to 2.0.29 once the answer-first rule let 2.0.29's
+  output-limit note through, to 2.2.5 after 0.7.0, when only tests that expected the rules
+  opencode appends to every agent needed a change (2.2.x also denies its browser skill), and
+  to 2.2.6 after 0.9.1, once the inline `/review` found the user's messages without the
+  metadata 2.2.6 leaves out of requests.
 
 ### Every feature carried
 

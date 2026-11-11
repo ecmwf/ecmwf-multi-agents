@@ -69,12 +69,16 @@ const USER_WAKES = [INLINE_USER_WAKE_TEXT, INLINE_USER_AND_REPORTS_WAKE_TEXT];
 
 /**
  * A message the user wrote: a request to lead in answer-first's terms, which opencode built from
- * a user message, the only kind that carries metadata (core/src/session/runner/to-llm-message.ts
- * at v2.0.29). Notes opencode or a plugin adds (synthetic messages) carry none: a continue note,
- * a note that work moved to the background, a helper's own shell result.
+ * a user message. Up to 2.2.5 only those carry metadata (core/src/session/runner/to-llm-message.ts
+ * at v2.0.29); notes opencode or a plugin adds (synthetic messages) carry none: a continue note,
+ * a note that work moved to the background, a helper's own shell result. From 2.2.6 no request
+ * message carries metadata, so `typed` holds the ids that the session stores as the user's.
  */
-export function isUserMessage(message: V2ModelMessage | undefined): boolean {
-  if (message?.role !== "user" || message.metadata === null || typeof message.metadata !== "object") return false;
+export function isUserMessage(message: V2ModelMessage | undefined, typed?: ReadonlySet<string>): boolean {
+  if (message?.role !== "user") return false;
+  const marked = message.metadata !== null && typeof message.metadata === "object";
+  const stored = typed !== undefined && typeof message.id === "string" && typed.has(message.id);
+  if (!marked && !stored) return false;
   if (USER_WAKES.some((wake) => firstText(message).startsWith(wake))) return false;
   return stepsV2([message])[0] === "request";
 }
@@ -114,9 +118,10 @@ export interface HeldMessages {
  * of them is new. A message the user sends after the switch to the helper but before the brief
  * starts a turn of the helper's; its request keeps none of the earlier conversation, which is
  * lead's. Without `known` only the messages after the brief count as new, and without a brief
- * either the user's messages stay: nothing tells which came after the run began.
+ * either the user's messages stay: nothing tells which came after the run began. `typed` holds
+ * the ids the session stores as the user's messages (see isUserMessage).
  */
-export function isolateHelperRequest(messages: V2ModelMessage[], brief: string | undefined, known?: ReadonlySet<string>): HeldMessages {
+export function isolateHelperRequest(messages: V2ModelMessage[], brief: string | undefined, known?: ReadonlySet<string>, typed?: ReadonlySet<string>): HeldMessages {
   const start = briefIndex(messages, brief);
   let marker = -1;
   if (known !== undefined) {
@@ -129,7 +134,7 @@ export function isolateHelperRequest(messages: V2ModelMessage[], brief: string |
   const kinds = messages.map((message, index) => {
     if (index === start) return undefined;
     if (isReport(message)) return isNew(index) || (start < 0 && known === undefined) ? "reports" : undefined;
-    return isNew(index) && isUserMessage(message) ? "user" : undefined;
+    return isNew(index) && isUserMessage(message, typed) ? "user" : undefined;
   });
   const cut = start >= 0 ? start : known !== undefined ? marker + 1 : 0;
   const leftOut = (index: number) => index < cut || kinds[index] !== undefined;
@@ -372,16 +377,26 @@ export class Inline {
     }
   }
 
-  /** The ids of the session's messages now, read before the switch: a message after them is new. */
-  private async knownMessages(sessionID: string): Promise<Set<string> | undefined> {
+  /** The ids of the session's stored messages, all or only those of one type. */
+  private async storedMessages(sessionID: string, type?: string): Promise<Set<string> | undefined> {
     try {
-      const messages = unwrap<Array<{ id?: unknown }>>(await this.deps.ctx.session?.context?.({ sessionID }));
+      const messages = unwrap<Array<{ id?: unknown; type?: unknown }>>(await this.deps.ctx.session?.context?.({ sessionID }));
       if (!Array.isArray(messages)) return undefined;
-      return new Set(messages.flatMap((message) => (typeof message?.id === "string" ? [message.id] : [])));
+      return new Set(messages.flatMap((message) => (typeof message?.id === "string" && (type === undefined || message.type === type) ? [message.id] : [])));
     } catch {
-      // Without them only the messages after the brief count as new, as before.
       return undefined;
     }
+  }
+
+  /** The ids of the session's messages now, read before the switch: a message after them is new. */
+  private knownMessages(sessionID: string): Promise<Set<string> | undefined> {
+    // Without them only the messages after the brief count as new, as before.
+    return this.storedMessages(sessionID);
+  }
+
+  /** The ids of the user's own messages: opencode 2.2.6 leaves metadata out of requests. */
+  private typedMessages(sessionID: string): Promise<Set<string> | undefined> {
+    return this.storedMessages(sessionID, "user");
   }
 
   private async restore(sessionID: string, run: InlineRun): Promise<void> {
@@ -437,13 +452,14 @@ export class Inline {
     if (run === undefined && before === undefined) return false;
     const kind = classifyHelperRequest(agent, run, before !== undefined, await this.isRoot(sessionID), this.deps.helpers);
     if (kind === "leave") return false;
+    const typed = await this.typedMessages(sessionID);
     if (kind === "inline") {
-      const held = isolateHelperRequest(event.messages, run!.brief, run!.known);
+      const held = isolateHelperRequest(event.messages, run!.brief, run!.known, typed);
       for (const key of held.reports) run!.held.add(key);
       for (const key of held.user) run!.heldUser.add(key);
       return true;
     }
-    const held = isolateHelperRequest(event.messages, (run ?? before)!.brief);
+    const held = isolateHelperRequest(event.messages, (run ?? before)!.brief, undefined, typed);
     const owner = (run ?? before)!;
     // Not awaited: the request goes on as the helper's, and the switch applies from the next one.
     void this.restore(sessionID, owner).then(() => this.wake(sessionID, held));
