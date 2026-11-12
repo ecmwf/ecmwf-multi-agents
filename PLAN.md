@@ -986,6 +986,35 @@ Exit: `make check` and the integration suites pass on 2.2.6; PR #7 merged; the e
   or `lead` could read the settings files); room in `lead`'s prompt, at 1,799 of 1,800 tokens.
   Tests first; an eval in which the designer reaches a low limit twice and `lead` asks
 
+Found in a review of the background-helper code against opencode 2.2.6 (2026-11-12). They
+touch files that Phase 13 changes (`plugin/inline.ts`, `plugin/step-limit.ts`, the late
+transform in `plugin/v2.ts`), so they start after Tiago's Phase 13 work lands. Tests first in
+each.
+
+- [ ] Samet: `max_helper_slots` is enforced, not only stated in `lead`'s prompt: today the
+  plugin only rewrites the "Run at most N helpers at once." line, and nothing refuses a
+  hand-off past the limit. The plugin's `execute.before` tool hook refuses a `subagent` call
+  from `lead` while that many of its helpers are running, with a message that says so;
+  several hand-offs in one step count one by one. The 0.7.0 entry and the docs say what the
+  setting does now
+- [ ] Samet: `helpers_status` reports real steps: it counts tool calls today (`Activity` in
+  `plugin/helpers.ts`) and calls them steps. Count opencode's `session.step.ended` events
+  instead, which also carry each step's cost and tokens, and show the step limit beside the
+  count ("24 of 30 steps"), the cost and the tokens; this also serves the step-limit offer
+  above
+- [ ] Samet: `helpers_status`, `helpers_steer` and `helpers_cancel` find a session's helpers
+  by asking opencode (`ctx.session.list` with a `parentID` filter, offered to plugins on
+  2.2.5 and 2.2.6) instead of only the tracker in `plugin/tools-v2.ts`, which misses helpers
+  started before a restart or a plugin reload; the events stay for the live activity line
+- [ ] Samet: Stale facts and line-number citations. The `plugin/tools-v2.ts` header ("no
+  session list", "opencode 2.0.16") and the research note's "no session list" and "no todo
+  tool" (opencode 2.2.6 has `todowrite`, opt-in through `experimental.todo`; decide whether
+  the manifest's `todo` rules come back). Citations by line number go stale with every
+  opencode release (`plugin/step-limit.ts` cited lines that were wrong at both versions it
+  named): cite file, symbol and version instead, in code and ADRs (about 21 places); an
+  `AGENTS.md` rule, and a `make check` lint that rejects `file.ts:123` citations outside
+  `docs/research/` and `evals/results/`
+
 ## Open questions
 
 - Prompt budgets are ceilings raised only to a measured change (see Phase 7, Budgets). The
