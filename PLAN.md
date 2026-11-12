@@ -991,7 +991,7 @@ touch files that Phase 13 changes (`plugin/inline.ts`, `plugin/step-limit.ts`, t
 transform in `plugin/v2.ts`), so they start after Tiago's Phase 13 work lands. Tests first in
 each.
 
-- [ ] Samet: `max_helper_slots` is enforced, not only stated in `lead`'s prompt: today the
+- [~] Samet: `max_helper_slots` is enforced, not only stated in `lead`'s prompt: today the
   plugin only rewrites the "Run at most N helpers at once." line, and nothing refuses a
   hand-off past the limit. The plugin's `execute.before` tool hook refuses a `subagent` call
   from `lead` while that many of its helpers are running, with a message that says so;
@@ -1002,7 +1002,7 @@ each.
   instead, which also carry each step's cost and tokens, and show the step limit beside the
   count ("24 of 30 steps"), the cost and the tokens; this also serves the step-limit offer
   above
-- [ ] Samet: `helpers_status`, `helpers_steer` and `helpers_cancel` find a session's helpers
+- [~] Samet: `helpers_status`, `helpers_steer` and `helpers_cancel` find a session's helpers
   by asking opencode (`ctx.session.list` with a `parentID` filter, offered to plugins on
   2.2.5 and 2.2.6) instead of only the tracker in `plugin/tools-v2.ts`, which misses helpers
   started before a restart or a plugin reload; the events stay for the live activity line
