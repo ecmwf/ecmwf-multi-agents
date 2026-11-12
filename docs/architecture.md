@@ -233,7 +233,8 @@ The plugin finds a session's helpers by asking opencode for the session's childr
 the plugin restarted. A helper is running while opencode records a run that started after its
 last run ended and this opencode process runs it: a plain `opencode serve` does not resume a
 run that a stop cut off, and such a helper shows as stopped. A run that ends just as the
-plugin checks it shows as done or failed, as opencode records it. Without the list, or when it
+plugin checks it shows as done or failed, as opencode records it, and a helper continued in
+that moment is checked again in its new run. Without the list, or when it
 fails, the plugin falls back to the helpers whose start it saw in opencode's events since it
 loaded. The steps and the last tool call in each line come from the tool calls the plugin has
 seen since it loaded.

@@ -258,17 +258,34 @@ function endOfRun(api: NonNullable<V2Context["session"]>, wait: NonNullable<NonN
   return ended;
 }
 
+/** The session as opencode reports it now; undefined without `session.get` or an answer. */
+async function reread(ctx: V2Context, id: string): Promise<TrackedSession | undefined> {
+  const get = ctx.session?.get;
+  if (typeof get !== "function") return undefined;
+  const session = reportedSession(unwrap(await Promise.resolve().then(() => get.call(ctx.session, { sessionID: id })).catch(() => undefined)));
+  return session?.id === id ? session : undefined;
+}
+
 /**
  * A session opencode reports running, as stopped when this opencode does not run it. A wait that
- * answers at once may also mean the run has just ended, so the session is read again first and,
- * when opencode now records how the run ended, that end counts.
+ * answers at once may also mean the run has just ended, so the session is read again and, when
+ * opencode now records how the run ended, that end counts. If it shows a later run instead (the
+ * helper was continued), that run is probed once more: it is running if this opencode runs it,
+ * and stopped only if a further read still shows that same run.
  */
 async function confirmed(ctx: V2Context, session: TrackedSession): Promise<TrackedSession> {
   if (session.state !== "running" || (await runsHere(ctx, session.id))) return session;
-  const get = ctx.session?.get;
-  const again = typeof get === "function" ? reportedSession(unwrap(await Promise.resolve().then(() => get.call(ctx.session, { sessionID: session.id })).catch(() => undefined))) : undefined;
-  if (again === undefined || again.id !== session.id || again.state === "running") return { ...session, state: "stopped" };
-  return { ...session, state: again.state, updatedAt: again.updatedAt };
+  const stopped: TrackedSession = { ...session, state: "stopped" };
+  const again = await reread(ctx, session.id);
+  if (again === undefined) return stopped;
+  if (again.state !== "running") return { ...session, state: again.state, updatedAt: again.updatedAt };
+  if (again.updatedAt === session.updatedAt) return stopped;
+  const later: TrackedSession = { ...session, updatedAt: again.updatedAt };
+  if (await runsHere(ctx, session.id)) return later;
+  const last = await reread(ctx, session.id);
+  if (last === undefined) return stopped;
+  if (last.state !== "running") return { ...session, state: last.state, updatedAt: last.updatedAt };
+  return last.updatedAt === again.updatedAt ? stopped : { ...session, updatedAt: last.updatedAt };
 }
 
 /** The children of `parent`: opencode's list, else what the event stream announced. */

@@ -1129,8 +1129,11 @@ on, checked in the `v2.2.5` source and against `v2.2.6`; both versions agree on 
    when the run ends otherwise (`awaitIdle` in core/src/session/run-coordinator.ts), so the
    plugin confirms a listed run with it and shows one nothing runs as stopped. Because the wait
    also answers at once for a run that has just ended, the plugin then reads the session again
-   with `session.get` and takes the end opencode now records, if any. Probes of one session
-   share a single outstanding wait. There is no status field; `session.active` exists in the
+   with `session.get` and takes the end opencode now records, if any. If the session shows a
+   later `time.busy` instead, the helper was continued and the wait answered for its previous
+   run, so the plugin probes once more; it reports stopped only if that wait also answers at
+   once and a further read shows the same run. Probes of one session share a single
+   outstanding wait. There is no status field; `session.active` exists in the
    HTTP API only.
 6. The delegation tool's input (`Input` in core/src/tool/plugin/subagent.ts, the same in
    `v2.2.6`): `agent`, `description`, `prompt`, optional `model`, optional `sessionID` (continue

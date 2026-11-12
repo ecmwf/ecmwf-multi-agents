@@ -2585,16 +2585,35 @@ function endOfRun(api, wait, sessionID) {
   waits.set(sessionID, ended);
   return ended;
 }
+async function reread(ctx, id) {
+  const get = ctx.session?.get;
+  if (typeof get !== "function")
+    return;
+  const session = reportedSession(unwrap(await Promise.resolve().then(() => get.call(ctx.session, { sessionID: id })).catch(() => {
+    return;
+  })));
+  return session?.id === id ? session : undefined;
+}
 async function confirmed(ctx, session) {
   if (session.state !== "running" || await runsHere(ctx, session.id))
     return session;
-  const get = ctx.session?.get;
-  const again = typeof get === "function" ? reportedSession(unwrap(await Promise.resolve().then(() => get.call(ctx.session, { sessionID: session.id })).catch(() => {
-    return;
-  }))) : undefined;
-  if (again === undefined || again.id !== session.id || again.state === "running")
-    return { ...session, state: "stopped" };
-  return { ...session, state: again.state, updatedAt: again.updatedAt };
+  const stopped = { ...session, state: "stopped" };
+  const again = await reread(ctx, session.id);
+  if (again === undefined)
+    return stopped;
+  if (again.state !== "running")
+    return { ...session, state: again.state, updatedAt: again.updatedAt };
+  if (again.updatedAt === session.updatedAt)
+    return stopped;
+  const later = { ...session, updatedAt: again.updatedAt };
+  if (await runsHere(ctx, session.id))
+    return later;
+  const last = await reread(ctx, session.id);
+  if (last === undefined)
+    return stopped;
+  if (last.state !== "running")
+    return { ...session, state: last.state, updatedAt: last.updatedAt };
+  return last.updatedAt === again.updatedAt ? stopped : { ...session, updatedAt: last.updatedAt };
 }
 async function sessionChildren(ctx, tracker, parent) {
   const listed = await listedChildren(ctx, parent).catch(() => {

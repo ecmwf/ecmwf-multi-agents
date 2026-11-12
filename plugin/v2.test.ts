@@ -971,6 +971,22 @@ describe("v2 helpers from opencode's session list", () => {
     };
     expect(await host.call("helpers_status", {}, lead)).toContain("ok, scout, stopped");
   });
+
+  test("a helper continued while the plugin probes its last run is probed again in its new run: running, not stopped", async () => {
+    for (const newRunHere of [true, false]) {
+      const { host } = await start({});
+      host.serveList();
+      host.listed = [child("c", "scout", running)];
+      // The listed run's wait answers at once: that run ended, and lead has continued the helper.
+      let waits = 0;
+      host.ctx.session!.wait = () => (++waits === 1 || !newRunHere ? Promise.resolve() : new Promise<never>(() => {}));
+      host.ctx.session!.get = async () => child("c", "scout", { busy: now - 1_000, idle: now - 2_000, outcome: "succeeded" });
+      const status = await host.call("helpers_status", {}, lead);
+      // Without a run for the new start either, and the same start read again, nothing runs it.
+      expect(status).toContain(newRunHere ? "c, scout, running" : "c, scout, stopped");
+      expect(waits).toBe(2);
+    }
+  });
 });
 
 describe("v2 run probe", () => {
