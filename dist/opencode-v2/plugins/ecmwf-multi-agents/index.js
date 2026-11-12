@@ -2847,15 +2847,20 @@ class HelperSlots {
       busy.push({ id: entry.child, ...agent === undefined ? {} : { agent } });
       counted.add(entry.child);
     }
-    if (target !== undefined && counted.has(target))
-      return;
-    if (busy.length >= this.deps.limit)
+    if ((target === undefined || !counted.has(target)) && busy.length >= this.deps.limit)
       return slotsFullResult(this.deps.harness.name, this.deps.limit, busy);
     const entry = { call: call ?? `unnamed-${++this.unnamed}`, parent, at: now, before: new Set(byId.keys()) };
     if (target !== undefined) {
       entry.resumed = true;
       entry.exact = true;
       this.own(entry, target);
+      if (byId.get(target)?.state === "running")
+        entry.started = seen;
+      else {
+        const sibling = this.admitted.find((item) => item.child === target && item.started !== undefined);
+        if (sibling !== undefined)
+          entry.started = sibling.started;
+      }
     }
     this.admitted.push(entry);
     return;

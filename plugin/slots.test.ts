@@ -198,4 +198,27 @@ describe("helper slots", () => {
     expect(await handOff("c")).toBeUndefined();
     expect(await handOff("d")).toContain("2 are running: scout x, a helper that is starting.");
   });
+
+  test("two calls continuing the same idle helper each hold its slot: one failing leaves the other's", async () => {
+    const { children, handOff, ended } = setup(1);
+    children.set("c2", "done");
+    const resume = { agent: "builder", prompt: "more", sessionID: "c2" };
+    expect(await handOff("k1", resume)).toBeUndefined();
+    // The second continuation is admitted, since c2 already holds the slot, and tracked.
+    expect(await handOff("k2", resume)).toBeUndefined();
+    ended("k1", "error");
+    expect(await handOff("n")).toContain("1 is running: builder c2.");
+    ended("k2", "error");
+    expect(await handOff("n2")).toBeUndefined();
+  });
+
+  test("continuing a running helper is tracked until that run ends", async () => {
+    const { children, handOff, emit } = setup(1);
+    children.set("c1", "running");
+    expect(await handOff("k", { agent: "builder", prompt: "more", sessionID: "c1" })).toBeUndefined();
+    expect(await handOff()).toContain("1 is running: builder c1.");
+    emit("session.execution.succeeded", "c1");
+    children.set("c1", "done");
+    expect(await handOff()).toBeUndefined();
+  });
 });

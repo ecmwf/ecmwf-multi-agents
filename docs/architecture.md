@@ -252,7 +252,9 @@ guess. A helper only guessed to belong to a hand-off that fails goes to the next
 Once a hand-off's helper is known, it stands for that hand-off only. If opencode's events about the helper stop, the hold lapses
 two minutes after the last one, and the helper counts by its listed state alone. Continuing a running
 helper with its `sessionID` takes no new slot; continuing an idle one starts a run, so it takes
-one like a new hand-off, held from the hand-off until that run ends. Only `lead` is limited,
+one like a new hand-off, held from the hand-off until that run ends. Several calls that continue
+the same helper hold its one slot together, so one of them failing leaves the slot to the
+others. Only `lead` is limited,
 and only its own session's helpers count. Without the plugin the limit is an instruction in `lead`'s prompt only.
 
 A steer amends the brief (principle 3): the helper follows the latest message, keeps the

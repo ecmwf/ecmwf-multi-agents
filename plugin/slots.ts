@@ -203,14 +203,20 @@ export class HelperSlots {
       busy.push({ id: entry.child, ...(agent === undefined ? {} : { agent }) });
       counted.add(entry.child);
     }
-    // Continuing a helper that already holds a slot adds nothing.
-    if (target !== undefined && counted.has(target)) return undefined;
-    if (busy.length >= this.deps.limit) return slotsFullResult(this.deps.harness.name, this.deps.limit, busy);
+    // Continuing a helper that already holds a slot needs no free one, but every admitted call has
+    // its own entry, so one call's failure releases only its own hold on the helper.
+    if ((target === undefined || !counted.has(target)) && busy.length >= this.deps.limit) return slotsFullResult(this.deps.harness.name, this.deps.limit, busy);
     const entry: Admitted = { call: call ?? `unnamed-${++this.unnamed}`, parent, at: now, before: new Set(byId.keys()) };
     if (target !== undefined) {
       entry.resumed = true;
       entry.exact = true;
       this.own(entry, target);
+      // A running helper takes the continuation into its run, so the end of that run ends it.
+      if (byId.get(target)?.state === "running") entry.started = seen;
+      else {
+        const sibling = this.admitted.find((item) => item.child === target && item.started !== undefined);
+        if (sibling !== undefined) entry.started = sibling.started;
+      }
     }
     this.admitted.push(entry);
     return undefined;
