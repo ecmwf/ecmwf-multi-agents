@@ -1091,3 +1091,53 @@ plugin integration tests failed, and the cause is in `core/src/session/runner/to
 4. Anything else? The step-limit notice is unchanged, and the integration suites pass on
    2.2.6 with this change, so the pin moves to 2.2.6. opencode 2.2.7 (2026-11-10) still sends
    the step-limit notice as an assistant message.
+
+## Addendum: session list and helper slots (2026-11-12)
+
+What `helpers_status`, `helpers_steer`, `helpers_cancel` and the `max_helper_slots` limit rely
+on, checked in the `v2.2.5` source and against `v2.2.6`; both versions agree on every point.
+
+1. Can a plugin list a session's children? Yes. The plugin context has `session.list`
+   (`session` in plugin/src/promise/adapter.ts, `SessionEndpoints["session.list"]`), backed by
+   `Session.list` in core/src/session.ts. Its input is the `SessionsQuery` of
+   protocol/src/groups/session.ts: `limit` (default 50), `cursor`, and the fields of
+   `ListFilterFields` in schema/src/session.ts, `order` (`desc` by default, latest change first),
+   `search`, `parentID` (a session id, or `null` for root sessions) and `archived`; `ListFilter`
+   adds `directory`, `project` and `subpath`. Without a directory or project it lists sessions
+   of every location, so `{ parentID }` finds a session's children wherever they run.
+2. What does it answer? `{ data, cursor: { previous, next } }`: the adapter unwraps a lone
+   `data` field only, so the list keeps both, and `session.get` answers the session itself. Each
+   item is `PublicSessionInfo` (protocol/src/groups/session.ts), which is `Session.Info` of
+   schema/src/session.ts with a public location: `id`, `parentID`, `agent`, `model`, `title`,
+   `cost`, `tokens`, `outcome`, `time` (`created`, `updated`, `busy`, `idle`, `viewed`,
+   `archived`, in milliseconds), `metadata`, `permissions` and `revert`.
+3. How does paging end? Opencode gives a `next` cursor after every page that is not empty,
+   even the last, and a cursor carries the filters of the request that made it. The plugin asks
+   for pages of 100 and stops at a page shorter than that.
+4. Is a child running? `time.busy` is the start of the latest run and `time.idle` the end of the
+   latest finished one; while a run goes on, `idle` still holds the previous end (`Session.Info`).
+   The projector sets `busy` at `session.execution.started` and `idle` with `outcome` at the
+   run's end (`projectIdle` in core/src/session/projector.ts), except for an interruption with
+   the reason `shutdown`, which keeps the run's claim so it can be resumed. A run is therefore
+   in progress while `busy` is later than `idle`.
+5. Does that hold after a restart? Not always. Only the server started by
+   `opencode serve --service` resumes the runs a stop cut off (`installRestartContinuity` in
+   server/src/process.ts, called only with a lifecycle; `run` in cli/src/server-process.ts gives
+   one for the service mode only). A plain `opencode serve`, as the integration suites start it,
+   leaves such a child with `busy` later than `idle` and nothing running it. `session.wait`,
+   which plugins have, answers at once when this process has no run for the session and only
+   when the run ends otherwise (`awaitIdle` in core/src/session/run-coordinator.ts), so the
+   plugin confirms a listed run with it and shows one nothing runs as stopped. There is no
+   status field; `session.active` exists in the HTTP API only.
+6. The delegation tool's input (`Input` in core/src/tool/plugin/subagent.ts, the same in
+   `v2.2.6`): `agent`, `description`, `prompt`, optional `model`, optional `sessionID` (continue
+   an existing child, running or finished) and optional `background`. Its own `execute.before`
+   hook drops an empty `sessionID`, so the plugin treats an empty one as absent. A continued
+   child that is running receives the prompt as a steer; an idle one starts a new run.
+7. Can a plugin refuse a hand-off? Yes. A plugin's `execute.before` hook that throws fails that
+   call alone, and the model sees the message (`toolHook` in plugin/src/promise/adapter.ts).
+   The hook gets `tool`, `sessionID`, `agent`, `messageID`, `id` and `input`; `execute.after`
+   gets the same with `status`, after the tool ends, also when it failed, but not when an
+   `execute.before` hook refused the call (`executeTool` and `beforeExecute` in
+   core/src/tool.ts). A foreground hand-off ends when the child's run ends; a background one
+   returns once the child has started.

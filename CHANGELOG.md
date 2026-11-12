@@ -35,6 +35,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
   GitHub Copilot is not set up, instead of failing; `install.sh doctor` warns that their checks
   then no longer come from another model family.
 
+### Fixed
+
+- `helpers_status`, `helpers_steer` and `helpers_cancel` also find helpers started before
+  opencode or the plugin restarted: the plugin asks opencode for the session's helpers. A
+  helper whose run a stop of opencode cut off, and that opencode did not resume, shows as
+  stopped.
+
 ## [0.9.1] - 2026-11-08
 
 ### Fixed

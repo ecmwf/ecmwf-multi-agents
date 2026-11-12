@@ -2422,6 +2422,8 @@ function stepLimitAsUser(messages) {
 }
 
 // plugin/tools-v2.ts
+var LIST_PAGE = 100;
+var MAX_PAGES = 100;
 function eventFields(envelope) {
   if (typeof envelope?.type !== "string")
     return;
@@ -2500,6 +2502,103 @@ class SessionTracker {
     return [...this.sessions.values()].filter((session) => session.parentID === parent);
   }
 }
+function millis(value) {
+  if (typeof value === "number" && Number.isFinite(value))
+    return value;
+  if (typeof value !== "string")
+    return;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
+function reportedState(info) {
+  const time = info.time;
+  if (time === null || typeof time !== "object")
+    return;
+  const busy = millis(time.busy);
+  const idle = millis(time.idle);
+  if (busy !== undefined && (idle === undefined || busy > idle))
+    return "running";
+  if (info.outcome === "succeeded")
+    return "done";
+  if (info.outcome === "failed")
+    return "failed";
+  if (info.outcome === "interrupted")
+    return "stopped";
+  return "idle";
+}
+function reportedSession(info, now = Date.now()) {
+  if (info === null || typeof info !== "object")
+    return;
+  const session = info;
+  if (typeof session.id !== "string" || session.id === "")
+    return;
+  const state = reportedState(session);
+  if (state === undefined)
+    return;
+  const created = millis(session.time?.created) ?? now;
+  const updatedAt = state === "running" ? millis(session.time?.busy) ?? now : millis(session.time?.idle) ?? millis(session.time?.updated) ?? created;
+  return {
+    id: session.id,
+    state,
+    startedAt: created,
+    updatedAt,
+    ...typeof session.parentID === "string" ? { parentID: session.parentID } : {},
+    ...typeof session.agent === "string" ? { agent: session.agent } : {},
+    ...typeof session.title === "string" ? { title: session.title } : {}
+  };
+}
+async function listedChildren(ctx, parent) {
+  const list = ctx.session?.list;
+  if (typeof list !== "function")
+    return;
+  const children = new Map;
+  let cursor;
+  for (let page = 0;page < MAX_PAGES; page++) {
+    const answer = await list.call(ctx.session, cursor === undefined ? { parentID: parent, limit: LIST_PAGE } : { cursor, limit: LIST_PAGE });
+    if (!Array.isArray(answer?.data))
+      return;
+    for (const info of answer.data) {
+      const child = reportedSession(info);
+      if (child?.parentID === parent && !children.has(child.id))
+        children.set(child.id, child);
+    }
+    const next = answer.cursor?.next;
+    if (answer.data.length < LIST_PAGE || typeof next !== "string" || next === cursor)
+      break;
+    cursor = next;
+  }
+  return [...children.values()];
+}
+var RUN_PROBE_MS = 100;
+async function runsHere(ctx, sessionID) {
+  const wait = ctx.session?.wait;
+  if (typeof wait !== "function")
+    return true;
+  let timer;
+  const ended = wait.call(ctx.session, { sessionID }).then(() => true, () => false);
+  const late = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(false), RUN_PROBE_MS);
+    timer.unref?.();
+  });
+  const answer = await Promise.race([ended, late]);
+  clearTimeout(timer);
+  return !answer;
+}
+async function confirmed(ctx, session) {
+  return session.state !== "running" || await runsHere(ctx, session.id) ? session : { ...session, state: "stopped" };
+}
+async function sessionChildren(ctx, tracker, parent) {
+  const listed = await listedChildren(ctx, parent).catch(() => {
+    return;
+  });
+  if (listed === undefined)
+    return tracker.children(parent);
+  return Promise.all(listed.map((child) => confirmed(ctx, child)));
+}
+async function confirmedSession(ctx, info) {
+  const session = reportedSession(info);
+  return session === undefined ? undefined : confirmed(ctx, session);
+}
 function sessionApi(ctx) {
   const api = ctx.session;
   if (api?.get === undefined || api.prompt === undefined || api.interrupt === undefined) {
@@ -2515,22 +2614,21 @@ function v2Tools(deps) {
   };
   const targetOf = async (id) => {
     const tracked = tracker.get(id);
-    if (tracked !== undefined && tracked.parentID !== undefined && tracked.agent !== undefined) {
-      return { parentID: tracked.parentID, agent: tracked.agent, state: stateOf(tracked) };
-    }
-    const info = await sessionApi(deps.ctx).get({ sessionID: id }).catch(() => {
+    const info = unwrap(await sessionApi(deps.ctx).get({ sessionID: id }).catch(() => {
       return;
-    });
+    }));
     if (info === undefined || info === null)
       return tracked === undefined ? undefined : { parentID: tracked.parentID, agent: tracked.agent ?? "helper", state: stateOf(tracked) };
-    const parentID = tracked?.parentID ?? info.parentID;
-    const agent = tracked?.agent ?? (typeof info.agent === "string" ? info.agent : "helper");
-    if (tracked !== undefined) {
+    const parentID = info.parentID ?? tracked?.parentID;
+    const agent = typeof info.agent === "string" ? info.agent : tracked?.agent ?? "helper";
+    const reported = await confirmedSession(deps.ctx, info);
+    if (tracked !== undefined)
       tracker.complete(id, { parentID, agent });
-      return { parentID, agent, state: stateOf(tracked) };
-    }
-    return { parentID, agent, state: "unknown" };
+    if (reported !== undefined)
+      return { parentID, agent, state: stateOf(reported) };
+    return { parentID, agent, state: tracked === undefined ? "unknown" : stateOf(tracked) };
   };
+  const children = (parent) => sessionChildren(deps.ctx, tracker, parent);
   const view = (session) => {
     const record = activity.get(session.id);
     return {
@@ -2552,7 +2650,7 @@ function v2Tools(deps) {
     options: { codemode: false }
   });
   return [
-    define(TOOL_SPECS.status, async (_args, context) => formatStatus(tracker.children(context.sessionID).filter((child) => child.agent === undefined || helpers.has(child.agent)).map(view))),
+    define(TOOL_SPECS.status, async (_args, context) => formatStatus((await children(context.sessionID)).filter((child) => child.agent === undefined || helpers.has(child.agent)).map(view))),
     define(TOOL_SPECS.steer, async (args, context) => {
       const id = requiredText(args, "id");
       const message = requiredText(args, "text");
@@ -2573,7 +2671,7 @@ function v2Tools(deps) {
       const id = requiredText(args, "id");
       const targets = [];
       if (id === "all") {
-        for (const child of tracker.children(context.sessionID)) {
+        for (const child of await children(context.sessionID)) {
           const agent = child.agent ?? "helper";
           if (stateOf(child) === "running" && helpers.has(agent))
             targets.push({ id: child.id, agent });

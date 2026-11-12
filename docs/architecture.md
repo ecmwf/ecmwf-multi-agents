@@ -226,6 +226,15 @@ have them:
 | `helpers_steer(id, text)` | Sends an amendment to a running helper. The text reaches it at its next step; its context and prompt cache stay. A finished helper is continued through the delegation tool's continuation parameter instead |
 | `helpers_cancel(id or all)` | Stops a helper and says so in the result |
 
+The plugin finds a session's helpers by asking opencode for the session's children
+(`session.list` with a `parentID` filter), so it also finds helpers started before opencode or
+the plugin restarted. A helper is running while opencode records a run that started after its
+last run ended and this opencode process runs it: a plain `opencode serve` does not resume a
+run that a stop cut off, and such a helper shows as stopped. Without the list, or when it
+fails, the plugin falls back to the helpers whose start it saw in opencode's events since it
+loaded. The steps and the last tool call in each line come from the tool calls the plugin has
+seen since it loaded.
+
 A steer amends the brief (principle 3): the helper follows the latest message, keeps the
 earlier LIMITS unless the steer lifts them, and reports what changed in the section its
 report has for it (ASSUMPTIONS for the builder, ANSWER for a scout, the researcher and the data

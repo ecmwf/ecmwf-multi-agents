@@ -511,6 +511,11 @@ describe.skipIf(!v2Available)(`background helpers in opencode ${V2_VERSION}`, ()
       }
       writeFileSync(path.join(box.config, "plugins", "inline-pause.js"), pausePlugin(box.dir));
       writeFileSync(path.join(box.config, "ecmwf-multi-agents.jsonc"), '{ "profile": "inherit", "agents": { "reviewer": { "model": "mock/m2" } } }\n');
+      await serveWithPlugins();
+    }, 300_000);
+
+    /** Start a server on the sandbox's data and wait until both plugins are active. */
+    const serveWithPlugins = async () => {
       const password = randomBytes(16).toString("hex");
       auth = `Basic ${btoa(`opencode:${password}`)}`;
       server = await startServer(box, v2Bin, { OPENCODE_PASSWORD: password });
@@ -520,7 +525,7 @@ describe.skipIf(!v2Available)(`background helpers in opencode ${V2_VERSION}`, ()
         return active("ecmwf-multi-agents") && active("inline-pause") ? true : undefined;
       });
       await Bun.sleep(1_000);
-    }, 300_000);
+    };
 
     test("helpers_status lists the running builder with its steps and last tool call", async () => {
       const tag = nextTag();
@@ -762,5 +767,22 @@ describe.skipIf(!v2Available)(`background helpers in opencode ${V2_VERSION}`, ()
       expect(woken.users.some((user) => user.includes(`fake report ${tag}`))).toBe(true);
       await backToLead(session);
     }, 120_000);
+
+    // A fresh server process on the same data: the plugin's event tracker starts empty, and the
+    // helpers come from opencode's session list. A plain `opencode serve` does not resume the
+    // builder's run that the stop cut off, so the helper is stopped, not running.
+    test("after opencode restarts, helpers_status still lists a helper started before, and the cut-off run as stopped", async () => {
+      const tag = nextTag();
+      const session = await start(`BG ${tag}`);
+      const target = await child(session);
+      await stepsOf(tag, 1);
+      await server.stop();
+      await serveWithPlugins();
+      await tell(session, `STATUS ${tag}`);
+      const output = outputText(await toolCall(session, HELPER_TOOLS.status));
+      expect(output).toContain("One helper in this session");
+      const resumed = model.builder(tag).some((item) => item.users.some((user) => user.includes("server restarted")));
+      expect(output).toContain(`${target.id}, builder, ${resumed ? "running" : "stopped"}`);
+    }, 300_000);
   });
 });

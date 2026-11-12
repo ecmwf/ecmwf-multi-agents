@@ -1,11 +1,14 @@
 // SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
 // SPDX-License-Identifier: Apache-2.0
 
-// The helper tools on opencode 2.0.16. The plugin context offers `session.get`, `prompt` and
-// `interrupt`, but no session list and no messages (@opencode/plugin 2.0.16, promise/session.ts,
-// `SessionDomain`), so the children of a session and their state come from the event stream:
-// `session.created` carries the parent and the agent, `session.execution.*` the state. The
-// tracker only mirrors what the platform publishes; it starts and stops nothing.
+// The helper tools on opencode 2. The plugin context's `session.list` takes a `parentID` filter
+// (`ListFilter` in schema/src/session.ts, opencode 2.2.5 and 2.2.6), so a session's helpers come
+// from opencode, also those started before opencode or the plugin restarted. Each listed session
+// carries its state: `time.busy` (start of the latest run), `time.idle` (end of the latest
+// finished run) and `outcome` (`Session.Info`, same file). Without the list, or when it fails,
+// the children and their state come from the event stream: `session.created` carries the parent
+// and the agent, `session.execution.*` the state. The tracker only mirrors what the platform
+// publishes; it starts and stops nothing.
 
 import {
   Activity,
@@ -24,7 +27,13 @@ import {
   type HelperView,
   type TargetSession,
 } from "./helpers.ts";
-import type { EmbeddedHarness, ToolContext, V2Context, V2Event, V2ToolInfo } from "./types.ts";
+import { unwrap } from "./register.ts";
+import type { EmbeddedHarness, ToolContext, V2Context, V2Event, V2SessionInfo, V2ToolInfo } from "./types.ts";
+
+/** Sessions asked for per page of `session.list`. */
+export const LIST_PAGE = 100;
+/** A stop for a list that never ends, far beyond any real number of helpers. */
+const MAX_PAGES = 100;
 
 export interface TrackedSession {
   id: string;
@@ -118,6 +127,123 @@ export class SessionTracker {
   }
 }
 
+/** A time opencode sent: milliseconds, or a date string. */
+function millis(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value !== "string") return undefined;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
+
+/**
+ * A session's state as opencode reports it, or undefined when the answer has no times. A run is
+ * in progress while its start (`time.busy`) is later than the end of the last finished run
+ * (`time.idle`); otherwise `outcome` says how that run ended, and a session that never ran is idle.
+ */
+export function reportedState(info: V2SessionInfo): HelperState | undefined {
+  const time = info.time;
+  if (time === null || typeof time !== "object") return undefined;
+  const busy = millis(time.busy);
+  const idle = millis(time.idle);
+  if (busy !== undefined && (idle === undefined || busy > idle)) return "running";
+  if (info.outcome === "succeeded") return "done";
+  if (info.outcome === "failed") return "failed";
+  if (info.outcome === "interrupted") return "stopped";
+  return "idle";
+}
+
+/** A session as opencode reports it, in the tracker's shape; undefined without an id or times. */
+export function reportedSession(info: unknown, now: number = Date.now()): TrackedSession | undefined {
+  if (info === null || typeof info !== "object") return undefined;
+  const session = info as V2SessionInfo;
+  if (typeof session.id !== "string" || session.id === "") return undefined;
+  const state = reportedState(session);
+  if (state === undefined) return undefined;
+  const created = millis(session.time?.created) ?? now;
+  const updatedAt = state === "running" ? (millis(session.time?.busy) ?? now) : (millis(session.time?.idle) ?? millis(session.time?.updated) ?? created);
+  return {
+    id: session.id,
+    state,
+    startedAt: created,
+    updatedAt,
+    ...(typeof session.parentID === "string" ? { parentID: session.parentID } : {}),
+    ...(typeof session.agent === "string" ? { agent: session.agent } : {}),
+    ...(typeof session.title === "string" ? { title: session.title } : {}),
+  };
+}
+
+/**
+ * The children of `parent` as opencode lists them, every page; undefined when this opencode has
+ * no session list or its answer cannot be read.
+ */
+export async function listedChildren(ctx: V2Context, parent: string): Promise<TrackedSession[] | undefined> {
+  const list = ctx.session?.list;
+  if (typeof list !== "function") return undefined;
+  const children = new Map<string, TrackedSession>();
+  let cursor: string | undefined;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const answer = (await list.call(ctx.session, cursor === undefined ? { parentID: parent, limit: LIST_PAGE } : { cursor, limit: LIST_PAGE })) as
+      | { data?: unknown; cursor?: { next?: unknown } }
+      | undefined;
+    if (!Array.isArray(answer?.data)) return undefined;
+    for (const info of answer.data) {
+      const child = reportedSession(info);
+      if (child?.parentID === parent && !children.has(child.id)) children.set(child.id, child);
+    }
+    const next = answer.cursor?.next;
+    // A full page may be followed by more; opencode gives a next cursor after every page that is not empty.
+    if (answer.data.length < LIST_PAGE || typeof next !== "string" || next === cursor) break;
+    cursor = next;
+  }
+  return [...children.values()];
+}
+
+/** How long `session.wait` may take to answer for a session this opencode does not run. */
+export const RUN_PROBE_MS = 100;
+
+/**
+ * Whether this opencode process runs the session now. A run cut off when opencode stopped keeps
+ * its `time.busy` without a `time.idle`, and only `opencode serve --service` resumes such runs
+ * when it starts again (`installRestartContinuity` in server/src/process.ts, opencode 2.2.5), so
+ * the times alone can name a run that nothing runs. `session.wait` answers at once when the
+ * process has no run for the session (`awaitIdle` in core/src/session/run-coordinator.ts) and
+ * only when the run ends otherwise. Without `wait`, or when it fails, the run counts as running.
+ */
+export async function runsHere(ctx: V2Context, sessionID: string): Promise<boolean> {
+  const wait = ctx.session?.wait;
+  if (typeof wait !== "function") return true;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const ended = wait.call(ctx.session, { sessionID }).then(
+    () => true,
+    () => false,
+  );
+  const late = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), RUN_PROBE_MS);
+    (timer as { unref?: () => void }).unref?.();
+  });
+  const answer = await Promise.race([ended, late]);
+  clearTimeout(timer);
+  return !answer;
+}
+
+/** A session opencode reports running, as stopped when this opencode does not run it. */
+async function confirmed(ctx: V2Context, session: TrackedSession): Promise<TrackedSession> {
+  return session.state !== "running" || (await runsHere(ctx, session.id)) ? session : { ...session, state: "stopped" };
+}
+
+/** The children of `parent`: opencode's list, else what the event stream announced. */
+export async function sessionChildren(ctx: V2Context, tracker: SessionTracker, parent: string): Promise<TrackedSession[]> {
+  const listed = await listedChildren(ctx, parent).catch(() => undefined);
+  if (listed === undefined) return tracker.children(parent);
+  return Promise.all(listed.map((child) => confirmed(ctx, child)));
+}
+
+/** A session as opencode reports it, a run nothing runs counted as stopped. */
+export async function confirmedSession(ctx: V2Context, info: unknown): Promise<TrackedSession | undefined> {
+  const session = reportedSession(info);
+  return session === undefined ? undefined : confirmed(ctx, session);
+}
+
 export interface V2ToolDeps {
   harness: EmbeddedHarness;
   ctx: V2Context;
@@ -148,25 +274,22 @@ export function v2Tools(deps: V2ToolDeps): V2ToolInfo[] {
     return session.state === "running" && record?.ended !== undefined && record.at >= session.updatedAt ? record.ended : session.state;
   };
   /**
-   * The target as the tracker knows it, completed from the server when the tracker saw only
-   * execution events for it (its parent and agent come with `session.created`); a session the
-   * tracker never saw has an unknown state.
+   * The target as opencode reports it. Without its state there (an answer without times), the
+   * tracker's state, the session's parent and agent completed from the server when the tracker
+   * saw only execution events for it; a session neither knows a state for has an unknown state.
    */
   const targetOf = async (id: string): Promise<(TargetSession & { state: HelperState }) | undefined> => {
     const tracked = tracker.get(id);
-    if (tracked !== undefined && tracked.parentID !== undefined && tracked.agent !== undefined) {
-      return { parentID: tracked.parentID, agent: tracked.agent, state: stateOf(tracked) };
-    }
-    const info = await sessionApi(deps.ctx).get({ sessionID: id }).catch(() => undefined);
+    const info = unwrap<V2SessionInfo>(await sessionApi(deps.ctx).get({ sessionID: id }).catch(() => undefined));
     if (info === undefined || info === null) return tracked === undefined ? undefined : { parentID: tracked.parentID, agent: tracked.agent ?? "helper", state: stateOf(tracked) };
-    const parentID = tracked?.parentID ?? info.parentID;
-    const agent = tracked?.agent ?? (typeof info.agent === "string" ? info.agent : "helper");
-    if (tracked !== undefined) {
-      tracker.complete(id, { parentID, agent });
-      return { parentID, agent, state: stateOf(tracked) };
-    }
-    return { parentID, agent, state: "unknown" };
+    const parentID = info.parentID ?? tracked?.parentID;
+    const agent = typeof info.agent === "string" ? info.agent : (tracked?.agent ?? "helper");
+    const reported = await confirmedSession(deps.ctx, info);
+    if (tracked !== undefined) tracker.complete(id, { parentID, agent });
+    if (reported !== undefined) return { parentID, agent, state: stateOf(reported) };
+    return { parentID, agent, state: tracked === undefined ? "unknown" : stateOf(tracked) };
   };
+  const children = (parent: string) => sessionChildren(deps.ctx, tracker, parent);
   const view = (session: TrackedSession): HelperView => {
     const record = activity.get(session.id);
     return {
@@ -192,7 +315,7 @@ export function v2Tools(deps: V2ToolDeps): V2ToolInfo[] {
   return [
     // The harness's helpers only; a child the tracker knows no agent for is kept.
     define(TOOL_SPECS.status, async (_args, context) =>
-      formatStatus(tracker.children(context.sessionID).filter((child) => child.agent === undefined || helpers.has(child.agent)).map(view)),
+      formatStatus((await children(context.sessionID)).filter((child) => child.agent === undefined || helpers.has(child.agent)).map(view)),
     ),
 
     define(TOOL_SPECS.steer, async (args, context) => {
@@ -214,7 +337,7 @@ export function v2Tools(deps: V2ToolDeps): V2ToolInfo[] {
       const targets: Array<{ agent: string; id: string }> = [];
       if (id === "all") {
         // Only the harness's own helpers; a child of another kind is left to its owner.
-        for (const child of tracker.children(context.sessionID)) {
+        for (const child of await children(context.sessionID)) {
           const agent = child.agent ?? "helper";
           if (stateOf(child) === "running" && helpers.has(agent)) targets.push({ id: child.id, agent });
         }
