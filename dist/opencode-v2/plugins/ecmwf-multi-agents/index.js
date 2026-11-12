@@ -2673,6 +2673,8 @@ function v2Tools(deps) {
 // plugin/slots.ts
 var DELEGATION_TOOL = "subagent";
 var ADMITTED_MS = 120000;
+var RUN_ENDS = new Set(["session.execution.succeeded", "session.execution.failed", "session.execution.interrupted"]);
+var OWNED_MAX = 1000;
 function continued(input) {
   const sessionID = input !== null && typeof input === "object" ? input.sessionID : undefined;
   return typeof sessionID === "string" && sessionID !== "" ? sessionID : undefined;
@@ -2684,6 +2686,8 @@ class HelperSlots {
   admitted = [];
   queue = Promise.resolve();
   unnamed = 0;
+  events = 0;
+  owned = new Set;
   constructor(deps) {
     this.deps = deps;
   }
@@ -2702,9 +2706,17 @@ class HelperSlots {
     });
     return check;
   }
+  own(entry, child) {
+    entry.child = child;
+    this.owned.delete(child);
+    this.owned.add(child);
+    if (this.owned.size > OWNED_MAX)
+      this.owned.delete(this.owned.values().next().value);
+  }
   async check(parent, call, target) {
     const now = this.now();
     this.admitted = this.admitted.filter((entry) => now - entry.at < ADMITTED_MS);
+    const seen = this.events;
     const children = await this.deps.children(parent);
     const byId = new Map(children.map((child) => [child.id, child]));
     const busy = [];
@@ -2715,20 +2727,17 @@ class HelperSlots {
       busy.push({ id: child.id, ...child.agent === undefined ? {} : { agent: child.agent } });
       counted.add(child.id);
     }
-    const taken = new Set(this.admitted.flatMap((entry) => entry.child === undefined ? [] : [entry.child]));
     const earliest = [...children].sort((a, b) => a.startedAt - b.startedAt);
     for (const entry of this.admitted) {
       if (entry.parent !== parent || entry.child !== undefined)
         continue;
-      const match = earliest.find((child) => !taken.has(child.id) && !entry.before.has(child.id));
-      if (match === undefined)
-        continue;
-      entry.child = match.id;
-      taken.add(match.id);
+      const match = earliest.find((child) => !this.owned.has(child.id) && !entry.before.has(child.id) && !ENDED.has(child.state));
+      if (match !== undefined)
+        this.own(entry, match.id);
     }
     this.admitted = this.admitted.filter((entry) => {
       const child = entry.child === undefined ? undefined : byId.get(entry.child);
-      return entry.parent !== parent || child === undefined || entry.resumed === true || !ENDED.has(child.state);
+      return entry.parent !== parent || child === undefined || entry.started === undefined || entry.started > seen || !ENDED.has(child.state);
     });
     for (const entry of this.admitted) {
       if (entry.parent !== parent)
@@ -2739,7 +2748,7 @@ class HelperSlots {
       }
       if (counted.has(entry.child))
         continue;
-      const agent = byId.get(entry.child)?.agent;
+      const agent = byId.get(entry.child)?.agent ?? entry.agent;
       busy.push({ id: entry.child, ...agent === undefined ? {} : { agent } });
       counted.add(entry.child);
     }
@@ -2747,13 +2756,12 @@ class HelperSlots {
       return;
     if (busy.length >= this.deps.limit)
       return slotsFullResult(this.deps.harness.name, this.deps.limit, busy);
-    this.admitted.push({
-      call: call ?? `unnamed-${++this.unnamed}`,
-      parent,
-      at: now,
-      before: new Set(byId.keys()),
-      ...target === undefined ? {} : { child: target, resumed: true }
-    });
+    const entry = { call: call ?? `unnamed-${++this.unnamed}`, parent, at: now, before: new Set(byId.keys()) };
+    if (target !== undefined) {
+      entry.resumed = true;
+      this.own(entry, target);
+    }
+    this.admitted.push(entry);
     return;
   }
   ended(call) {
@@ -2767,16 +2775,31 @@ class HelperSlots {
     const id = event?.sessionID;
     if (event === undefined || typeof id !== "string" || id === "")
       return;
+    const number = ++this.events;
     if (event.type === "session.created") {
-      if (typeof event.parentID !== "string" || this.admitted.some((entry) => entry.child === id))
+      if (typeof event.parentID !== "string" || this.owned.has(id))
         return;
       const entry = this.admitted.find((item) => item.parent === event.parentID && item.child === undefined);
-      if (entry !== undefined)
-        entry.child = id;
+      if (entry === undefined)
+        return;
+      this.own(entry, id);
+      entry.at = this.now();
+      if (typeof event.agent === "string")
+        entry.agent = event.agent;
       return;
     }
-    if (event.type?.startsWith("session.execution.") === true)
-      this.admitted = this.admitted.filter((entry) => entry.child !== id);
+    const mine = this.admitted.filter((entry) => entry.child === id);
+    if (mine.length === 0)
+      return;
+    if (event.type !== undefined && RUN_ENDS.has(event.type)) {
+      this.admitted = this.admitted.filter((entry) => entry.child !== id || entry.resumed === true && entry.started === undefined);
+      return;
+    }
+    for (const entry of mine) {
+      entry.at = this.now();
+      if (event.type === "session.execution.started")
+        entry.started = number;
+    }
   }
 }
 

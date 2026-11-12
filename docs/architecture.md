@@ -241,8 +241,11 @@ The plugin also enforces `max_helper_slots` (`plugin/slots.ts`). Its `execute.be
 refuses a hand-off from `lead` while that many of the session's helpers hold a slot, with a
 message that names the limit and the helpers and tells `lead` to wait for a report or use
 `helpers_status`. A helper holds a slot while it runs, in the foreground or the background. A
-hand-off the hook admitted holds one from then until its helper has started, or until the
-hand-off fails, so several hand-offs in one step count one by one. Continuing a running
+hand-off the hook admitted holds one from then until its helper's run ends, or until the
+hand-off fails, so several hand-offs in one step count one by one, and a check that read the
+children just before a helper's run started still counts it. Once a hand-off's helper is known,
+it stands for that hand-off only. If opencode's events about the helper stop, the hold lapses
+two minutes after the last one, and the helper counts by its listed state alone. Continuing a running
 helper with its `sessionID` takes no new slot; continuing an idle one starts a run, so it takes
 one like a new hand-off, held from the hand-off until that run ends. Only `lead` is limited,
 and only its own session's helpers count. Without the plugin the limit is an instruction in `lead`'s prompt only.
