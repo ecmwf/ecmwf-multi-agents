@@ -258,9 +258,17 @@ function endOfRun(api: NonNullable<V2Context["session"]>, wait: NonNullable<NonN
   return ended;
 }
 
-/** A session opencode reports running, as stopped when this opencode does not run it. */
+/**
+ * A session opencode reports running, as stopped when this opencode does not run it. A wait that
+ * answers at once may also mean the run has just ended, so the session is read again first and,
+ * when opencode now records how the run ended, that end counts.
+ */
 async function confirmed(ctx: V2Context, session: TrackedSession): Promise<TrackedSession> {
-  return session.state !== "running" || (await runsHere(ctx, session.id)) ? session : { ...session, state: "stopped" };
+  if (session.state !== "running" || (await runsHere(ctx, session.id))) return session;
+  const get = ctx.session?.get;
+  const again = typeof get === "function" ? reportedSession(unwrap(await Promise.resolve().then(() => get.call(ctx.session, { sessionID: session.id })).catch(() => undefined))) : undefined;
+  if (again === undefined || again.id !== session.id || again.state === "running") return { ...session, state: "stopped" };
+  return { ...session, state: again.state, updatedAt: again.updatedAt };
 }
 
 /** The children of `parent`: opencode's list, else what the event stream announced. */

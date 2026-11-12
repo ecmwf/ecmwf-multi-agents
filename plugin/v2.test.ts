@@ -947,6 +947,30 @@ describe("v2 helpers from opencode's session list", () => {
     expect(await host.call("helpers_cancel", { id: "all" }, lead)).toStartWith("Stopped scout live.");
     expect(host.interrupts).toEqual(["live"]);
   });
+
+  test("a run that ends while the plugin probes it is shown as it ended, not stopped; one opencode still lists running is stopped", async () => {
+    const { host } = await start({});
+    host.serveList();
+    host.listed = [child("ok", "scout", running), child("bad", "builder", running), child("cut", "reviewer", running)];
+    for (const id of ["ok", "bad", "cut"]) host.stale.add(id);
+    // By the time the probe's wait answers, opencode has recorded how the runs of ok and bad ended.
+    const ends: Record<string, V2SessionInfo["outcome"]> = { ok: "succeeded", bad: "failed" };
+    host.ctx.session!.get = async ({ sessionID }) => {
+      const listed = host.listed.find((session) => session.id === sessionID)!;
+      const outcome = ends[sessionID];
+      return outcome === undefined ? listed : { ...listed, time: { ...listed.time, idle: now }, outcome };
+    };
+    const status = await host.call("helpers_status", {}, lead);
+    expect(status).toContain("ok, scout, done");
+    expect(status).toContain("bad, builder, failed");
+    expect(status).toContain("cut, reviewer, stopped");
+    expect(await host.call("helpers_steer", { id: "ok", text: "x" }, lead)).toContain("scout ok is not running");
+    // Without an answer from get, the run counts as stopped.
+    host.ctx.session!.get = async () => {
+      throw new Error("get failed");
+    };
+    expect(await host.call("helpers_status", {}, lead)).toContain("ok, scout, stopped");
+  });
 });
 
 describe("v2 run probe", () => {

@@ -1127,8 +1127,11 @@ on, checked in the `v2.2.5` source and against `v2.2.6`; both versions agree on 
    leaves such a child with `busy` later than `idle` and nothing running it. `session.wait`,
    which plugins have, answers at once when this process has no run for the session and only
    when the run ends otherwise (`awaitIdle` in core/src/session/run-coordinator.ts), so the
-   plugin confirms a listed run with it and shows one nothing runs as stopped. There is no
-   status field; `session.active` exists in the HTTP API only.
+   plugin confirms a listed run with it and shows one nothing runs as stopped. Because the wait
+   also answers at once for a run that has just ended, the plugin then reads the session again
+   with `session.get` and takes the end opencode now records, if any. Probes of one session
+   share a single outstanding wait. There is no status field; `session.active` exists in the
+   HTTP API only.
 6. The delegation tool's input (`Input` in core/src/tool/plugin/subagent.ts, the same in
    `v2.2.6`): `agent`, `description`, `prompt`, optional `model`, optional `sessionID` (continue
    an existing child, running or finished) and optional `background`. Its own `execute.before`

@@ -2586,7 +2586,15 @@ function endOfRun(api, wait, sessionID) {
   return ended;
 }
 async function confirmed(ctx, session) {
-  return session.state !== "running" || await runsHere(ctx, session.id) ? session : { ...session, state: "stopped" };
+  if (session.state !== "running" || await runsHere(ctx, session.id))
+    return session;
+  const get = ctx.session?.get;
+  const again = typeof get === "function" ? reportedSession(unwrap(await Promise.resolve().then(() => get.call(ctx.session, { sessionID: session.id })).catch(() => {
+    return;
+  }))) : undefined;
+  if (again === undefined || again.id !== session.id || again.state === "running")
+    return { ...session, state: "stopped" };
+  return { ...session, state: again.state, updatedAt: again.updatedAt };
 }
 async function sessionChildren(ctx, tracker, parent) {
   const listed = await listedChildren(ctx, parent).catch(() => {
