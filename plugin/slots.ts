@@ -14,7 +14,8 @@
 // `session.tool.progress` event with the call's `id` (`Tool.Progress` in
 // schema/src/session-event.ts, opencode 2.2.5), and again in the call's result. Until then the
 // plugin guesses (the oldest waiting hand-off takes the next new child), and the call's own word
-// corrects the guess.
+// corrects the guess. A guessed helper's run end does not free the slot: the hand-off keeps it
+// until its call succeeds (naming its helper) or fails, or until ADMITTED_MS passes.
 
 import { slotsFullResult, type BusySlot } from "./helpers.ts";
 import { eventFields, type TrackedSession } from "./tools-v2.ts";
@@ -54,6 +55,11 @@ interface Admitted {
   resumed?: boolean;
   /** The number of the event that started the helper's run, once seen. */
   started?: number;
+  /**
+   * The guessed helper's run has ended. The slot stays held until the call itself answers, since
+   * the guess may be wrong and the call's own helper may still be to come.
+   */
+  ended?: boolean;
 }
 
 export interface SlotDeps {
@@ -135,25 +141,34 @@ export class HelperSlots {
     entry.at = this.now();
     if (entry.child === child) {
       entry.exact = true;
+      this.settle(entry);
       return;
     }
     const holder = this.admitted.find((item) => item !== entry && item.child === child);
     if (holder?.exact === true) return;
-    const given = { child: entry.child, agent: entry.agent, started: entry.started };
+    const given = { child: entry.child, agent: entry.agent, started: entry.started, ended: entry.ended };
     entry.agent = holder?.agent;
     entry.started = holder?.started;
+    entry.ended = holder?.ended;
     entry.exact = true;
     this.own(entry, child);
     if (holder !== undefined) {
       holder.child = undefined;
       holder.agent = undefined;
       holder.started = undefined;
+      holder.ended = undefined;
     }
-    if (given.child !== undefined) this.release(entry.parent, given.child, given.agent, given.started);
+    if (given.child !== undefined) this.release(entry.parent, given.child, given.agent, given.started, given.ended);
+    this.settle(entry);
+  }
+
+  /** An exactly paired hand-off whose helper's run was already seen to end frees its slot. */
+  private settle(entry: Admitted): void {
+    if (entry.exact === true && entry.ended === true) this.admitted = this.admitted.filter((item) => item !== entry);
   }
 
   /** A helper no hand-off owns any more goes to the oldest hand-off still waiting for one that could have created it. */
-  private release(parent: string, child: string, agent: string | undefined, started: number | undefined): void {
+  private release(parent: string, child: string, agent: string | undefined, started: number | undefined, ended: boolean | undefined): void {
     const taker = this.admitted.find((item) => item.parent === parent && item.child === undefined && item.resumed !== true && !item.before.has(child));
     if (taker === undefined) {
       this.owned.delete(child);
@@ -162,6 +177,7 @@ export class HelperSlots {
     this.own(taker, child);
     taker.agent = agent;
     taker.started = started;
+    taker.ended = ended;
     taker.at = this.now();
   }
 
@@ -188,13 +204,15 @@ export class HelperSlots {
       if (match !== undefined) this.own(entry, match.id);
     }
     // A snapshot shows a helper's run ended only if it was read after that run was seen to start.
-    this.admitted = this.admitted.filter((entry) => {
-      const child = entry.child === undefined ? undefined : byId.get(entry.child);
-      return entry.parent !== parent || child === undefined || entry.started === undefined || entry.started > seen || !ENDED.has(child.state);
-    });
+    for (const entry of this.admitted) {
+      const child = entry.parent !== parent || entry.child === undefined ? undefined : byId.get(entry.child);
+      if (child !== undefined && entry.started !== undefined && entry.started <= seen && ENDED.has(child.state)) entry.ended = true;
+    }
+    this.admitted = this.admitted.filter((entry) => entry.exact !== true || entry.ended !== true);
     for (const entry of this.admitted) {
       if (entry.parent !== parent) continue;
-      if (entry.child === undefined) {
+      // A guessed helper that has ended stands for a hand-off whose own helper may still come.
+      if (entry.child === undefined || entry.ended === true) {
         busy.push({});
         continue;
       }
@@ -233,7 +251,7 @@ export class HelperSlots {
     if (entry === undefined) return;
     if (call.status === "error") {
       this.admitted = this.admitted.filter((item) => item !== entry);
-      if (entry.child !== undefined && entry.exact !== true) this.release(entry.parent, entry.child, entry.agent, entry.started);
+      if (entry.child !== undefined && entry.exact !== true) this.release(entry.parent, entry.child, entry.agent, entry.started, entry.ended);
       return;
     }
     const child = namedChild(call.result);
@@ -268,7 +286,9 @@ export class HelperSlots {
     if (mine.length === 0) return;
     if (event.type !== undefined && RUN_ENDS.has(event.type)) {
       // A continued helper's run ends only after it started; an earlier end is its last run's.
-      this.admitted = this.admitted.filter((entry) => entry.child !== id || (entry.resumed === true && entry.started === undefined));
+      // A guessed pairing waits for its call to answer; an exact one frees the slot now.
+      for (const entry of mine) if (entry.resumed !== true || entry.started !== undefined) entry.ended = true;
+      this.admitted = this.admitted.filter((entry) => entry.exact !== true || entry.ended !== true);
       return;
     }
     for (const entry of mine) {

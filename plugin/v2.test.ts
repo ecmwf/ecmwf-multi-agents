@@ -1031,9 +1031,10 @@ describe("v2 helper slots", () => {
       return error instanceof Error ? error.message : String(error);
     }
   };
-  /** The end of a delegation call: the execute.after hooks. */
-  const ended = async (host: FakeHost, id: string, status: "completed" | "error" = "completed") => {
-    for (const hook of host.afterHooks) await hook({ tool: "subagent", input: brief(), id, status, ...lead });
+  /** The end of a delegation call: the execute.after hooks, with the result naming the helper as opencode's does. */
+  const ended = async (host: FakeHost, id: string, status: "completed" | "error" = "completed", child?: string) => {
+    const result = child === undefined ? {} : { result: { output: { sessionID: child, status: "completed" }, metadata: { sessionID: child, status: "completed" } } };
+    for (const hook of host.afterHooks) await hook({ tool: "subagent", input: brief(), id, status, ...result, ...lead });
   };
 
   test("at the limit lead's hand-off is refused with a message that names the limit, the running helpers and what to do", async () => {
@@ -1126,7 +1127,7 @@ describe("v2 helper slots", () => {
     expect(await handOff(host)).toContain("1 is running: builder f1.");
     host.emit("session.execution.succeeded", { sessionID: "f1" });
     await settle();
-    await ended(host, "f");
+    await ended(host, "f", "completed", "f1");
     expect(await handOff(host)).toBeUndefined();
   });
 

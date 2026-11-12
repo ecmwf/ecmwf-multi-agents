@@ -249,6 +249,9 @@ children just before a helper's run started still counts it. A hand-off learns i
 its own call, which opencode's progress update and result name; until then the plugin guesses
 that the oldest waiting hand-off owns the next new helper, and the call's word corrects the
 guess. A helper only guessed to belong to a hand-off that fails goes to the next waiting one.
+When a guessed helper's run ends, the hand-off keeps its slot until its own call has reported
+success or failure, since the guess may be wrong and the hand-off's own helper may still be
+starting.
 Once a hand-off's helper is known, it stands for that hand-off only. If opencode's events about the helper stop, the hold lapses
 two minutes after the last one, and the helper counts by its listed state alone. Continuing a running
 helper with its `sessionID` takes no new slot; continuing an idle one starts a run, so it takes

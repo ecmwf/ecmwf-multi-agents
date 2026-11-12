@@ -2779,25 +2779,33 @@ class HelperSlots {
     entry.at = this.now();
     if (entry.child === child) {
       entry.exact = true;
+      this.settle(entry);
       return;
     }
     const holder = this.admitted.find((item) => item !== entry && item.child === child);
     if (holder?.exact === true)
       return;
-    const given = { child: entry.child, agent: entry.agent, started: entry.started };
+    const given = { child: entry.child, agent: entry.agent, started: entry.started, ended: entry.ended };
     entry.agent = holder?.agent;
     entry.started = holder?.started;
+    entry.ended = holder?.ended;
     entry.exact = true;
     this.own(entry, child);
     if (holder !== undefined) {
       holder.child = undefined;
       holder.agent = undefined;
       holder.started = undefined;
+      holder.ended = undefined;
     }
     if (given.child !== undefined)
-      this.release(entry.parent, given.child, given.agent, given.started);
+      this.release(entry.parent, given.child, given.agent, given.started, given.ended);
+    this.settle(entry);
   }
-  release(parent, child, agent, started) {
+  settle(entry) {
+    if (entry.exact === true && entry.ended === true)
+      this.admitted = this.admitted.filter((item) => item !== entry);
+  }
+  release(parent, child, agent, started, ended) {
     const taker = this.admitted.find((item) => item.parent === parent && item.child === undefined && item.resumed !== true && !item.before.has(child));
     if (taker === undefined) {
       this.owned.delete(child);
@@ -2806,6 +2814,7 @@ class HelperSlots {
     this.own(taker, child);
     taker.agent = agent;
     taker.started = started;
+    taker.ended = ended;
     taker.at = this.now();
   }
   async check(parent, call, target) {
@@ -2830,14 +2839,16 @@ class HelperSlots {
       if (match !== undefined)
         this.own(entry, match.id);
     }
-    this.admitted = this.admitted.filter((entry) => {
-      const child = entry.child === undefined ? undefined : byId.get(entry.child);
-      return entry.parent !== parent || child === undefined || entry.started === undefined || entry.started > seen || !ENDED.has(child.state);
-    });
+    for (const entry of this.admitted) {
+      const child = entry.parent !== parent || entry.child === undefined ? undefined : byId.get(entry.child);
+      if (child !== undefined && entry.started !== undefined && entry.started <= seen && ENDED.has(child.state))
+        entry.ended = true;
+    }
+    this.admitted = this.admitted.filter((entry) => entry.exact !== true || entry.ended !== true);
     for (const entry of this.admitted) {
       if (entry.parent !== parent)
         continue;
-      if (entry.child === undefined) {
+      if (entry.child === undefined || entry.ended === true) {
         busy.push({});
         continue;
       }
@@ -2874,7 +2885,7 @@ class HelperSlots {
     if (call.status === "error") {
       this.admitted = this.admitted.filter((item) => item !== entry);
       if (entry.child !== undefined && entry.exact !== true)
-        this.release(entry.parent, entry.child, entry.agent, entry.started);
+        this.release(entry.parent, entry.child, entry.agent, entry.started, entry.ended);
       return;
     }
     const child = namedChild(call.result);
@@ -2910,7 +2921,10 @@ class HelperSlots {
     if (mine.length === 0)
       return;
     if (event.type !== undefined && RUN_ENDS.has(event.type)) {
-      this.admitted = this.admitted.filter((entry) => entry.child !== id || entry.resumed === true && entry.started === undefined);
+      for (const entry of mine)
+        if (entry.resumed !== true || entry.started !== undefined)
+          entry.ended = true;
+      this.admitted = this.admitted.filter((entry) => entry.exact !== true || entry.ended !== true);
       return;
     }
     for (const entry of mine) {
