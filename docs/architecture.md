@@ -191,7 +191,9 @@ briefs a builder to run it without changing anything.
 
 Parallelism: at most `max_helper_slots` helpers at once (default 4). Scouts in parallel
 whenever their questions are independent. Builders in parallel only when their file sets do
-not overlap. This is an instruction to `lead`, not a runtime scheduler or a machine-wide cap.
+not overlap. The plugin enforces the limit for each `lead` session: it refuses a hand-off while
+that many of the session's helpers hold a slot, and says so to `lead` (see Background helpers).
+It is not a scheduler that queues work, nor a cap across sessions or the machine.
 
 ## Background helpers
 
@@ -234,6 +236,15 @@ run that a stop cut off, and such a helper shows as stopped. Without the list, o
 fails, the plugin falls back to the helpers whose start it saw in opencode's events since it
 loaded. The steps and the last tool call in each line come from the tool calls the plugin has
 seen since it loaded.
+
+The plugin also enforces `max_helper_slots` (`plugin/slots.ts`). Its `execute.before` tool hook
+refuses a hand-off from `lead` while that many of the session's helpers hold a slot, with a
+message that names the limit and the helpers and tells `lead` to wait for a report or use
+`helpers_status`. A helper holds a slot while it runs, in the foreground or the background. A
+hand-off the hook admitted holds one from then until its helper has started, or until the
+hand-off fails, so several hand-offs in one step count one by one. Continuing a helper with
+its `sessionID` takes no new slot. Only `lead` is limited, and only its own session's helpers
+count. Without the plugin the limit is an instruction in `lead`'s prompt only.
 
 A steer amends the brief (principle 3): the helper follows the latest message, keeps the
 earlier LIMITS unless the steer lifts them, and reports what changed in the section its
@@ -569,8 +580,8 @@ models").
 `Run at most N helpers at once.` instruction in `lead`, preserving the file-ownership rules
 that follow it. The generated prompt uses 4 without the plugin. The plan skill and `/onboard`
 refer to that instruction rather than repeating the number. A missing or duplicate instruction
-is reported; an explicitly chosen limit that cannot apply also shows a warning toast.
-More slots can run more builders, databases, dev servers and builds on the same machine.
+is reported; an explicitly chosen limit that cannot apply also shows a warning toast. The
+plugin also refuses a hand-off beyond the limit (see Background helpers). More slots can run more builders, databases, dev servers and builds on the same machine.
 
 The generator writes a JSON Schema for this file; the plugin validates with the same patterns.
 A file with unknown keys or invalid values is ignored as a whole and reported on standard

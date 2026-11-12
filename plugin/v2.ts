@@ -28,8 +28,9 @@
 //
 // The helper tools (tools-v2.ts) are added by a tool transform registered during setup, which
 // is enough: nothing later removes a tool another plugin added. The `execute.before` hook
-// refuses a helper's call to them and feeds the activity tracker; the event subscription feeds
-// the session tracker besides watching for activations.
+// refuses a helper's call to them, refuses lead's hand-off beyond `max_helper_slots` (slots.ts)
+// and feeds the activity tracker; `execute.after` frees the slot of a hand-off that failed. The
+// event subscription feeds the session tracker and the slots besides watching for activations.
 //
 // The `context` session hook leaves a background helper's report that arrives while lead is still
 // replying to the user out of lead's requests until the reply has ended, and a message queued for
@@ -56,8 +57,9 @@ import { v2Reporter, type Reporter } from "./report.ts";
 import { ProblemLog, registerRpc } from "./rpc.ts";
 import { RuleOrder } from "./rule-order.ts";
 import { SETTINGS_FILE, loadSettings, mergeSettings, type LoadedSettings } from "./settings.ts";
+import { HelperSlots } from "./slots.ts";
 import { stepLimitAsUser } from "./step-limit.ts";
-import { eventFields, SessionTracker, v2Tools } from "./tools-v2.ts";
+import { eventFields, SessionTracker, sessionChildren, v2Tools } from "./tools-v2.ts";
 import type { EmbeddedHarness, Environment, Settings, V2AgentEditor, V2Cleanup, V2CommandEditor, V2Context, V2ContextEvent, V2Event, V2ModelMessage, V2Registration } from "./types.ts";
 
 /** Registers anyway when no `plugin.updated` arrives, in case the first one came before the subscription. */
@@ -295,11 +297,12 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
           }
         });
       }
+      const slots = new HelperSlots({ harness, limit: settings.maxHelperSlots, helpers, children: (parent) => sessionChildren(ctx, tracker, parent) });
       if (typeof ctx.tool?.hook === "function") {
-        await ctx.tool.hook("execute.before", (call) => {
+        await ctx.tool.hook("execute.before", async (call) => {
           let message: string | undefined;
           try {
-            message = toolCallBlock(harness, call?.agent, call?.tool);
+            message = toolCallBlock(harness, call?.agent, call?.tool) ?? (await slots.admit(call));
             // A refused call is not a step the helper took.
             if (message === undefined) activity.observe(call?.sessionID, call?.tool, call?.input);
           } catch (error) {
@@ -309,6 +312,17 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
           // The one deliberate throw: opencode refuses the call and tells the model why.
           if (message !== undefined) throw new Error(message);
         });
+        try {
+          await ctx.tool.hook("execute.after", (call) => {
+            try {
+              slots.ended(call);
+            } catch (error) {
+              reporter.internal("the tool hook after a call", error);
+            }
+          });
+        } catch (error) {
+          reporter.internal("registering the tool hook after a call", error);
+        }
       }
       const inline = new Inline({
         harness,
@@ -418,6 +432,7 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
       const keepOut = keepWorkDirOutOfGit(ctx, harness, environment, reporter);
       const onEvent = (event: V2Event) => {
         tracker.observe(event);
+        slots.observe(event);
         keepOut(event);
         // Without a payload and sometimes twice: reading again is harmless, a repeat changes nothing.
         if (event?.type === "provider.updated" || event?.type === "model.updated") void readProviders();

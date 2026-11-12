@@ -94,7 +94,7 @@ const textOf = (message: unknown): string => {
 
 /**
  * The stand-in. lead: `BG <tag>` delegates `SLOW <tag>` to the builder in the background,
- * `FG <tag>` in the foreground;
+ * `FG <tag>` in the foreground, `AGAIN <tag>` in the background later in the conversation;
  * `ASK <tag>` is answered once, after one slow lookup step, whatever report arrives meanwhile;
  * a wake to answer the user after a command, with `QUESTION <tag>` above it, answers the question;
  * anything else ends the turn. builder: `sleep` steps until it has taken STEPS, or until a
@@ -148,8 +148,11 @@ function standIn(script: Script) {
         const since = messages.slice(messages.indexOf(question) + 1);
         const looked = since.some((message) => role(message) === "tool");
         const answered = since.some((message) => role(message) === "assistant" && textOf(message).includes("lead answered"));
+        const again = /^AGAIN (\S+)/.exec(last);
+        const actedSinceLast = messages.slice(messages.map(role).lastIndexOf("user") + 1).some((message) => role(message) === "tool");
         if (bg && results === 0) tool = script.delegate(`SLOW ${bg[1]}`, true);
         else if (fg && results === 0) tool = script.delegate(`SLOW ${fg[1]}`, false);
+        else if (again && !actedSinceLast) tool = script.delegate(`SLOW ${again[1]}`, true);
         else if (status && !messages.some((message) => role(message) === "tool" && /helpers? in this session/.test(textOf(message))))
           tool = { name: HELPER_TOOLS.status, args: {} };
         else if (steer && !messages.some((message) => role(message) === "tool" && /Sent to|not running|not a helper/.test(textOf(message))))
@@ -783,6 +786,32 @@ describe.skipIf(!v2Available)(`background helpers in opencode ${V2_VERSION}`, ()
       expect(output).toContain("One helper in this session");
       const resumed = model.builder(tag).some((item) => item.users.some((user) => user.includes("server restarted")));
       expect(output).toContain(`${target.id}, builder, ${resumed ? "running" : "stopped"}`);
+    }, 300_000);
+
+    test("with max_helper_slots 1, lead's second hand-off is refused while the first helper runs, and admitted after it", async () => {
+      mkdirSync(path.join(box.project, ".opencode"), { recursive: true });
+      writeFileSync(path.join(box.project, ".opencode", "ecmwf-multi-agents.jsonc"), '{ "max_helper_slots": 1 }\n');
+      await server.stop();
+      await serveWithPlugins();
+      const tag = nextTag();
+      const session = await start(`BG ${tag}`);
+      const first = await child(session);
+      await stepsOf(tag, 1);
+      await tell(session, `AGAIN ${tag}`);
+      const handOffs = async () =>
+        (await api<V2Message[]>("GET", `/api/session/${session}/message`)).flatMap((message) => message.content ?? []).filter((item) => item.type === "tool" && item.name === "subagent");
+      const refused = await within(30_000, "the refused hand-off", async () => (await handOffs()).find((item) => item.state?.status === "error"));
+      expect(refused.state?.error?.message).toContain(
+        `hand-off refused. You may run at most 1 helper at once (max_helper_slots), and 1 is running: builder ${first.id}. Wait for a running helper's report`,
+      );
+      expect(model.builder(tag).some((item) => item.reply === "builder finished")).toBe(false);
+      expect(await children(session)).toHaveLength(1);
+      expect(await wake(tag)).toContain("builder finished");
+      await within(20_000, "lead's turn after the report", async () => model.lead(tag).find((item) => item.users.at(-1)?.includes("<subagent ") && item.reply === "lead done"));
+      await tell(session, `AGAIN ${tag}`);
+      const second = await within(30_000, "the second helper", async () => (await children(session)).find((item) => item.id !== first.id));
+      expect(second.agent).toBe("builder");
+      expect((await handOffs()).filter((item) => item.state?.status === "error")).toHaveLength(1);
     }, 300_000);
   });
 });

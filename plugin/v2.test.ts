@@ -948,6 +948,142 @@ describe("v2 helpers from opencode's session list", () => {
   });
 });
 
+describe("v2 helper slots", () => {
+  const lead = { sessionID: "root", agent: "lead" };
+  const slots = (count: number) => ({ [PROJECT]: `{ "max_helper_slots": ${count} }` });
+  const brief = (more: Record<string, unknown> = {}) => ({ agent: "builder", description: "job", prompt: "do it", background: true, ...more });
+  const running = (id: string, agent = "builder"): V2SessionInfo => ({ id, parentID: "root", agent, time: { created: Date.now(), updated: Date.now(), busy: Date.now() } });
+  const finished = (id: string, agent = "builder"): V2SessionInfo => ({
+    id,
+    parentID: "root",
+    agent,
+    time: { created: Date.now() - 60_000, updated: Date.now(), busy: Date.now() - 60_000, idle: Date.now() - 1_000 },
+    outcome: "succeeded",
+  });
+  let calls = 0;
+  /** A delegation call as opencode starts it: the execute.before hooks; undefined, or the refusal. */
+  const handOff = async (host: FakeHost, input: Record<string, unknown> = brief(), context = lead, id = `call${++calls}`): Promise<string | undefined> => {
+    try {
+      for (const hook of host.toolHooks) await hook({ tool: "subagent", input, id, ...context });
+      return undefined;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  };
+  /** The end of a delegation call: the execute.after hooks. */
+  const ended = async (host: FakeHost, id: string, status: "completed" | "error" = "completed") => {
+    for (const hook of host.afterHooks) await hook({ tool: "subagent", input: brief(), id, status, ...lead });
+  };
+
+  test("at the limit lead's hand-off is refused with a message that names the limit, the running helpers and what to do", async () => {
+    const { host } = await start(slots(2));
+    host.serveList();
+    host.listed = [running("c1"), running("c2", "scout"), finished("c3")];
+    expect(await handOff(host)).toBe(
+      "ecmwf-multi-agents: hand-off refused. You may run at most 2 helpers at once (max_helper_slots), and 2 are running: builder c1, scout c2. " +
+        "Wait for a running helper's report before you hand off this work, or use helpers_status to see what they are doing.",
+    );
+    // Other tools are not limited.
+    for (const hook of host.toolHooks) await hook({ tool: "read", input: { filePath: "/a" }, ...lead });
+    host.listed[1] = finished("c2", "scout");
+    expect(await handOff(host)).toBeUndefined();
+  });
+
+  test("two hand-offs in one step with one slot left: one is admitted, the other refused", async () => {
+    const { host } = await start(slots(2));
+    host.serveList();
+    host.listed = [running("c1")];
+    const results = await Promise.all([handOff(host, brief(), lead, "a"), handOff(host, brief({ background: false }), lead, "b")]);
+    expect(results.filter((result) => result === undefined)).toHaveLength(1);
+    expect(results.find((result) => result !== undefined)).toContain("and 2 are running: builder c1, a helper that is starting.");
+  });
+
+  test("an admitted hand-off counts once, before and after its helper starts, until its helper finishes", async () => {
+    const { host } = await start(slots(3));
+    host.serveList();
+    host.listed = [running("c1")];
+    expect(await handOff(host, brief(), lead, "a")).toBeUndefined();
+    // opencode lists the new helper before the plugin has seen its events.
+    host.listed.push(running("c2"));
+    expect(await handOff(host, brief(), lead, "b")).toBeUndefined();
+    expect(await handOff(host, brief(), lead, "c")).toContain("3 are running: builder c1, builder c2, a helper that is starting.");
+    await settle();
+    host.emit("session.created", { sessionID: "c3", parentID: "root", agent: "builder" });
+    host.listed.push(running("c3"));
+    await ended(host, "a");
+    await ended(host, "b");
+    expect(await handOff(host)).toContain("3 are running: builder c1, builder c2, builder c3.");
+    host.listed[0] = finished("c1");
+    expect(await handOff(host)).toBeUndefined();
+  });
+
+  test("a hand-off that fails before its helper starts frees its slot; a refused one never took one", async () => {
+    const { host } = await start(slots(1));
+    host.serveList();
+    expect(await handOff(host, brief(), lead, "a")).toBeUndefined();
+    expect(await handOff(host, brief(), lead, "b")).toContain("1 is running: a helper that is starting.");
+    await ended(host, "a", "error");
+    expect(await handOff(host)).toBeUndefined();
+  });
+
+  test("continuing a helper with its sessionID is not a new slot; an empty sessionID starts a new helper", async () => {
+    const { host } = await start(slots(1));
+    host.serveList();
+    host.listed = [running("c1"), finished("c2")];
+    expect(await handOff(host, brief({ sessionID: "c2" }))).toBeUndefined();
+    expect(await handOff(host, brief({ sessionID: "c1" }))).toBeUndefined();
+    expect(await handOff(host, brief({ sessionID: "" }))).toContain("1 is running: builder c1.");
+  });
+
+  test("a foreground hand-off holds its slot while its helper runs", async () => {
+    const { host } = await start(slots(1));
+    await settle();
+    expect(await handOff(host, brief({ background: false }), lead, "f")).toBeUndefined();
+    expect(await handOff(host)).toContain("1 is running: a helper that is starting.");
+    host.emit("session.created", { sessionID: "f1", parentID: "root", agent: "builder" });
+    host.emit("session.execution.started", { sessionID: "f1" });
+    await settle();
+    expect(await handOff(host)).toContain("1 is running: builder f1.");
+    host.emit("session.execution.succeeded", { sessionID: "f1" });
+    await settle();
+    await ended(host, "f");
+    expect(await handOff(host)).toBeUndefined();
+  });
+
+  test("only lead is limited", async () => {
+    const { host } = await start(slots(1));
+    host.serveList();
+    host.listed = [running("c1")];
+    expect(await handOff(host, brief(), { sessionID: "root", agent: "build" })).toBeUndefined();
+    expect(await handOff(host, brief(), { sessionID: "c1", agent: "builder" })).toBeUndefined();
+    expect(await handOff(host)).toContain("at most 1 helper at once");
+  });
+
+  test("without the setting the limit is the default, 4", async () => {
+    const { host } = await start({});
+    host.serveList();
+    host.listed = ["c1", "c2", "c3", "c4"].map((id) => running(id));
+    expect(await handOff(host)).toContain("at most 4 helpers at once (max_helper_slots), and 4 are running");
+    host.listed[3] = finished("c4");
+    expect(await handOff(host)).toBeUndefined();
+  });
+
+  test("without session.list the helpers the event stream announced count; when the list fails nothing throws", async () => {
+    const { host } = await start(slots(1));
+    await settle();
+    host.emit("session.created", { sessionID: "c1", parentID: "root", agent: "scout" });
+    host.emit("session.execution.started", { sessionID: "c1" });
+    await settle();
+    expect(await handOff(host)).toContain("1 is running: scout c1.");
+
+    const failing = await start(slots(1));
+    failing.host.serveList();
+    failing.host.listFails = true;
+    expect(await handOff(failing.host)).toBeUndefined();
+    expect(failing.write).toEqual([]);
+  });
+});
+
 describe("v2 answer first", () => {
   const user = (text: string): V2ModelMessage => ({ role: "user", content: [{ type: "text", text }] });
   const report = () => user('<subagent sessionID="ses_c" state="completed">\nSTATUS: DONE\n</subagent>');

@@ -1178,6 +1178,10 @@ function cancelledResult(cancelled) {
   const list = cancelled.map((item) => `${item.agent} ${item.id}`).join(", ");
   return `Stopped ${list}. ${cancelled.length === 1 ? "It" : "They"} will not report; check ${HELPER_TOOLS.status} or the files ${cancelled.length === 1 ? "it" : "they"} touched before building on ${cancelled.length === 1 ? "its" : "their"} work.`;
 }
+function slotsFullResult(name, limit, busy) {
+  const named = busy.map((slot) => slot.id === undefined ? "a helper that is starting" : `${slot.agent ?? "helper"} ${slot.id}`);
+  return `${name}: hand-off refused. You may run at most ${limit} ${limit === 1 ? "helper" : "helpers"} at once (max_helper_slots), ` + `and ${busy.length} ${busy.length === 1 ? "is" : "are"} running: ${named.join(", ")}. ` + `Wait for a running helper's report before you hand off this work, or use ${HELPER_TOOLS.status} to see what they are doing.`;
+}
 function toolCallBlock(harness, agentId, tool) {
   if (!HELPER_TOOL_IDS.includes(tool))
     return;
@@ -2393,34 +2397,6 @@ function loadSettings(harness, environment, projectRoot, site) {
   return { settings: mergeSettings(files, harness), problems, applied, sources: settingSources(files, applied) };
 }
 
-// plugin/step-limit.ts
-var STEP_LIMIT_NOTICE = `CRITICAL - MAXIMUM STEPS REACHED
-
-The maximum number of steps allowed for this task has been reached. Tools are disabled until next user input. Respond with text only.
-
-STRICT REQUIREMENTS:
-1. Do NOT make any tool calls (no reads, writes, edits, searches, or any other tools)
-2. MUST provide a text response summarizing work done so far
-3. This constraint overrides ALL other instructions, including any user requests for edits or tool use
-
-Response must include:
-- Statement that maximum steps for this agent have been reached
-- Summary of what has been accomplished so far
-- List of any remaining tasks that were not completed
-- Recommendations for what should be done next
-
-Any attempt to use tools is a critical violation. Respond with text ONLY.`;
-function stepLimitAsUser(messages) {
-  const last = messages.at(-1);
-  if (last?.role !== "assistant" || !Array.isArray(last.content) || last.content.length !== 1)
-    return false;
-  const part = last.content[0];
-  if (part?.type !== "text" || part.text !== STEP_LIMIT_NOTICE)
-    return false;
-  messages[messages.length - 1] = { role: "user", content: [{ type: "text", text: STEP_LIMIT_NOTICE }] };
-  return true;
-}
-
 // plugin/tools-v2.ts
 var LIST_PAGE = 100;
 var MAX_PAGES = 100;
@@ -2694,6 +2670,135 @@ function v2Tools(deps) {
   ];
 }
 
+// plugin/slots.ts
+var DELEGATION_TOOL = "subagent";
+var ADMITTED_MS = 120000;
+function continues(input) {
+  const sessionID = input !== null && typeof input === "object" ? input.sessionID : undefined;
+  return typeof sessionID === "string" && sessionID !== "";
+}
+var ENDED = new Set(["done", "failed", "stopped"]);
+
+class HelperSlots {
+  deps;
+  admitted = [];
+  queue = Promise.resolve();
+  unnamed = 0;
+  constructor(deps) {
+    this.deps = deps;
+  }
+  now() {
+    return (this.deps.now ?? Date.now)();
+  }
+  admit(call) {
+    if (call?.tool !== DELEGATION_TOOL || call.agent !== this.deps.harness.defaultAgent)
+      return Promise.resolve(undefined);
+    if (typeof call.sessionID !== "string" || call.sessionID === "" || continues(call.input))
+      return Promise.resolve(undefined);
+    const check = this.queue.then(() => this.check(call.sessionID, call.id));
+    this.queue = check.catch(() => {
+      return;
+    });
+    return check;
+  }
+  async check(parent, call) {
+    const now = this.now();
+    this.admitted = this.admitted.filter((entry) => now - entry.at < ADMITTED_MS);
+    const children = await this.deps.children(parent);
+    const byId = new Map(children.map((child) => [child.id, child]));
+    const busy = [];
+    const counted = new Set;
+    for (const child of children) {
+      if (child.state !== "running" || child.agent !== undefined && !this.deps.helpers.has(child.agent))
+        continue;
+      busy.push({ id: child.id, ...child.agent === undefined ? {} : { agent: child.agent } });
+      counted.add(child.id);
+    }
+    const taken = new Set(this.admitted.flatMap((entry) => entry.child === undefined ? [] : [entry.child]));
+    const earliest = [...children].sort((a, b) => a.startedAt - b.startedAt);
+    for (const entry of this.admitted) {
+      if (entry.parent !== parent || entry.child !== undefined)
+        continue;
+      const match = earliest.find((child) => !taken.has(child.id) && !entry.before.has(child.id));
+      if (match === undefined)
+        continue;
+      entry.child = match.id;
+      taken.add(match.id);
+    }
+    this.admitted = this.admitted.filter((entry) => {
+      const child = entry.child === undefined ? undefined : byId.get(entry.child);
+      return entry.parent !== parent || child === undefined || !ENDED.has(child.state);
+    });
+    for (const entry of this.admitted) {
+      if (entry.parent !== parent)
+        continue;
+      if (entry.child === undefined) {
+        busy.push({});
+        continue;
+      }
+      if (counted.has(entry.child))
+        continue;
+      const agent = byId.get(entry.child)?.agent;
+      busy.push({ id: entry.child, ...agent === undefined ? {} : { agent } });
+      counted.add(entry.child);
+    }
+    if (busy.length >= this.deps.limit)
+      return slotsFullResult(this.deps.harness.name, this.deps.limit, busy);
+    this.admitted.push({ call: call ?? `unnamed-${++this.unnamed}`, parent, at: now, before: new Set(byId.keys()) });
+    return;
+  }
+  ended(call) {
+    if (call?.tool !== DELEGATION_TOOL || typeof call.id !== "string")
+      return;
+    if (call.status === "error")
+      this.admitted = this.admitted.filter((entry) => entry.call !== call.id);
+  }
+  observe(envelope) {
+    const event = eventFields(envelope);
+    const id = event?.sessionID;
+    if (event === undefined || typeof id !== "string" || id === "")
+      return;
+    if (event.type === "session.created") {
+      if (typeof event.parentID !== "string" || this.admitted.some((entry) => entry.child === id))
+        return;
+      const entry = this.admitted.find((item) => item.parent === event.parentID && item.child === undefined);
+      if (entry !== undefined)
+        entry.child = id;
+      return;
+    }
+    if (event.type?.startsWith("session.execution.") === true)
+      this.admitted = this.admitted.filter((entry) => entry.child !== id);
+  }
+}
+
+// plugin/step-limit.ts
+var STEP_LIMIT_NOTICE = `CRITICAL - MAXIMUM STEPS REACHED
+
+The maximum number of steps allowed for this task has been reached. Tools are disabled until next user input. Respond with text only.
+
+STRICT REQUIREMENTS:
+1. Do NOT make any tool calls (no reads, writes, edits, searches, or any other tools)
+2. MUST provide a text response summarizing work done so far
+3. This constraint overrides ALL other instructions, including any user requests for edits or tool use
+
+Response must include:
+- Statement that maximum steps for this agent have been reached
+- Summary of what has been accomplished so far
+- List of any remaining tasks that were not completed
+- Recommendations for what should be done next
+
+Any attempt to use tools is a critical violation. Respond with text ONLY.`;
+function stepLimitAsUser(messages) {
+  const last = messages.at(-1);
+  if (last?.role !== "assistant" || !Array.isArray(last.content) || last.content.length !== 1)
+    return false;
+  const part = last.content[0];
+  if (part?.type !== "text" || part.text !== STEP_LIMIT_NOTICE)
+    return false;
+  messages[messages.length - 1] = { role: "user", content: [{ type: "text", text: STEP_LIMIT_NOTICE }] };
+  return true;
+}
+
 // plugin/v2.ts
 var FALLBACK_MS = 3000;
 function userSettingsFile(environment) {
@@ -2906,11 +3011,12 @@ function createSetup(harness, options = {}) {
           }
         });
       }
+      const slots = new HelperSlots({ harness, limit: settings.maxHelperSlots, helpers, children: (parent) => sessionChildren(ctx, tracker, parent) });
       if (typeof ctx.tool?.hook === "function") {
-        await ctx.tool.hook("execute.before", (call) => {
+        await ctx.tool.hook("execute.before", async (call) => {
           let message;
           try {
-            message = toolCallBlock(harness, call?.agent, call?.tool);
+            message = toolCallBlock(harness, call?.agent, call?.tool) ?? await slots.admit(call);
             if (message === undefined)
               activity.observe(call?.sessionID, call?.tool, call?.input);
           } catch (error) {
@@ -2920,6 +3026,17 @@ function createSetup(harness, options = {}) {
           if (message !== undefined)
             throw new Error(message);
         });
+        try {
+          await ctx.tool.hook("execute.after", (call) => {
+            try {
+              slots.ended(call);
+            } catch (error) {
+              reporter.internal("the tool hook after a call", error);
+            }
+          });
+        } catch (error) {
+          reporter.internal("registering the tool hook after a call", error);
+        }
       }
       const inline = new Inline({
         harness,
@@ -3016,6 +3133,7 @@ ${found.reply}`;
       const keepOut = keepWorkDirOutOfGit(ctx, harness, environment, reporter);
       const onEvent = (event) => {
         tracker.observe(event);
+        slots.observe(event);
         keepOut(event);
         if (event?.type === "provider.updated" || event?.type === "model.updated")
           readProviders();
@@ -3311,7 +3429,7 @@ Settings live in \`~/.config/opencode/ecmwf-multi-agents.jsonc\`. A project can 
 
 Each agent takes \`model\`, \`effort\`, \`fallback\` and \`steps\`; a helper also takes \`enabled\`, \`true\` or \`false\`. A project's file can switch on a helper that is off in yours, or the other way round. Effort is how hard a model thinks: more effort is slower and costs more. Values: \`low\`, \`medium\`, \`high\`, \`xhigh\`, \`max\`; some models also \`none\`. Defaults: \`lead\` xhigh, \`builder\` high, \`scout\` and reviewer medium. Effort needs a model, so under \`inherit\` set \`model\` too. \`steps\` caps an agent's turns, which limits cost.
 
-\`max_helper_slots\` tells \`lead\` how many helpers may run at once (default 4). More slots can run more builders, databases, dev servers and builds on the same machine; raise it with care. \`/execute\` and \`/onboard\` follow this limit.
+\`max_helper_slots\` is how many helpers \`lead\` may run at once (default 4); the plugin refuses more. More slots run more builders, servers and builds on one machine; raise it with care. \`/execute\` and \`/onboard\` follow this limit.
 
 \`fallback\` lists models to try in order when an agent's \`model\` is not available: \`"provider/model"\` or \`{ "model": "...", "effort": "..." }\`. The plugin picks the first usable one at startup and when providers change, and shows a notice. It ignores rate limits and outages, needs \`model\` in the same entry, and does nothing without the plugin.
 

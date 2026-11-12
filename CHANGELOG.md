@@ -37,6 +37,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ### Fixed
 
+- `max_helper_slots` is enforced: the plugin refuses a hand-off beyond the limit. While that
+  many of `lead`'s helpers run, or have been handed work and are starting, a new hand-off
+  fails with a message that names the limit and the helpers; continuing a helper is not
+  limited.
 - `helpers_status`, `helpers_steer` and `helpers_cancel` also find helpers started before
   opencode or the plugin restarted: the plugin asks opencode for the session's helpers. A
   helper whose run a stop of opencode cut off, and that opencode did not resume, shows as
