@@ -2673,9 +2673,9 @@ function v2Tools(deps) {
 // plugin/slots.ts
 var DELEGATION_TOOL = "subagent";
 var ADMITTED_MS = 120000;
-function continues(input) {
+function continued(input) {
   const sessionID = input !== null && typeof input === "object" ? input.sessionID : undefined;
-  return typeof sessionID === "string" && sessionID !== "";
+  return typeof sessionID === "string" && sessionID !== "" ? sessionID : undefined;
 }
 var ENDED = new Set(["done", "failed", "stopped"]);
 
@@ -2693,15 +2693,16 @@ class HelperSlots {
   admit(call) {
     if (call?.tool !== DELEGATION_TOOL || call.agent !== this.deps.harness.defaultAgent)
       return Promise.resolve(undefined);
-    if (typeof call.sessionID !== "string" || call.sessionID === "" || continues(call.input))
+    if (typeof call.sessionID !== "string" || call.sessionID === "")
       return Promise.resolve(undefined);
-    const check = this.queue.then(() => this.check(call.sessionID, call.id));
+    const target = continued(call.input);
+    const check = this.queue.then(() => this.check(call.sessionID, call.id, target));
     this.queue = check.catch(() => {
       return;
     });
     return check;
   }
-  async check(parent, call) {
+  async check(parent, call, target) {
     const now = this.now();
     this.admitted = this.admitted.filter((entry) => now - entry.at < ADMITTED_MS);
     const children = await this.deps.children(parent);
@@ -2727,7 +2728,7 @@ class HelperSlots {
     }
     this.admitted = this.admitted.filter((entry) => {
       const child = entry.child === undefined ? undefined : byId.get(entry.child);
-      return entry.parent !== parent || child === undefined || !ENDED.has(child.state);
+      return entry.parent !== parent || child === undefined || entry.resumed === true || !ENDED.has(child.state);
     });
     for (const entry of this.admitted) {
       if (entry.parent !== parent)
@@ -2742,9 +2743,17 @@ class HelperSlots {
       busy.push({ id: entry.child, ...agent === undefined ? {} : { agent } });
       counted.add(entry.child);
     }
+    if (target !== undefined && counted.has(target))
+      return;
     if (busy.length >= this.deps.limit)
       return slotsFullResult(this.deps.harness.name, this.deps.limit, busy);
-    this.admitted.push({ call: call ?? `unnamed-${++this.unnamed}`, parent, at: now, before: new Set(byId.keys()) });
+    this.admitted.push({
+      call: call ?? `unnamed-${++this.unnamed}`,
+      parent,
+      at: now,
+      before: new Set(byId.keys()),
+      ...target === undefined ? {} : { child: target, resumed: true }
+    });
     return;
   }
   ended(call) {

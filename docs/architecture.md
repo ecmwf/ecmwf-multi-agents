@@ -242,9 +242,10 @@ refuses a hand-off from `lead` while that many of the session's helpers hold a s
 message that names the limit and the helpers and tells `lead` to wait for a report or use
 `helpers_status`. A helper holds a slot while it runs, in the foreground or the background. A
 hand-off the hook admitted holds one from then until its helper has started, or until the
-hand-off fails, so several hand-offs in one step count one by one. Continuing a helper with
-its `sessionID` takes no new slot. Only `lead` is limited, and only its own session's helpers
-count. Without the plugin the limit is an instruction in `lead`'s prompt only.
+hand-off fails, so several hand-offs in one step count one by one. Continuing a running
+helper with its `sessionID` takes no new slot; continuing an idle one starts a run, so it takes
+one like a new hand-off, held from the hand-off until that run ends. Only `lead` is limited,
+and only its own session's helpers count. Without the plugin the limit is an instruction in `lead`'s prompt only.
 
 A steer amends the brief (principle 3): the helper follows the latest message, keeps the
 earlier LIMITS unless the steer lifts them, and reports what changed in the section its

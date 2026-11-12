@@ -5,7 +5,8 @@
 // the plugin's `execute.before` tool hook (v2.ts) also refuses lead's hand-off while that many
 // of its helpers hold a slot. A helper holds one while it runs, and a hand-off admitted here
 // holds one from then until its helper has started, so several hand-offs in one step count one
-// by one. Continuing a helper with its `sessionID` takes no new slot. Only lead is limited.
+// by one. Continuing a running helper with its `sessionID` takes no new slot; continuing an idle
+// one starts a run, so it takes one like a new hand-off. Only lead is limited.
 
 import { slotsFullResult, type BusySlot } from "./helpers.ts";
 import { eventFields, type TrackedSession } from "./tools-v2.ts";
@@ -26,6 +27,8 @@ interface Admitted {
   before: ReadonlySet<string>;
   /** The helper's session, once known. */
   child?: string;
+  /** A continued helper: its slot is held until its run is seen, since it is idle until then. */
+  resumed?: boolean;
 }
 
 export interface SlotDeps {
@@ -37,10 +40,10 @@ export interface SlotDeps {
   now?: () => number;
 }
 
-/** True for a call that continues an existing helper: opencode drops an empty `sessionID`. */
-function continues(input: unknown): boolean {
+/** The helper a call continues, if it names one: opencode drops an empty `sessionID`. */
+function continued(input: unknown): string | undefined {
   const sessionID = input !== null && typeof input === "object" ? (input as { sessionID?: unknown }).sessionID : undefined;
-  return typeof sessionID === "string" && sessionID !== "";
+  return typeof sessionID === "string" && sessionID !== "" ? sessionID : undefined;
 }
 
 const ENDED: ReadonlySet<TrackedSession["state"]> = new Set(["done", "failed", "stopped"]);
@@ -62,13 +65,14 @@ export class HelperSlots {
    */
   admit(call: V2ToolCall | undefined): Promise<string | undefined> {
     if (call?.tool !== DELEGATION_TOOL || call.agent !== this.deps.harness.defaultAgent) return Promise.resolve(undefined);
-    if (typeof call.sessionID !== "string" || call.sessionID === "" || continues(call.input)) return Promise.resolve(undefined);
-    const check = this.queue.then(() => this.check(call.sessionID, call.id));
+    if (typeof call.sessionID !== "string" || call.sessionID === "") return Promise.resolve(undefined);
+    const target = continued(call.input);
+    const check = this.queue.then(() => this.check(call.sessionID, call.id, target));
     this.queue = check.catch(() => undefined);
     return check;
   }
 
-  private async check(parent: string, call: string | undefined): Promise<string | undefined> {
+  private async check(parent: string, call: string | undefined, target?: string): Promise<string | undefined> {
     const now = this.now();
     this.admitted = this.admitted.filter((entry) => now - entry.at < ADMITTED_MS);
     const children = await this.deps.children(parent);
@@ -93,7 +97,7 @@ export class HelperSlots {
     }
     this.admitted = this.admitted.filter((entry) => {
       const child = entry.child === undefined ? undefined : byId.get(entry.child);
-      return entry.parent !== parent || child === undefined || !ENDED.has(child.state);
+      return entry.parent !== parent || child === undefined || entry.resumed === true || !ENDED.has(child.state);
     });
     for (const entry of this.admitted) {
       if (entry.parent !== parent) continue;
@@ -106,8 +110,16 @@ export class HelperSlots {
       busy.push({ id: entry.child, ...(agent === undefined ? {} : { agent }) });
       counted.add(entry.child);
     }
+    // Continuing a helper that already holds a slot adds nothing.
+    if (target !== undefined && counted.has(target)) return undefined;
     if (busy.length >= this.deps.limit) return slotsFullResult(this.deps.harness.name, this.deps.limit, busy);
-    this.admitted.push({ call: call ?? `unnamed-${++this.unnamed}`, parent, at: now, before: new Set(byId.keys()) });
+    this.admitted.push({
+      call: call ?? `unnamed-${++this.unnamed}`,
+      parent,
+      at: now,
+      before: new Set(byId.keys()),
+      ...(target === undefined ? {} : { child: target, resumed: true }),
+    });
     return undefined;
   }
 

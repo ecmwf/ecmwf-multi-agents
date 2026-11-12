@@ -1026,13 +1026,32 @@ describe("v2 helper slots", () => {
     expect(await handOff(host)).toBeUndefined();
   });
 
-  test("continuing a helper with its sessionID is not a new slot; an empty sessionID starts a new helper", async () => {
+  test("continuing a running helper takes no new slot; continuing an idle one starts a run and takes one", async () => {
     const { host } = await start(slots(1));
     host.serveList();
     host.listed = [running("c1"), finished("c2")];
-    expect(await handOff(host, brief({ sessionID: "c2" }))).toBeUndefined();
+    // c1 already holds the only slot, so continuing it adds nothing.
     expect(await handOff(host, brief({ sessionID: "c1" }))).toBeUndefined();
+    // c2 is idle: continuing it would make two run at once.
+    expect(await handOff(host, brief({ sessionID: "c2" }))).toContain("1 is running: builder c1.");
     expect(await handOff(host, brief({ sessionID: "" }))).toContain("1 is running: builder c1.");
+  });
+
+  test("a continued idle helper holds its slot from the hand-off until its run ends", async () => {
+    const { host } = await start(slots(1));
+    host.serveList();
+    host.listed = [finished("c2")];
+    expect(await handOff(host, brief({ sessionID: "c2" }), lead, "k")).toBeUndefined();
+    // Its run has not started yet: the slot is still taken, by c2 and not by a new helper.
+    expect(await handOff(host)).toContain("1 is running: builder c2.");
+    host.listed = [running("c2")];
+    host.emit("session.execution.started", { sessionID: "c2" });
+    await settle();
+    expect(await handOff(host)).toContain("1 is running: builder c2.");
+    host.listed = [finished("c2")];
+    host.emit("session.execution.succeeded", { sessionID: "c2" });
+    await settle();
+    expect(await handOff(host)).toBeUndefined();
   });
 
   test("a foreground hand-off holds its slot while its helper runs", async () => {
