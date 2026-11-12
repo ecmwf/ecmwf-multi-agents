@@ -8,6 +8,7 @@ import { STEP_LIMIT_NOTICE } from "./step-limit.ts";
 import { createPlugin } from "./plugin.ts";
 import { HELPER_OFF, LEAD_PROMPT, TESTER_ROUTING, embeddedFixture, fakeEnvironment } from "./testing.ts";
 import type { V2AgentEditor, V2AgentInfo, V2CommandDefinition, V2CommandEditor, V2Context, V2ContextEvent, V2Event, V2ModelMessage, V2SessionInfo, V2ToolCall, V2ToolInfo } from "./types.ts";
+import { runsHere } from "./tools-v2.ts";
 import { v2ProjectRoot } from "./v2.ts";
 
 const harness = embeddedFixture();
@@ -945,6 +946,26 @@ describe("v2 helpers from opencode's session list", () => {
     expect(await host.call("helpers_steer", { id: "cut", text: "x" }, lead)).toContain("builder cut is not running");
     expect(await host.call("helpers_cancel", { id: "all" }, lead)).toStartWith("Stopped scout live.");
     expect(host.interrupts).toEqual(["live"]);
+  });
+});
+
+describe("v2 run probe", () => {
+  test("probes of a long-running helper share one session.wait; once it settles, the next probe waits anew", async () => {
+    const waits: Array<() => void> = [];
+    const { ctx } = new FakeHost();
+    ctx.session!.wait = () => new Promise<void>((resolve) => waits.push(resolve));
+    expect(await Promise.all([runsHere(ctx, "long"), runsHere(ctx, "long"), runsHere(ctx, "long")])).toEqual([true, true, true]);
+    expect(await runsHere(ctx, "long")).toBe(true);
+    expect(waits).toHaveLength(1);
+    // Another helper has its own.
+    expect(await runsHere(ctx, "other")).toBe(true);
+    expect(waits).toHaveLength(2);
+    waits[0]!();
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    const probe = runsHere(ctx, "long");
+    expect(waits).toHaveLength(3);
+    waits[2]!();
+    expect(await probe).toBe(false);
   });
 });
 

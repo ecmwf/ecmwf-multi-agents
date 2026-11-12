@@ -210,13 +210,11 @@ export const RUN_PROBE_MS = 100;
  * only when the run ends otherwise. Without `wait`, or when it fails, the run counts as running.
  */
 export async function runsHere(ctx: V2Context, sessionID: string): Promise<boolean> {
-  const wait = ctx.session?.wait;
-  if (typeof wait !== "function") return true;
+  const api = ctx.session;
+  const wait = api?.wait;
+  if (api === undefined || typeof wait !== "function") return true;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const ended = wait.call(ctx.session, { sessionID }).then(
-    () => true,
-    () => false,
-  );
+  const ended = endOfRun(api, wait, sessionID);
   const late = new Promise<false>((resolve) => {
     timer = setTimeout(() => resolve(false), RUN_PROBE_MS);
     (timer as { unref?: () => void }).unref?.();
@@ -224,6 +222,40 @@ export async function runsHere(ctx: V2Context, sessionID: string): Promise<boole
   const answer = await Promise.race([ended, late]);
   clearTimeout(timer);
   return !answer;
+}
+
+/** The `session.wait` each session's probes share while it is outstanding, per session API. */
+const outstanding = new WeakMap<object, Map<string, Promise<boolean>>>();
+
+/**
+ * One `session.wait` per session at a time: a run can last hours, and a probe that gives up
+ * after RUN_PROBE_MS leaves its wait pending until the run ends, so later probes join it.
+ */
+function endOfRun(api: NonNullable<V2Context["session"]>, wait: NonNullable<NonNullable<V2Context["session"]>["wait"]>, sessionID: string): Promise<boolean> {
+  let waits = outstanding.get(api);
+  if (waits === undefined) {
+    waits = new Map();
+    outstanding.set(api, waits);
+  }
+  const pending = waits.get(sessionID);
+  if (pending !== undefined) return pending;
+  const own = waits;
+  let call: Promise<unknown>;
+  try {
+    call = Promise.resolve(wait.call(api, { sessionID }));
+  } catch (error) {
+    call = Promise.reject(error);
+  }
+  const ended = call
+    .then(
+      () => true,
+      () => false,
+    )
+    .finally(() => {
+      if (own.get(sessionID) === ended) own.delete(sessionID);
+    });
+  waits.set(sessionID, ended);
+  return ended;
 }
 
 /** A session opencode reports running, as stopped when this opencode does not run it. */

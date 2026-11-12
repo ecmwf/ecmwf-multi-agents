@@ -2547,11 +2547,12 @@ async function listedChildren(ctx, parent) {
 }
 var RUN_PROBE_MS = 100;
 async function runsHere(ctx, sessionID) {
-  const wait = ctx.session?.wait;
-  if (typeof wait !== "function")
+  const api = ctx.session;
+  const wait = api?.wait;
+  if (api === undefined || typeof wait !== "function")
     return true;
   let timer;
-  const ended = wait.call(ctx.session, { sessionID }).then(() => true, () => false);
+  const ended = endOfRun(api, wait, sessionID);
   const late = new Promise((resolve) => {
     timer = setTimeout(() => resolve(false), RUN_PROBE_MS);
     timer.unref?.();
@@ -2559,6 +2560,30 @@ async function runsHere(ctx, sessionID) {
   const answer = await Promise.race([ended, late]);
   clearTimeout(timer);
   return !answer;
+}
+var outstanding = new WeakMap;
+function endOfRun(api, wait, sessionID) {
+  let waits = outstanding.get(api);
+  if (waits === undefined) {
+    waits = new Map;
+    outstanding.set(api, waits);
+  }
+  const pending = waits.get(sessionID);
+  if (pending !== undefined)
+    return pending;
+  const own = waits;
+  let call;
+  try {
+    call = Promise.resolve(wait.call(api, { sessionID }));
+  } catch (error) {
+    call = Promise.reject(error);
+  }
+  const ended = call.then(() => true, () => false).finally(() => {
+    if (own.get(sessionID) === ended)
+      own.delete(sessionID);
+  });
+  waits.set(sessionID, ended);
+  return ended;
 }
 async function confirmed(ctx, session) {
   return session.state !== "running" || await runsHere(ctx, session.id) ? session : { ...session, state: "stopped" };
