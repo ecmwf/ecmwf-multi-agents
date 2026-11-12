@@ -1144,3 +1144,14 @@ on, checked in the `v2.2.5` source and against `v2.2.6`; both versions agree on 
    `execute.before` hook refused the call (`executeTool` and `beforeExecute` in
    core/src/tool.ts). A foreground hand-off ends when the child's run ends; a background one
    returns once the child has started.
+8. Which child did a hand-off create? The call says so itself. Right after creating or finding
+   the child, the delegation tool reports `{ sessionID: child, status: "running" }` as the
+   call's progress (`SubagentTool` in core/src/tool/plugin/subagent.ts). The step runner
+   publishes that as `session.tool.progress` with the parent's `sessionID`, the call's `id`
+   (the one `execute.before` and `execute.after` get) and the update as `metadata`
+   (`progress` in core/src/session/runner/publish-llm-event.ts, `Tool.Progress` in
+   schema/src/session-event.ts). It is an ephemeral event, published live to every subscriber,
+   plugins included. A completed call's `execute.after` also carries `result`, whose `output`
+   (`backgroundResult`, or the foreground report) and `metadata` both hold the child's
+   `sessionID`; a failed one carries only `error`. Inside Code Mode progress goes nowhere, so the
+   plugin keeps a guess for when no word arrives.

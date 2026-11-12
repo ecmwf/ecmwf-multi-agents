@@ -244,8 +244,11 @@ message that names the limit and the helpers and tells `lead` to wait for a repo
 `helpers_status`. A helper holds a slot while it runs, in the foreground or the background. A
 hand-off the hook admitted holds one from then until its helper's run ends, or until the
 hand-off fails, so several hand-offs in one step count one by one, and a check that read the
-children just before a helper's run started still counts it. Once a hand-off's helper is known,
-it stands for that hand-off only. If opencode's events about the helper stop, the hold lapses
+children just before a helper's run started still counts it. A hand-off learns its helper from
+its own call, which opencode's progress update and result name; until then the plugin guesses
+that the oldest waiting hand-off owns the next new helper, and the call's word corrects the
+guess. A helper only guessed to belong to a hand-off that fails goes to the next waiting one.
+Once a hand-off's helper is known, it stands for that hand-off only. If opencode's events about the helper stop, the hold lapses
 two minutes after the last one, and the helper counts by its listed state alone. Continuing a running
 helper with its `sessionID` takes no new slot; continuing an idle one starts a run, so it takes
 one like a new hand-off, held from the hand-off until that run ends. Only `lead` is limited,

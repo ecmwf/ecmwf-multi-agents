@@ -308,6 +308,8 @@ export interface V2ToolCall {
   input?: unknown;
   /** `execute.after` only: how the call ended. */
   status?: "completed" | "error";
+  /** `execute.after` of a completed call only: its `output`, `content` and `metadata` (`Tool.Result`). */
+  result?: unknown;
 }
 
 /** A message as a model request carries it (@opencode/ai Message: a role and content parts). */

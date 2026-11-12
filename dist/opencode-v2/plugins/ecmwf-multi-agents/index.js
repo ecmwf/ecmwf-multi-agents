@@ -2708,9 +2708,17 @@ var DELEGATION_TOOL = "subagent";
 var ADMITTED_MS = 120000;
 var RUN_ENDS = new Set(["session.execution.succeeded", "session.execution.failed", "session.execution.interrupted"]);
 var OWNED_MAX = 1000;
+function member(value, key) {
+  return value !== null && typeof value === "object" ? value[key] : undefined;
+}
+function sessionText(value) {
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+function namedChild(result) {
+  return sessionText(member(member(result, "metadata"), "sessionID")) ?? sessionText(member(member(result, "output"), "sessionID"));
+}
 function continued(input) {
-  const sessionID = input !== null && typeof input === "object" ? input.sessionID : undefined;
-  return typeof sessionID === "string" && sessionID !== "" ? sessionID : undefined;
+  return sessionText(member(input, "sessionID"));
 }
 var ENDED = new Set(["done", "failed", "stopped"]);
 
@@ -2745,6 +2753,41 @@ class HelperSlots {
     this.owned.add(child);
     if (this.owned.size > OWNED_MAX)
       this.owned.delete(this.owned.values().next().value);
+  }
+  bind(entry, child) {
+    if (entry.exact === true)
+      return;
+    entry.at = this.now();
+    if (entry.child === child) {
+      entry.exact = true;
+      return;
+    }
+    const holder = this.admitted.find((item) => item !== entry && item.child === child);
+    if (holder?.exact === true)
+      return;
+    const given = { child: entry.child, agent: entry.agent, started: entry.started };
+    entry.agent = holder?.agent;
+    entry.started = holder?.started;
+    entry.exact = true;
+    this.own(entry, child);
+    if (holder !== undefined) {
+      holder.child = undefined;
+      holder.agent = undefined;
+      holder.started = undefined;
+    }
+    if (given.child !== undefined)
+      this.release(entry.parent, given.child, given.agent, given.started);
+  }
+  release(parent, child, agent, started) {
+    const taker = this.admitted.find((item) => item.parent === parent && item.child === undefined && item.resumed !== true && !item.before.has(child));
+    if (taker === undefined) {
+      this.owned.delete(child);
+      return;
+    }
+    this.own(taker, child);
+    taker.agent = agent;
+    taker.started = started;
+    taker.at = this.now();
   }
   async check(parent, call, target) {
     const now = this.now();
@@ -2792,6 +2835,7 @@ class HelperSlots {
     const entry = { call: call ?? `unnamed-${++this.unnamed}`, parent, at: now, before: new Set(byId.keys()) };
     if (target !== undefined) {
       entry.resumed = true;
+      entry.exact = true;
       this.own(entry, target);
     }
     this.admitted.push(entry);
@@ -2800,8 +2844,18 @@ class HelperSlots {
   ended(call) {
     if (call?.tool !== DELEGATION_TOOL || typeof call.id !== "string")
       return;
-    if (call.status === "error")
-      this.admitted = this.admitted.filter((entry) => entry.call !== call.id);
+    const entry = this.admitted.find((item) => item.call === call.id);
+    if (entry === undefined)
+      return;
+    if (call.status === "error") {
+      this.admitted = this.admitted.filter((item) => item !== entry);
+      if (entry.child !== undefined && entry.exact !== true)
+        this.release(entry.parent, entry.child, entry.agent, entry.started);
+      return;
+    }
+    const child = namedChild(call.result);
+    if (child !== undefined)
+      this.bind(entry, child);
   }
   observe(envelope) {
     const event = eventFields(envelope);
@@ -2809,6 +2863,13 @@ class HelperSlots {
     if (event === undefined || typeof id !== "string" || id === "")
       return;
     const number = ++this.events;
+    if (event.type === "session.tool.progress") {
+      const entry = typeof event.id === "string" ? this.admitted.find((item) => item.call === event.id) : undefined;
+      const child = namedChild(event);
+      if (entry !== undefined && child !== undefined)
+        this.bind(entry, child);
+      return;
+    }
     if (event.type === "session.created") {
       if (typeof event.parentID !== "string" || this.owned.has(id))
         return;

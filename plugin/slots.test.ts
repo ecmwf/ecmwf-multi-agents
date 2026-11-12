@@ -55,10 +55,15 @@ function setup(limit: number) {
   const handOff = (id = `call${++calls}`, input: Record<string, unknown> = { agent: "builder", prompt: "do it" }) =>
     slots.admit({ tool: DELEGATION_TOOL, agent: "lead", sessionID: PARENT, id, input } as V2ToolCall);
   const emit = (type: string, sessionID: string, more: Record<string, unknown> = {}) => slots.observe({ type, data: { sessionID, ...more } });
+  /** opencode's progress update for a hand-off: the call's id, and the child in its metadata. */
+  const progress = (call: string, child: string) =>
+    slots.observe({ type: "session.tool.progress", data: { sessionID: PARENT, assistantMessageID: "m1", id: call, metadata: { sessionID: child, status: "running" } } });
+  const ended = (call: string, status: "completed" | "error", result?: unknown) =>
+    slots.ended({ tool: DELEGATION_TOOL, agent: "lead", sessionID: PARENT, id: call, status, ...(result === undefined ? {} : { result }) } as V2ToolCall);
   const tick = (ms: number) => {
     clock += ms;
   };
-  return { slots, children, handOff, emit, tick };
+  return { slots, children, handOff, emit, progress, ended, tick };
 }
 
 describe("helper slots", () => {
@@ -143,5 +148,54 @@ describe("helper slots", () => {
     expect(await handOff("b")).toBeUndefined();
     slots.ended({ tool: DELEGATION_TOOL, id: "b", status: "error" } as V2ToolCall);
     expect(await handOff()).toBeUndefined();
+  });
+
+  test("a hand-off that fails gives the helper it was guessed to own back to the hand-off still waiting for one", async () => {
+    const { children, handOff, emit, ended } = setup(2);
+    expect(await handOff("a")).toBeUndefined();
+    expect(await handOff("b")).toBeUndefined();
+    // b's helper appears first and is guessed to be a's; then a fails before it creates one.
+    emit("session.created", "y", { parentID: PARENT, agent: "builder" });
+    emit("session.execution.started", "y");
+    children.set("y", "running");
+    ended("a", "error");
+    expect(await handOff("c")).toBeUndefined();
+    expect(await handOff("d")).toContain("2 are running: builder y, a helper that is starting.");
+  });
+
+  for (const source of ["progress", "result"] as const) {
+    test(`the hand-off that created a helper owns it, as opencode's ${source === "progress" ? "progress update" : "call result"} says, over a wrong guess`, async () => {
+      const { handOff, emit, progress, ended } = setup(2);
+      expect(await handOff("a")).toBeUndefined();
+      expect(await handOff("b")).toBeUndefined();
+      // y is b's: the guess gives it to a, the call's own update corrects that.
+      emit("session.created", "y", { parentID: PARENT, agent: "builder" });
+      if (source === "progress") progress("b", "y");
+      else ended("b", "completed", { output: { sessionID: "y", status: "running" }, metadata: { sessionID: "y", status: "running" } });
+      emit("session.execution.started", "y");
+      emit("session.execution.succeeded", "y");
+      // y has ended, so b's slot is free; a fails before creating a helper, so its slot is free too.
+      ended("a", "error");
+      expect(await handOff("c")).toBeUndefined();
+      expect(await handOff("d")).toBeUndefined();
+    });
+  }
+
+  test("a helper's own update moves it to its hand-off, and the guessed hand-off takes the helper its call left", async () => {
+    const { handOff, emit, progress, ended } = setup(2);
+    expect(await handOff("a")).toBeUndefined();
+    expect(await handOff("b")).toBeUndefined();
+    emit("session.created", "y", { parentID: PARENT, agent: "builder" });
+    emit("session.created", "x", { parentID: PARENT, agent: "scout" });
+    // The guesses were a: y and b: x; the updates say the opposite.
+    progress("b", "y");
+    progress("a", "x");
+    emit("session.execution.started", "x");
+    emit("session.execution.started", "y");
+    // b's foreground helper fails, and so does b; a's helper x still runs.
+    emit("session.execution.failed", "y");
+    ended("b", "error");
+    expect(await handOff("c")).toBeUndefined();
+    expect(await handOff("d")).toContain("2 are running: scout x, a helper that is starting.");
   });
 });

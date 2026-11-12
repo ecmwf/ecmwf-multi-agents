@@ -4,9 +4,17 @@
 // The `max_helper_slots` limit, enforced. lead's prompt says how many helpers may run at once;
 // the plugin's `execute.before` tool hook (v2.ts) also refuses lead's hand-off while that many
 // of its helpers hold a slot. A helper holds one while it runs, and a hand-off admitted here
-// holds one from then until its helper has started, so several hand-offs in one step count one
-// by one. Continuing a running helper with its `sessionID` takes no new slot; continuing an idle
-// one starts a run, so it takes one like a new hand-off. Only lead is limited.
+// holds one from then until its helper's run ends, so several hand-offs in one step count one by
+// one, and a check that read the children just before a run started still counts it. Continuing
+// a running helper with its `sessionID` takes no new slot; continuing an idle one starts a run,
+// so it takes one like a new hand-off. Only lead is limited.
+//
+// A hand-off learns its helper from its own call: opencode's delegation tool reports the child's
+// `sessionID` as the call's progress right after creating it, which reaches plugins as a
+// `session.tool.progress` event with the call's `id` (`Tool.Progress` in
+// schema/src/session-event.ts, opencode 2.2.5), and again in the call's result. Until then the
+// plugin guesses (the oldest waiting hand-off takes the next new child), and the call's own word
+// corrects the guess.
 
 import { slotsFullResult, type BusySlot } from "./helpers.ts";
 import { eventFields, type TrackedSession } from "./tools-v2.ts";
@@ -35,6 +43,11 @@ interface Admitted {
   before: ReadonlySet<string>;
   /** The helper's session, once known. */
   child?: string;
+  /**
+   * The child is the one this call created or continued, as opencode said; otherwise it is the
+   * plugin's guess, which the call's own word corrects.
+   */
+  exact?: boolean;
   /** The helper's agent, as its creation announced it. */
   agent?: string;
   /** A continued helper: its slot is held until its run is seen, since it is idle until then. */
@@ -52,10 +65,28 @@ export interface SlotDeps {
   now?: () => number;
 }
 
+/** A member of an object, if there is one. */
+function member(value: unknown, key: string): unknown {
+  return value !== null && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined;
+}
+
+/** A session id, if the value is one. */
+function sessionText(value: unknown): string | undefined {
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+/**
+ * The child a hand-off's own word names: the `metadata` of its progress update and of its
+ * result, and the `output` of its result, carry the child's `sessionID` (`SubagentTool` in
+ * core/src/tool/plugin/subagent.ts, opencode 2.2.5).
+ */
+function namedChild(result: unknown): string | undefined {
+  return sessionText(member(member(result, "metadata"), "sessionID")) ?? sessionText(member(member(result, "output"), "sessionID"));
+}
+
 /** The helper a call continues, if it names one: opencode drops an empty `sessionID`. */
 function continued(input: unknown): string | undefined {
-  const sessionID = input !== null && typeof input === "object" ? (input as { sessionID?: unknown }).sessionID : undefined;
-  return typeof sessionID === "string" && sessionID !== "" ? sessionID : undefined;
+  return sessionText(member(input, "sessionID"));
 }
 
 const ENDED: ReadonlySet<TrackedSession["state"]> = new Set(["done", "failed", "stopped"]);
@@ -95,6 +126,45 @@ export class HelperSlots {
     if (this.owned.size > OWNED_MAX) this.owned.delete(this.owned.values().next().value!);
   }
 
+  /**
+   * The call's own word: `child` is the helper this hand-off created. A hand-off that was guessed
+   * to own it gives it up, and the helper this one was guessed to own goes back to the pool.
+   */
+  private bind(entry: Admitted, child: string): void {
+    if (entry.exact === true) return;
+    entry.at = this.now();
+    if (entry.child === child) {
+      entry.exact = true;
+      return;
+    }
+    const holder = this.admitted.find((item) => item !== entry && item.child === child);
+    if (holder?.exact === true) return;
+    const given = { child: entry.child, agent: entry.agent, started: entry.started };
+    entry.agent = holder?.agent;
+    entry.started = holder?.started;
+    entry.exact = true;
+    this.own(entry, child);
+    if (holder !== undefined) {
+      holder.child = undefined;
+      holder.agent = undefined;
+      holder.started = undefined;
+    }
+    if (given.child !== undefined) this.release(entry.parent, given.child, given.agent, given.started);
+  }
+
+  /** A helper no hand-off owns any more goes to the oldest hand-off still waiting for one that could have created it. */
+  private release(parent: string, child: string, agent: string | undefined, started: number | undefined): void {
+    const taker = this.admitted.find((item) => item.parent === parent && item.child === undefined && item.resumed !== true && !item.before.has(child));
+    if (taker === undefined) {
+      this.owned.delete(child);
+      return;
+    }
+    this.own(taker, child);
+    taker.agent = agent;
+    taker.started = started;
+    taker.at = this.now();
+  }
+
   private async check(parent: string, call: string | undefined, target?: string): Promise<string | undefined> {
     const now = this.now();
     this.admitted = this.admitted.filter((entry) => now - entry.at < ADMITTED_MS);
@@ -108,9 +178,9 @@ export class HelperSlots {
       busy.push({ id: child.id, ...(child.agent === undefined ? {} : { agent: child.agent }) });
       counted.add(child.id);
     }
-    // An admitted hand-off whose helper the plugin has not seen yet takes the earliest new child
-    // that no hand-off owns or owned, so a helper opencode lists before its events arrive is not
-    // counted twice and never stands for two hand-offs.
+    // An admitted hand-off whose helper the plugin has not seen yet is guessed to own the earliest
+    // new child that no hand-off owns or owned, so a helper opencode lists before its events
+    // arrive is not counted twice and never stands for two hand-offs.
     const earliest = [...children].sort((a, b) => a.startedAt - b.startedAt);
     for (const entry of this.admitted) {
       if (entry.parent !== parent || entry.child !== undefined) continue;
@@ -139,6 +209,7 @@ export class HelperSlots {
     const entry: Admitted = { call: call ?? `unnamed-${++this.unnamed}`, parent, at: now, before: new Set(byId.keys()) };
     if (target !== undefined) {
       entry.resumed = true;
+      entry.exact = true;
       this.own(entry, target);
     }
     this.admitted.push(entry);
@@ -146,12 +217,21 @@ export class HelperSlots {
   }
 
   /**
-   * A hand-off has returned. One that failed frees its slot at once; a background one that
-   * succeeded keeps it until its helper's run is seen, since the run starts just after.
+   * A hand-off has returned. One that failed frees its slot at once, and a helper it was only
+   * guessed to own goes back to the pool; a background one that succeeded keeps its slot until
+   * its helper's run ends, and its result names that helper.
    */
   ended(call: V2ToolCall | undefined): void {
     if (call?.tool !== DELEGATION_TOOL || typeof call.id !== "string") return;
-    if (call.status === "error") this.admitted = this.admitted.filter((entry) => entry.call !== call.id);
+    const entry = this.admitted.find((item) => item.call === call.id);
+    if (entry === undefined) return;
+    if (call.status === "error") {
+      this.admitted = this.admitted.filter((item) => item !== entry);
+      if (entry.child !== undefined && entry.exact !== true) this.release(entry.parent, entry.child, entry.agent, entry.started);
+      return;
+    }
+    const child = namedChild(call.result);
+    if (child !== undefined) this.bind(entry, child);
   }
 
   /**
@@ -163,6 +243,12 @@ export class HelperSlots {
     const id = event?.sessionID;
     if (event === undefined || typeof id !== "string" || id === "") return;
     const number = ++this.events;
+    if (event.type === "session.tool.progress") {
+      const entry = typeof event.id === "string" ? this.admitted.find((item) => item.call === event.id) : undefined;
+      const child = namedChild(event);
+      if (entry !== undefined && child !== undefined) this.bind(entry, child);
+      return;
+    }
     if (event.type === "session.created") {
       if (typeof event.parentID !== "string" || this.owned.has(id)) return;
       const entry = this.admitted.find((item) => item.parent === event.parentID && item.child === undefined);
