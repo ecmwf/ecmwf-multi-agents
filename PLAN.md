@@ -952,19 +952,24 @@ Copilot agents; the two follow-ups below, which Tiago takes. Tests come first in
   them; on real models `designer-limit-twice`, `review-off`, `review-background` and `feature`
   pass for $3.14 (`evals/results/settings-offers.md`); `designer-limit` not run again, to stay
   within $5, since `designer-limit-twice` covers its path
-- [~] Tiago: Bring in Samet's PR #8 (enforced helper slots, helpers from opencode's session
+- [x] Tiago: Bring in Samet's PR #8 (enforced helper slots, helpers from opencode's session
   list): review as for PR #7 (gate, integration on 2.2.6, an independent review), findings to
-  the owner, fixes on its branch only with approval, then a merge commit
-- [~] Tiago: Writing guidance for text for people, inspired by ASD-STE100 and applied loosely
+  the owner, fixes on its branch only with approval, then a merge commit. Done: approved with
+  no blockers; fix `7b044e1` (a hand-off to an agent outside the harness takes no slot, two
+  tests, docs); 74 of 74 integration tests on 2.2.6; merged as `99ac58c`
+- [x] Tiago: Writing guidance for text for people, inspired by ASD-STE100 and applied loosely
   (ADR 0006): a `## Writing` section in `lead`'s prompt, on by default; the setting
   `writing_guidance`, `"plain"` or `"off"`, with which the plugin removes the section, so off
   is today's `lead`. Briefs to helpers stay out of scope. Schema, settings, `doctor`, an
-  integration test, README, guide, architecture, budgets at the measured size
-- [~] Tiago: Evals on the build with PR #8 and the writing guidance: all 28 cases once with
+  integration test, README, guide, architecture, budgets at the measured size. Done: `lead`
+  2050, `lead-all` 2400, skill 1900; 75 of 75 integration tests on 2.2.6
+- [x] Tiago: Evals on the build with PR #8 and the writing guidance: all 28 cases once with
   `writing_guidance` on and once off, and the 7 text-heavy cases (`answer`, `investigate`,
   `inventory`, `plan-execute`, `progress`, `review-reject`, `onboard`) twice more each way;
   pass rates, tokens and readability measures compared; at most $45. The owner decides the
-  default from the results
+  default from the results. Done for $37.94 (`evals/results/writing-guidance.md`): 40 of 42
+  runs passed on, 39 of 42 off; 5% fewer output tokens, 9.0 against 10.4 words per sentence;
+  the step-limit offer now stays until lead asks. Default: `plain`
 - [ ] Tiago: Release 0.10.0
 
 Exit: `make check` and the integration suites pass on 2.2.6; PR #7 merged; the evals above pass.

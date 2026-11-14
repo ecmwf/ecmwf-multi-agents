@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # 0006. Writing guidance for text for people
 
-Status: Proposed; the default is decided from the eval results before 0.10.0. Date: 2026-11-14.
+Status: Accepted. Date: 2026-11-14.
 
 ## Context
 
@@ -36,7 +36,10 @@ to ASD, and models know it only roughly.
   Without the plugin the section stays.
 - `lead` only for now. The helpers that write documents for people (researcher, designer,
   tester) may get a shorter block later, under the same setting, if the evals show a benefit.
-- The default is chosen from evals that run every case with the setting on and off.
+- The default is `"plain"`, chosen from evals that ran every case with the setting on and
+  off (`evals/results/writing-guidance.md`): no fewer runs passed, `lead` wrote about 5% fewer
+  output tokens, its sentences were shorter (9.0 words on average against 10.4) and fewer were
+  passive (8% against 13%).
 
 ## Consequences
 
