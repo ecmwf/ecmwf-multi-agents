@@ -94,7 +94,7 @@ const textOf = (message: unknown): string => {
 
 /**
  * The stand-in. lead: `BG <tag>` delegates `SLOW <tag>` to the builder in the background,
- * `FG <tag>` in the foreground;
+ * `FG <tag>` in the foreground, `AGAIN <tag>` in the background later in the conversation;
  * `ASK <tag>` is answered once, after one slow lookup step, whatever report arrives meanwhile;
  * a wake to answer the user after a command, with `QUESTION <tag>` above it, answers the question;
  * anything else ends the turn. builder: `sleep` steps until it has taken STEPS, or until a
@@ -148,8 +148,11 @@ function standIn(script: Script) {
         const since = messages.slice(messages.indexOf(question) + 1);
         const looked = since.some((message) => role(message) === "tool");
         const answered = since.some((message) => role(message) === "assistant" && textOf(message).includes("lead answered"));
+        const again = /^AGAIN (\S+)/.exec(last);
+        const actedSinceLast = messages.slice(messages.map(role).lastIndexOf("user") + 1).some((message) => role(message) === "tool");
         if (bg && results === 0) tool = script.delegate(`SLOW ${bg[1]}`, true);
         else if (fg && results === 0) tool = script.delegate(`SLOW ${fg[1]}`, false);
+        else if (again && !actedSinceLast) tool = script.delegate(`SLOW ${again[1]}`, true);
         else if (status && !messages.some((message) => role(message) === "tool" && /helpers? in this session/.test(textOf(message))))
           tool = { name: HELPER_TOOLS.status, args: {} };
         else if (steer && !messages.some((message) => role(message) === "tool" && /Sent to|not running|not a helper/.test(textOf(message))))
@@ -511,6 +514,11 @@ describe.skipIf(!v2Available)(`background helpers in opencode ${V2_VERSION}`, ()
       }
       writeFileSync(path.join(box.config, "plugins", "inline-pause.js"), pausePlugin(box.dir));
       writeFileSync(path.join(box.config, "ecmwf-multi-agents.jsonc"), '{ "profile": "inherit", "agents": { "reviewer": { "model": "mock/m2" } } }\n');
+      await serveWithPlugins();
+    }, 300_000);
+
+    /** Start a server on the sandbox's data and wait until both plugins are active. */
+    const serveWithPlugins = async () => {
       const password = randomBytes(16).toString("hex");
       auth = `Basic ${btoa(`opencode:${password}`)}`;
       server = await startServer(box, v2Bin, { OPENCODE_PASSWORD: password });
@@ -520,7 +528,7 @@ describe.skipIf(!v2Available)(`background helpers in opencode ${V2_VERSION}`, ()
         return active("ecmwf-multi-agents") && active("inline-pause") ? true : undefined;
       });
       await Bun.sleep(1_000);
-    }, 300_000);
+    };
 
     test("helpers_status lists the running builder with its steps and last tool call", async () => {
       const tag = nextTag();
@@ -762,5 +770,48 @@ describe.skipIf(!v2Available)(`background helpers in opencode ${V2_VERSION}`, ()
       expect(woken.users.some((user) => user.includes(`fake report ${tag}`))).toBe(true);
       await backToLead(session);
     }, 120_000);
+
+    // A fresh server process on the same data: the plugin's event tracker starts empty, and the
+    // helpers come from opencode's session list. A plain `opencode serve` does not resume the
+    // builder's run that the stop cut off, so the helper is stopped, not running.
+    test("after opencode restarts, helpers_status still lists a helper started before, and the cut-off run as stopped", async () => {
+      const tag = nextTag();
+      const session = await start(`BG ${tag}`);
+      const target = await child(session);
+      await stepsOf(tag, 1);
+      await server.stop();
+      await serveWithPlugins();
+      await tell(session, `STATUS ${tag}`);
+      const output = outputText(await toolCall(session, HELPER_TOOLS.status));
+      expect(output).toContain("One helper in this session");
+      const resumed = model.builder(tag).some((item) => item.users.some((user) => user.includes("server restarted")));
+      expect(output).toContain(`${target.id}, builder, ${resumed ? "running" : "stopped"}`);
+    }, 300_000);
+
+    test("with max_helper_slots 1, lead's second hand-off is refused while the first helper runs, and admitted after it", async () => {
+      mkdirSync(path.join(box.project, ".opencode"), { recursive: true });
+      writeFileSync(path.join(box.project, ".opencode", "ecmwf-multi-agents.jsonc"), '{ "max_helper_slots": 1 }\n');
+      await server.stop();
+      await serveWithPlugins();
+      const tag = nextTag();
+      const session = await start(`BG ${tag}`);
+      const first = await child(session);
+      await stepsOf(tag, 1);
+      await tell(session, `AGAIN ${tag}`);
+      const handOffs = async () =>
+        (await api<V2Message[]>("GET", `/api/session/${session}/message`)).flatMap((message) => message.content ?? []).filter((item) => item.type === "tool" && item.name === "subagent");
+      const refused = await within(30_000, "the refused hand-off", async () => (await handOffs()).find((item) => item.state?.status === "error"));
+      expect(refused.state?.error?.message).toContain(
+        `hand-off refused. You may run at most 1 helper at once (max_helper_slots), and 1 is running: builder ${first.id}. Wait for a running helper's report`,
+      );
+      expect(model.builder(tag).some((item) => item.reply === "builder finished")).toBe(false);
+      expect(await children(session)).toHaveLength(1);
+      expect(await wake(tag)).toContain("builder finished");
+      await within(20_000, "lead's turn after the report", async () => model.lead(tag).find((item) => item.users.at(-1)?.includes("<subagent ") && item.reply === "lead done"));
+      await tell(session, `AGAIN ${tag}`);
+      const second = await within(30_000, "the second helper", async () => (await children(session)).find((item) => item.id !== first.id));
+      expect(second.agent).toBe("builder");
+      expect((await handOffs()).filter((item) => item.state?.status === "error")).toHaveLength(1);
+    }, 300_000);
   });
 });

@@ -71,9 +71,10 @@ installed, and the installer exits with an error so you notice.
 To change how many helpers `lead` may run at once, set `"max_helper_slots": 6` in
 `~/.config/opencode/ecmwf-multi-agents.jsonc`, or in a project's
 `.opencode/ecmwf-multi-agents.jsonc` to override it there. The default is 4; the value must be
-an integer of at least 1. More slots can run more builders, databases, dev servers and builds
-on the same machine, so raise it with care. `doctor` shows the setting and the instruction
-actually loaded into `lead`.
+an integer of at least 1. The plugin refuses a hand-off beyond the limit until one of
+`lead`'s helpers has finished. More slots can run more builders, databases, dev servers and
+builds on the same machine, so raise it with care. `doctor` shows the setting and the
+instruction actually loaded into `lead`.
 
 ### Switching helpers on and off
 

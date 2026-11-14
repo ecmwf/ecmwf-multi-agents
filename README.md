@@ -242,10 +242,11 @@ a notice when it does. It does not switch on rate limits or outages during a run
 | `copilot` | GitHub Copilot models only |
 | `inherit` | Every agent uses the model you pick in the session |
 
-`max_helper_slots` tells `lead` how many helpers may run at once, including during `/execute`
-and `/onboard`. More slots can run more builders, databases, dev servers and builds on the
-same machine, so raise it with care. `./install.sh doctor` shows the setting and the helper
-limit in the loaded lead's instructions.
+`max_helper_slots` is how many helpers `lead` may run at once, including during `/execute`
+and `/onboard`: the plugin refuses a hand-off beyond it until a helper has finished. More
+slots can run more builders, databases, dev servers and builds on the same machine, so raise
+it with care. `./install.sh doctor` shows the setting and the helper limit in the loaded
+lead's instructions.
 
 Settings are applied by a small plugin that ships with the harness, when opencode starts:
 restart opencode after a change. A settings file with a mistake is ignored, and opencode shows

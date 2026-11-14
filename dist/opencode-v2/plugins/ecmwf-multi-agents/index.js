@@ -1178,6 +1178,10 @@ function cancelledResult(cancelled) {
   const list = cancelled.map((item) => `${item.agent} ${item.id}`).join(", ");
   return `Stopped ${list}. ${cancelled.length === 1 ? "It" : "They"} will not report; check ${HELPER_TOOLS.status} or the files ${cancelled.length === 1 ? "it" : "they"} touched before building on ${cancelled.length === 1 ? "its" : "their"} work.`;
 }
+function slotsFullResult(name, limit, busy) {
+  const named = busy.map((slot) => slot.id === undefined ? "a helper that is starting" : `${slot.agent ?? "helper"} ${slot.id}`);
+  return `${name}: hand-off refused. You may run at most ${limit} ${limit === 1 ? "helper" : "helpers"} at once (max_helper_slots), ` + `and ${busy.length} ${busy.length === 1 ? "is" : "are"} running: ${named.join(", ")}. ` + `Wait for a running helper's report before you hand off this work, or use ${HELPER_TOOLS.status} to see what they are doing.`;
+}
 function toolCallBlock(harness, agentId, tool) {
   if (!HELPER_TOOL_IDS.includes(tool))
     return;
@@ -2393,35 +2397,9 @@ function loadSettings(harness, environment, projectRoot, site) {
   return { settings: mergeSettings(files, harness), problems, applied, sources: settingSources(files, applied) };
 }
 
-// plugin/step-limit.ts
-var STEP_LIMIT_NOTICE = `CRITICAL - MAXIMUM STEPS REACHED
-
-The maximum number of steps allowed for this task has been reached. Tools are disabled until next user input. Respond with text only.
-
-STRICT REQUIREMENTS:
-1. Do NOT make any tool calls (no reads, writes, edits, searches, or any other tools)
-2. MUST provide a text response summarizing work done so far
-3. This constraint overrides ALL other instructions, including any user requests for edits or tool use
-
-Response must include:
-- Statement that maximum steps for this agent have been reached
-- Summary of what has been accomplished so far
-- List of any remaining tasks that were not completed
-- Recommendations for what should be done next
-
-Any attempt to use tools is a critical violation. Respond with text ONLY.`;
-function stepLimitAsUser(messages) {
-  const last = messages.at(-1);
-  if (last?.role !== "assistant" || !Array.isArray(last.content) || last.content.length !== 1)
-    return false;
-  const part = last.content[0];
-  if (part?.type !== "text" || part.text !== STEP_LIMIT_NOTICE)
-    return false;
-  messages[messages.length - 1] = { role: "user", content: [{ type: "text", text: STEP_LIMIT_NOTICE }] };
-  return true;
-}
-
 // plugin/tools-v2.ts
+var LIST_PAGE = 100;
+var MAX_PAGES = 100;
 function eventFields(envelope) {
   if (typeof envelope?.type !== "string")
     return;
@@ -2500,6 +2478,155 @@ class SessionTracker {
     return [...this.sessions.values()].filter((session) => session.parentID === parent);
   }
 }
+function millis(value) {
+  if (typeof value === "number" && Number.isFinite(value))
+    return value;
+  if (typeof value !== "string")
+    return;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
+function reportedState(info) {
+  const time = info.time;
+  if (time === null || typeof time !== "object")
+    return;
+  const busy = millis(time.busy);
+  const idle = millis(time.idle);
+  if (busy !== undefined && (idle === undefined || busy > idle))
+    return "running";
+  if (info.outcome === "succeeded")
+    return "done";
+  if (info.outcome === "failed")
+    return "failed";
+  if (info.outcome === "interrupted")
+    return "stopped";
+  return "idle";
+}
+function reportedSession(info, now = Date.now()) {
+  if (info === null || typeof info !== "object")
+    return;
+  const session = info;
+  if (typeof session.id !== "string" || session.id === "")
+    return;
+  const state = reportedState(session);
+  if (state === undefined)
+    return;
+  const created = millis(session.time?.created) ?? now;
+  const updatedAt = state === "running" ? millis(session.time?.busy) ?? now : millis(session.time?.idle) ?? millis(session.time?.updated) ?? created;
+  return {
+    id: session.id,
+    state,
+    startedAt: created,
+    updatedAt,
+    ...typeof session.parentID === "string" ? { parentID: session.parentID } : {},
+    ...typeof session.agent === "string" ? { agent: session.agent } : {},
+    ...typeof session.title === "string" ? { title: session.title } : {}
+  };
+}
+async function listedChildren(ctx, parent) {
+  const list = ctx.session?.list;
+  if (typeof list !== "function")
+    return;
+  const children = new Map;
+  let cursor;
+  for (let page = 0;page < MAX_PAGES; page++) {
+    const answer = await list.call(ctx.session, cursor === undefined ? { parentID: parent, limit: LIST_PAGE } : { cursor, limit: LIST_PAGE });
+    if (!Array.isArray(answer?.data))
+      return;
+    for (const info of answer.data) {
+      const child = reportedSession(info);
+      if (child?.parentID === parent && !children.has(child.id))
+        children.set(child.id, child);
+    }
+    const next = answer.cursor?.next;
+    if (answer.data.length < LIST_PAGE || typeof next !== "string" || next === cursor)
+      break;
+    cursor = next;
+  }
+  return [...children.values()];
+}
+var RUN_PROBE_MS = 100;
+async function runsHere(ctx, sessionID) {
+  const api = ctx.session;
+  const wait = api?.wait;
+  if (api === undefined || typeof wait !== "function")
+    return true;
+  let timer;
+  const ended = endOfRun(api, wait, sessionID);
+  const late = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(false), RUN_PROBE_MS);
+    timer.unref?.();
+  });
+  const answer = await Promise.race([ended, late]);
+  clearTimeout(timer);
+  return !answer;
+}
+var outstanding = new WeakMap;
+function endOfRun(api, wait, sessionID) {
+  let waits = outstanding.get(api);
+  if (waits === undefined) {
+    waits = new Map;
+    outstanding.set(api, waits);
+  }
+  const pending = waits.get(sessionID);
+  if (pending !== undefined)
+    return pending;
+  const own = waits;
+  let call;
+  try {
+    call = Promise.resolve(wait.call(api, { sessionID }));
+  } catch (error) {
+    call = Promise.reject(error);
+  }
+  const ended = call.then(() => true, () => false).finally(() => {
+    if (own.get(sessionID) === ended)
+      own.delete(sessionID);
+  });
+  waits.set(sessionID, ended);
+  return ended;
+}
+async function reread(ctx, id) {
+  const get = ctx.session?.get;
+  if (typeof get !== "function")
+    return;
+  const session = reportedSession(unwrap(await Promise.resolve().then(() => get.call(ctx.session, { sessionID: id })).catch(() => {
+    return;
+  })));
+  return session?.id === id ? session : undefined;
+}
+async function confirmed(ctx, session) {
+  if (session.state !== "running" || await runsHere(ctx, session.id))
+    return session;
+  const stopped = { ...session, state: "stopped" };
+  const again = await reread(ctx, session.id);
+  if (again === undefined)
+    return stopped;
+  if (again.state !== "running")
+    return { ...session, state: again.state, updatedAt: again.updatedAt };
+  if (again.updatedAt === session.updatedAt)
+    return stopped;
+  const later = { ...session, updatedAt: again.updatedAt };
+  if (await runsHere(ctx, session.id))
+    return later;
+  const last = await reread(ctx, session.id);
+  if (last === undefined)
+    return stopped;
+  if (last.state !== "running")
+    return { ...session, state: last.state, updatedAt: last.updatedAt };
+  return last.updatedAt === again.updatedAt ? stopped : { ...session, updatedAt: last.updatedAt };
+}
+async function sessionChildren(ctx, tracker, parent) {
+  const listed = await listedChildren(ctx, parent).catch(() => {
+    return;
+  });
+  if (listed === undefined)
+    return tracker.children(parent);
+  return Promise.all(listed.map((child) => confirmed(ctx, child)));
+}
+async function confirmedSession(ctx, info) {
+  const session = reportedSession(info);
+  return session === undefined ? undefined : confirmed(ctx, session);
+}
 function sessionApi(ctx) {
   const api = ctx.session;
   if (api?.get === undefined || api.prompt === undefined || api.interrupt === undefined) {
@@ -2515,22 +2642,21 @@ function v2Tools(deps) {
   };
   const targetOf = async (id) => {
     const tracked = tracker.get(id);
-    if (tracked !== undefined && tracked.parentID !== undefined && tracked.agent !== undefined) {
-      return { parentID: tracked.parentID, agent: tracked.agent, state: stateOf(tracked) };
-    }
-    const info = await sessionApi(deps.ctx).get({ sessionID: id }).catch(() => {
+    const info = unwrap(await sessionApi(deps.ctx).get({ sessionID: id }).catch(() => {
       return;
-    });
+    }));
     if (info === undefined || info === null)
       return tracked === undefined ? undefined : { parentID: tracked.parentID, agent: tracked.agent ?? "helper", state: stateOf(tracked) };
-    const parentID = tracked?.parentID ?? info.parentID;
-    const agent = tracked?.agent ?? (typeof info.agent === "string" ? info.agent : "helper");
-    if (tracked !== undefined) {
+    const parentID = info.parentID ?? tracked?.parentID;
+    const agent = typeof info.agent === "string" ? info.agent : tracked?.agent ?? "helper";
+    const reported = await confirmedSession(deps.ctx, info);
+    if (tracked !== undefined)
       tracker.complete(id, { parentID, agent });
-      return { parentID, agent, state: stateOf(tracked) };
-    }
-    return { parentID, agent, state: "unknown" };
+    if (reported !== undefined)
+      return { parentID, agent, state: stateOf(reported) };
+    return { parentID, agent, state: tracked === undefined ? "unknown" : stateOf(tracked) };
   };
+  const children = (parent) => sessionChildren(deps.ctx, tracker, parent);
   const view = (session) => {
     const record = activity.get(session.id);
     return {
@@ -2552,7 +2678,7 @@ function v2Tools(deps) {
     options: { codemode: false }
   });
   return [
-    define(TOOL_SPECS.status, async (_args, context) => formatStatus(tracker.children(context.sessionID).filter((child) => child.agent === undefined || helpers.has(child.agent)).map(view))),
+    define(TOOL_SPECS.status, async (_args, context) => formatStatus((await children(context.sessionID)).filter((child) => child.agent === undefined || helpers.has(child.agent)).map(view))),
     define(TOOL_SPECS.steer, async (args, context) => {
       const id = requiredText(args, "id");
       const message = requiredText(args, "text");
@@ -2573,7 +2699,7 @@ function v2Tools(deps) {
       const id = requiredText(args, "id");
       const targets = [];
       if (id === "all") {
-        for (const child of tracker.children(context.sessionID)) {
+        for (const child of await children(context.sessionID)) {
           const agent = child.agent ?? "helper";
           if (stateOf(child) === "running" && helpers.has(agent))
             targets.push({ id: child.id, agent });
@@ -2594,6 +2720,258 @@ function v2Tools(deps) {
       return cancelledResult(targets);
     })
   ];
+}
+
+// plugin/slots.ts
+var DELEGATION_TOOL = "subagent";
+var ADMITTED_MS = 120000;
+var RUN_ENDS = new Set(["session.execution.succeeded", "session.execution.failed", "session.execution.interrupted"]);
+var OWNED_MAX = 1000;
+function member(value, key) {
+  return value !== null && typeof value === "object" ? value[key] : undefined;
+}
+function sessionText(value) {
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+function namedChild(result) {
+  return sessionText(member(member(result, "metadata"), "sessionID")) ?? sessionText(member(member(result, "output"), "sessionID"));
+}
+function continued(input) {
+  return sessionText(member(input, "sessionID"));
+}
+var ENDED = new Set(["done", "failed", "stopped"]);
+
+class HelperSlots {
+  deps;
+  admitted = [];
+  queue = Promise.resolve();
+  unnamed = 0;
+  events = 0;
+  owned = new Set;
+  constructor(deps) {
+    this.deps = deps;
+  }
+  now() {
+    return (this.deps.now ?? Date.now)();
+  }
+  admit(call) {
+    if (call?.tool !== DELEGATION_TOOL || call.agent !== this.deps.harness.defaultAgent)
+      return Promise.resolve(undefined);
+    if (typeof call.sessionID !== "string" || call.sessionID === "")
+      return Promise.resolve(undefined);
+    if (!this.helperCall(call.input))
+      return Promise.resolve(undefined);
+    const target = continued(call.input);
+    const check = this.queue.then(() => this.check(call.sessionID, call.id, target));
+    this.queue = check.catch(() => {
+      return;
+    });
+    return check;
+  }
+  helperCall(input) {
+    const agent = member(input, "agent");
+    return typeof agent !== "string" || agent === "" || this.deps.helpers.has(agent);
+  }
+  helperChild(agent) {
+    return agent === undefined || this.deps.helpers.has(agent);
+  }
+  own(entry, child) {
+    entry.child = child;
+    this.owned.delete(child);
+    this.owned.add(child);
+    if (this.owned.size > OWNED_MAX)
+      this.owned.delete(this.owned.values().next().value);
+  }
+  bind(entry, child) {
+    if (entry.exact === true)
+      return;
+    entry.at = this.now();
+    if (entry.child === child) {
+      entry.exact = true;
+      this.settle(entry);
+      return;
+    }
+    const holder = this.admitted.find((item) => item !== entry && item.child === child);
+    if (holder?.exact === true)
+      return;
+    const given = { child: entry.child, agent: entry.agent, started: entry.started, ended: entry.ended };
+    entry.agent = holder?.agent;
+    entry.started = holder?.started;
+    entry.ended = holder?.ended;
+    entry.exact = true;
+    this.own(entry, child);
+    if (holder !== undefined) {
+      holder.child = undefined;
+      holder.agent = undefined;
+      holder.started = undefined;
+      holder.ended = undefined;
+    }
+    if (given.child !== undefined)
+      this.release(entry.parent, given.child, given.agent, given.started, given.ended);
+    this.settle(entry);
+  }
+  settle(entry) {
+    if (entry.exact === true && entry.ended === true)
+      this.admitted = this.admitted.filter((item) => item !== entry);
+  }
+  release(parent, child, agent, started, ended) {
+    const taker = this.admitted.find((item) => item.parent === parent && item.child === undefined && item.resumed !== true && !item.before.has(child));
+    if (taker === undefined) {
+      this.owned.delete(child);
+      return;
+    }
+    this.own(taker, child);
+    taker.agent = agent;
+    taker.started = started;
+    taker.ended = ended;
+    taker.at = this.now();
+  }
+  async check(parent, call, target) {
+    const now = this.now();
+    this.admitted = this.admitted.filter((entry) => now - entry.at < ADMITTED_MS);
+    const seen = this.events;
+    const children = await this.deps.children(parent);
+    const byId = new Map(children.map((child) => [child.id, child]));
+    const busy = [];
+    const counted = new Set;
+    for (const child of children) {
+      if (child.state !== "running" || child.agent !== undefined && !this.deps.helpers.has(child.agent))
+        continue;
+      busy.push({ id: child.id, ...child.agent === undefined ? {} : { agent: child.agent } });
+      counted.add(child.id);
+    }
+    const earliest = [...children].sort((a, b) => a.startedAt - b.startedAt);
+    for (const entry of this.admitted) {
+      if (entry.parent !== parent || entry.child !== undefined)
+        continue;
+      const match = earliest.find((child) => this.helperChild(child.agent) && !this.owned.has(child.id) && !entry.before.has(child.id) && !ENDED.has(child.state));
+      if (match !== undefined)
+        this.own(entry, match.id);
+    }
+    for (const entry of this.admitted) {
+      const child = entry.parent !== parent || entry.child === undefined ? undefined : byId.get(entry.child);
+      if (child !== undefined && entry.started !== undefined && entry.started <= seen && ENDED.has(child.state))
+        entry.ended = true;
+    }
+    this.admitted = this.admitted.filter((entry) => entry.exact !== true || entry.ended !== true);
+    for (const entry of this.admitted) {
+      if (entry.parent !== parent)
+        continue;
+      if (entry.child === undefined || entry.ended === true) {
+        busy.push({});
+        continue;
+      }
+      if (counted.has(entry.child))
+        continue;
+      const agent = byId.get(entry.child)?.agent ?? entry.agent;
+      busy.push({ id: entry.child, ...agent === undefined ? {} : { agent } });
+      counted.add(entry.child);
+    }
+    if ((target === undefined || !counted.has(target)) && busy.length >= this.deps.limit)
+      return slotsFullResult(this.deps.harness.name, this.deps.limit, busy);
+    const entry = { call: call ?? `unnamed-${++this.unnamed}`, parent, at: now, before: new Set(byId.keys()) };
+    if (target !== undefined) {
+      entry.resumed = true;
+      entry.exact = true;
+      this.own(entry, target);
+      if (byId.get(target)?.state === "running")
+        entry.started = seen;
+      else {
+        const sibling = this.admitted.find((item) => item.child === target && item.started !== undefined);
+        if (sibling !== undefined)
+          entry.started = sibling.started;
+      }
+    }
+    this.admitted.push(entry);
+    return;
+  }
+  ended(call) {
+    if (call?.tool !== DELEGATION_TOOL || typeof call.id !== "string")
+      return;
+    const entry = this.admitted.find((item) => item.call === call.id);
+    if (entry === undefined)
+      return;
+    if (call.status === "error") {
+      this.admitted = this.admitted.filter((item) => item !== entry);
+      if (entry.child !== undefined && entry.exact !== true)
+        this.release(entry.parent, entry.child, entry.agent, entry.started, entry.ended);
+      return;
+    }
+    const child = namedChild(call.result);
+    if (child !== undefined)
+      this.bind(entry, child);
+  }
+  observe(envelope) {
+    const event = eventFields(envelope);
+    const id = event?.sessionID;
+    if (event === undefined || typeof id !== "string" || id === "")
+      return;
+    const number = ++this.events;
+    if (event.type === "session.tool.progress") {
+      const entry = typeof event.id === "string" ? this.admitted.find((item) => item.call === event.id) : undefined;
+      const child = namedChild(event);
+      if (entry !== undefined && child !== undefined)
+        this.bind(entry, child);
+      return;
+    }
+    if (event.type === "session.created") {
+      if (typeof event.parentID !== "string" || this.owned.has(id))
+        return;
+      if (!this.helperChild(typeof event.agent === "string" ? event.agent : undefined))
+        return;
+      const entry = this.admitted.find((item) => item.parent === event.parentID && item.child === undefined);
+      if (entry === undefined)
+        return;
+      this.own(entry, id);
+      entry.at = this.now();
+      if (typeof event.agent === "string")
+        entry.agent = event.agent;
+      return;
+    }
+    const mine = this.admitted.filter((entry) => entry.child === id);
+    if (mine.length === 0)
+      return;
+    if (event.type !== undefined && RUN_ENDS.has(event.type)) {
+      for (const entry of mine)
+        if (entry.resumed !== true || entry.started !== undefined)
+          entry.ended = true;
+      this.admitted = this.admitted.filter((entry) => entry.exact !== true || entry.ended !== true);
+      return;
+    }
+    for (const entry of mine) {
+      entry.at = this.now();
+      if (event.type === "session.execution.started")
+        entry.started = number;
+    }
+  }
+}
+
+// plugin/step-limit.ts
+var STEP_LIMIT_NOTICE = `CRITICAL - MAXIMUM STEPS REACHED
+
+The maximum number of steps allowed for this task has been reached. Tools are disabled until next user input. Respond with text only.
+
+STRICT REQUIREMENTS:
+1. Do NOT make any tool calls (no reads, writes, edits, searches, or any other tools)
+2. MUST provide a text response summarizing work done so far
+3. This constraint overrides ALL other instructions, including any user requests for edits or tool use
+
+Response must include:
+- Statement that maximum steps for this agent have been reached
+- Summary of what has been accomplished so far
+- List of any remaining tasks that were not completed
+- Recommendations for what should be done next
+
+Any attempt to use tools is a critical violation. Respond with text ONLY.`;
+function stepLimitAsUser(messages) {
+  const last = messages.at(-1);
+  if (last?.role !== "assistant" || !Array.isArray(last.content) || last.content.length !== 1)
+    return false;
+  const part = last.content[0];
+  if (part?.type !== "text" || part.text !== STEP_LIMIT_NOTICE)
+    return false;
+  messages[messages.length - 1] = { role: "user", content: [{ type: "text", text: STEP_LIMIT_NOTICE }] };
+  return true;
 }
 
 // plugin/v2.ts
@@ -2808,11 +3186,12 @@ function createSetup(harness, options = {}) {
           }
         });
       }
+      const slots = new HelperSlots({ harness, limit: settings.maxHelperSlots, helpers, children: (parent) => sessionChildren(ctx, tracker, parent) });
       if (typeof ctx.tool?.hook === "function") {
-        await ctx.tool.hook("execute.before", (call) => {
+        await ctx.tool.hook("execute.before", async (call) => {
           let message;
           try {
-            message = toolCallBlock(harness, call?.agent, call?.tool);
+            message = toolCallBlock(harness, call?.agent, call?.tool) ?? await slots.admit(call);
             if (message === undefined)
               activity.observe(call?.sessionID, call?.tool, call?.input);
           } catch (error) {
@@ -2822,6 +3201,17 @@ function createSetup(harness, options = {}) {
           if (message !== undefined)
             throw new Error(message);
         });
+        try {
+          await ctx.tool.hook("execute.after", (call) => {
+            try {
+              slots.ended(call);
+            } catch (error) {
+              reporter.internal("the tool hook after a call", error);
+            }
+          });
+        } catch (error) {
+          reporter.internal("registering the tool hook after a call", error);
+        }
       }
       const inline = new Inline({
         harness,
@@ -2918,6 +3308,7 @@ ${found.reply}`;
       const keepOut = keepWorkDirOutOfGit(ctx, harness, environment, reporter);
       const onEvent = (event) => {
         tracker.observe(event);
+        slots.observe(event);
         keepOut(event);
         if (event?.type === "provider.updated" || event?.type === "model.updated")
           readProviders();
@@ -3213,7 +3604,7 @@ Settings live in \`~/.config/opencode/ecmwf-multi-agents.jsonc\`. A project can 
 
 Each agent takes \`model\`, \`effort\`, \`fallback\` and \`steps\`; a helper also takes \`enabled\`, \`true\` or \`false\`. A project's file can switch on a helper that is off in yours, or the other way round. Effort is how hard a model thinks: more effort is slower and costs more. Values: \`low\`, \`medium\`, \`high\`, \`xhigh\`, \`max\`; some models also \`none\`. Defaults: \`lead\` xhigh, \`builder\` high, \`scout\` and reviewer medium. Effort needs a model, so under \`inherit\` set \`model\` too. \`steps\` caps an agent's turns, which limits cost.
 
-\`max_helper_slots\` tells \`lead\` how many helpers may run at once (default 4). More slots can run more builders, databases, dev servers and builds on the same machine; raise it with care. \`/execute\` and \`/onboard\` follow this limit.
+\`max_helper_slots\` is how many helpers \`lead\` may run at once (default 4); the plugin refuses more. More slots run more builders, servers and builds on one machine; raise it with care. \`/execute\` and \`/onboard\` follow this limit.
 
 \`fallback\` lists models to try in order when an agent's \`model\` is not available: \`"provider/model"\` or \`{ "model": "...", "effort": "..." }\`. The plugin picks the first usable one at startup and when providers change, and shows a notice. It ignores rate limits and outages, needs \`model\` in the same entry, and does nothing without the plugin.
 

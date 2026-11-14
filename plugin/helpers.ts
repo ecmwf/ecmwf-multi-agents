@@ -304,6 +304,22 @@ export function cancelledResult(cancelled: readonly { agent: string; id: string 
   return `Stopped ${list}. ${cancelled.length === 1 ? "It" : "They"} will not report; check ${HELPER_TOOLS.status} or the files ${cancelled.length === 1 ? "it" : "they"} touched before building on ${cancelled.length === 1 ? "its" : "their"} work.`;
 }
 
+/** A helper that holds a slot: its agent and id, or neither while its hand-off is starting it. */
+export interface BusySlot {
+  agent?: string;
+  id?: string;
+}
+
+/** Why lead's hand-off is refused while `busy` fill its `limit` slots. */
+export function slotsFullResult(name: string, limit: number, busy: readonly BusySlot[]): string {
+  const named = busy.map((slot) => (slot.id === undefined ? "a helper that is starting" : `${slot.agent ?? "helper"} ${slot.id}`));
+  return (
+    `${name}: hand-off refused. You may run at most ${limit} ${limit === 1 ? "helper" : "helpers"} at once (max_helper_slots), ` +
+    `and ${busy.length} ${busy.length === 1 ? "is" : "are"} running: ${named.join(", ")}. ` +
+    `Wait for a running helper's report before you hand off this work, or use ${HELPER_TOOLS.status} to see what they are doing.`
+  );
+}
+
 // ---------------------------------------------------------------------------------------------
 // Guard: helpers never call these tools, whatever was approved.
 

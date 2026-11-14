@@ -72,7 +72,7 @@ Settings live in `~/.config/opencode/ecmwf-multi-agents.jsonc`. A project can ov
 
 Each agent takes `model`, `effort`, `fallback` and `steps`; a helper also takes `enabled`, `true` or `false`. A project's file can switch on a helper that is off in yours, or the other way round. Effort is how hard a model thinks: more effort is slower and costs more. Values: `low`, `medium`, `high`, `xhigh`, `max`; some models also `none`. Defaults: `lead` xhigh, `builder` high, `scout` and reviewer medium. Effort needs a model, so under `inherit` set `model` too. `steps` caps an agent's turns, which limits cost.
 
-`max_helper_slots` tells `lead` how many helpers may run at once (default 4). More slots can run more builders, databases, dev servers and builds on the same machine; raise it with care. `/execute` and `/onboard` follow this limit.
+`max_helper_slots` is how many helpers `lead` may run at once (default 4); the plugin refuses more. More slots run more builders, servers and builds on one machine; raise it with care. `/execute` and `/onboard` follow this limit.
 
 `fallback` lists models to try in order when an agent's `model` is not available: `"provider/model"` or `{ "model": "...", "effort": "..." }`. The plugin picks the first usable one at startup and when providers change, and shows a notice. It ignores rate limits and outages, needs `model` in the same entry, and does nothing without the plugin.
 

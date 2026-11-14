@@ -191,7 +191,9 @@ briefs a builder to run it without changing anything.
 
 Parallelism: at most `max_helper_slots` helpers at once (default 4). Scouts in parallel
 whenever their questions are independent. Builders in parallel only when their file sets do
-not overlap. This is an instruction to `lead`, not a runtime scheduler or a machine-wide cap.
+not overlap. The plugin enforces the limit for each `lead` session: it refuses a hand-off while
+that many of the session's helpers hold a slot, and says so to `lead` (see Background helpers).
+It is not a scheduler that queues work, nor a cap across sessions or the machine.
 
 ## Background helpers
 
@@ -225,6 +227,38 @@ have them:
 | `helpers_status` | The helpers of this session: agent, title, state, steps taken, elapsed time, last tool call. At most twelve lines |
 | `helpers_steer(id, text)` | Sends an amendment to a running helper. The text reaches it at its next step; its context and prompt cache stay. A finished helper is continued through the delegation tool's continuation parameter instead |
 | `helpers_cancel(id or all)` | Stops a helper and says so in the result |
+
+The plugin finds a session's helpers by asking opencode for the session's children
+(`session.list` with a `parentID` filter), so it also finds helpers started before opencode or
+the plugin restarted. A helper is running while opencode records a run that started after its
+last run ended and this opencode process runs it: a plain `opencode serve` does not resume a
+run that a stop cut off, and such a helper shows as stopped. A run that ends just as the
+plugin checks it shows as done or failed, as opencode records it, and a helper continued in
+that moment is checked again in its new run. Without the list, or when it
+fails, the plugin falls back to the helpers whose start it saw in opencode's events since it
+loaded. The steps and the last tool call in each line come from the tool calls the plugin has
+seen since it loaded.
+
+The plugin also enforces `max_helper_slots` (`plugin/slots.ts`). Its `execute.before` tool hook
+refuses a hand-off from `lead` while that many of the session's helpers hold a slot, with a
+message that names the limit and the helpers and tells `lead` to wait for a report or use
+`helpers_status`. A helper holds a slot while it runs, in the foreground or the background. A
+hand-off the hook admitted holds one from then until its helper's run ends, or until the
+hand-off fails, so several hand-offs in one step count one by one, and a check that read the
+children just before a helper's run started still counts it. A hand-off learns its helper from
+its own call, which opencode's progress update and result name; until then the plugin guesses
+that the oldest waiting hand-off owns the next new helper, and the call's word corrects the
+guess. A helper only guessed to belong to a hand-off that fails goes to the next waiting one.
+When a guessed helper's run ends, the hand-off keeps its slot until its own call has reported
+success or failure, since the guess may be wrong and the hand-off's own helper may still be
+starting. Once a hand-off's helper is known, it stands for that hand-off only. If opencode's
+events about the helper stop, the hold lapses two minutes after the last one, and the helper
+counts by its listed state alone. Continuing a running helper with its `sessionID` takes no new
+slot; continuing an idle one starts a run, so it takes one like a new hand-off, held from the
+hand-off until that run ends. Several calls that continue the same helper hold its one slot
+together, so one of them failing leaves the slot to the others. Only `lead` is limited, only
+its own session's helpers count, and a hand-off to an agent that is not a harness helper takes
+no slot. Without the plugin the limit is an instruction in `lead`'s prompt only.
 
 A steer amends the brief (principle 3): the helper follows the latest message, keeps the
 earlier LIMITS unless the steer lifts them, and reports what changed in the section its
@@ -560,8 +594,8 @@ models").
 `Run at most N helpers at once.` instruction in `lead`, preserving the file-ownership rules
 that follow it. The generated prompt uses 4 without the plugin. The plan skill and `/onboard`
 refer to that instruction rather than repeating the number. A missing or duplicate instruction
-is reported; an explicitly chosen limit that cannot apply also shows a warning toast.
-More slots can run more builders, databases, dev servers and builds on the same machine.
+is reported; an explicitly chosen limit that cannot apply also shows a warning toast. The
+plugin also refuses a hand-off beyond the limit (see Background helpers). More slots can run more builders, databases, dev servers and builds on the same machine.
 
 The generator writes a JSON Schema for this file; the plugin validates with the same patterns.
 A file with unknown keys or invalid values is ignored as a whole and reported on standard

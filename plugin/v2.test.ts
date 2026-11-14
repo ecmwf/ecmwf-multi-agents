@@ -7,7 +7,8 @@ import { INLINE_MARK, reviewerOffText } from "./inline.ts";
 import { STEP_LIMIT_NOTICE } from "./step-limit.ts";
 import { createPlugin } from "./plugin.ts";
 import { HELPER_OFF, LEAD_PROMPT, TESTER_ROUTING, embeddedFixture, fakeEnvironment } from "./testing.ts";
-import type { V2AgentEditor, V2AgentInfo, V2CommandDefinition, V2CommandEditor, V2Context, V2ContextEvent, V2Event, V2ModelMessage, V2ToolCall, V2ToolInfo } from "./types.ts";
+import type { V2AgentEditor, V2AgentInfo, V2CommandDefinition, V2CommandEditor, V2Context, V2ContextEvent, V2Event, V2ModelMessage, V2SessionInfo, V2ToolCall, V2ToolInfo } from "./types.ts";
+import { runsHere } from "./tools-v2.ts";
 import { v2ProjectRoot } from "./v2.ts";
 
 const harness = embeddedFixture();
@@ -26,6 +27,13 @@ class FakeHost {
   /** Tools added through the tool transform, and the execute.before hooks. */
   tools = new Map<string, V2ToolInfo>();
   toolHooks: Array<(call: V2ToolCall) => Promise<void> | void> = [];
+  afterHooks: Array<(call: V2ToolCall) => Promise<void> | void> = [];
+  /** What `session.list` answers from, once `serveList` has added it; `session.get` finds these too. */
+  listed: V2SessionInfo[] = [];
+  listCalls = 0;
+  listFails = false;
+  /** Listed sessions whose run was cut off by a stop of opencode: nothing runs them now. */
+  stale = new Set<string>();
   /** The `context` session hooks, which see each model request before it is sent. */
   contextHooks: Array<(event: V2ContextEvent) => Promise<void> | void> = [];
   /** Messages the plugin asked opencode to write as its own. */
@@ -62,6 +70,23 @@ class FakeHost {
     }
   }
 
+  /**
+   * Give the plugin context `session.list` as opencode 2.2.5 has it: a page of at most `limit`
+   * sessions (50 without it), and a cursor to the next page whenever the page is not empty; the
+   * cursor carries the filter.
+   */
+  serveList(): void {
+    this.ctx.session!.list = async (input) => {
+      this.listCalls++;
+      if (this.listFails) throw new Error("list failed");
+      const from = input.cursor === undefined ? { parentID: input.parentID, offset: 0 } : (JSON.parse(input.cursor) as { parentID?: string; offset: number });
+      const matching = this.listed.filter((session) => from.parentID === undefined || session.parentID === from.parentID);
+      const data = matching.slice(from.offset, from.offset + (input.limit ?? 50));
+      const next = data.length === 0 ? undefined : JSON.stringify({ parentID: from.parentID, offset: from.offset + data.length });
+      return { data, cursor: { ...(next === undefined ? {} : { next }) } };
+    };
+  }
+
   readonly ctx: V2Context = {
     location: { directory: "/repo/sub", project: { directory: "/repo" } },
     agent: {
@@ -85,8 +110,8 @@ class FakeHost {
         callback({ add: (tool) => this.tools.set(tool.name, tool), remove: (id) => void this.tools.delete(id) });
         return { dispose: async () => {} };
       },
-      hook: async (_name, callback) => {
-        this.toolHooks.push(callback);
+      hook: async (name, callback) => {
+        (name === "execute.after" ? this.afterHooks : this.toolHooks).push(callback);
         return { dispose: async () => {} };
       },
     },
@@ -102,12 +127,18 @@ class FakeHost {
       },
     },
     session: {
-      get: async ({ sessionID }) => (this.sessions[sessionID] === undefined ? undefined : { id: sessionID, ...this.sessions[sessionID] }),
+      get: async ({ sessionID }) =>
+        this.listed.find((session) => session.id === sessionID) ?? (this.sessions[sessionID] === undefined ? undefined : { id: sessionID, ...this.sessions[sessionID] }),
       switchAgent: async ({ sessionID, agent }) => {
         this.switches.push(agent);
         this.sessions[sessionID] = { ...this.sessions[sessionID], agent };
       },
-      wait: async () => {},
+      // A listed session with a run in progress is waited for, unless the run is one nothing runs.
+      wait: ({ sessionID }) => {
+        const time = this.listed.find((session) => session.id === sessionID)?.time;
+        const busy = time?.busy !== undefined && (time.idle === undefined || time.busy > time.idle);
+        return busy && !this.stale.has(sessionID) ? new Promise<never>(() => {}) : Promise.resolve();
+      },
       prompt: async (input) => {
         this.prompts.push(input);
         return {};
@@ -819,6 +850,318 @@ describe("v2 helper tools and guard", () => {
     for (const hook of host.toolHooks) await hook({ tool: "read", sessionID: "c1", agent: "scout", input: { filePath: "/a" } });
     expect(await host.call("helpers_status", {}, { sessionID: "root", agent: "lead" })).toContain("c1, scout, running, 2 steps");
     expect(await host.call("helpers_status", {}, { sessionID: "root", agent: "lead" })).toContain("last: read");
+  });
+});
+
+describe("v2 helpers from opencode's session list", () => {
+  const lead = { sessionID: "root", agent: "lead" };
+  const now = Date.now();
+  /** A child of root as opencode lists it: running when `busy` is later than `idle`. */
+  const child = (id: string, agent: string, run: { busy?: number; idle?: number; outcome?: V2SessionInfo["outcome"] } = {}, parentID = "root"): V2SessionInfo => ({
+    id,
+    parentID,
+    agent,
+    title: `job ${id}`,
+    time: { created: now - 60_000, updated: now - 1_000, ...(run.busy === undefined ? {} : { busy: run.busy }), ...(run.idle === undefined ? {} : { idle: run.idle }) },
+    ...(run.outcome === undefined ? {} : { outcome: run.outcome }),
+  });
+  const running = { busy: now - 30_000 };
+
+  test("status lists the children opencode lists, also those the event stream never announced, in opencode's state", async () => {
+    const { host } = await start({});
+    host.serveList();
+    host.listed = [
+      child("old", "builder", running),
+      child("again", "scout", { busy: now - 10_000, idle: now - 20_000, outcome: "succeeded" }),
+      child("ok", "scout", { busy: now - 40_000, idle: now - 20_000, outcome: "succeeded" }),
+      child("bad", "builder", { busy: now - 40_000, idle: now - 20_000, outcome: "failed" }),
+      child("cut", "reviewer", { busy: now - 40_000, idle: now - 20_000, outcome: "interrupted" }),
+      child("new", "scout"),
+      child("general", "general", running),
+      child("elsewhere", "scout", running, "other"),
+    ];
+    const status = await host.call("helpers_status", {}, lead);
+    expect(status).toContain("6 helpers in this session");
+    expect(status).toMatch(/old, builder, running, 0 steps, \d+m \d+s: job old/);
+    expect(status).toContain("again, scout, running");
+    expect(status).toContain("ok, scout, done");
+    expect(status).toContain("bad, builder, failed");
+    expect(status).toContain("cut, reviewer, stopped");
+    expect(status).toContain("new, scout, idle");
+    expect(status).not.toContain("general");
+    expect(status).not.toContain("elsewhere");
+
+    expect(await host.call("helpers_steer", { id: "old", text: "narrow it" }, lead)).toContain("Sent to builder old");
+    expect(await host.call("helpers_steer", { id: "ok", text: "more" }, lead)).toContain("is not running");
+    expect(await host.call("helpers_cancel", { id: "all" }, lead)).toStartWith("Stopped builder old, scout again.");
+    expect(host.interrupts).toEqual(["old", "again"]);
+    // opencode still lists them running until the interrupt lands; the cancel counts at once.
+    expect(await host.call("helpers_status", {}, lead)).toContain("old, builder, stopped");
+  });
+
+  test("status pages through the list until the last page", async () => {
+    const { host } = await start({});
+    host.serveList();
+    host.listed = Array.from({ length: 230 }, (_, index) => child(`c${index}`, "scout", running));
+    expect(await host.call("helpers_status", {}, lead)).toStartWith("230 helpers in this session");
+    expect(host.listCalls).toBe(3);
+  });
+
+  test("without session.list, or when it fails, the helpers the event stream announced are listed and nothing throws", async () => {
+    for (const fails of [false, true]) {
+      const { host, write } = await start({});
+      if (fails) {
+        host.serveList();
+        host.listFails = true;
+      }
+      await settle();
+      host.emit("session.created", { sessionID: "c1", parentID: "root", agent: "scout" });
+      host.emit("session.execution.started", { sessionID: "c1" });
+      await settle();
+      expect(await host.call("helpers_status", {}, lead)).toContain("c1, scout, running");
+      expect(await host.call("helpers_cancel", { id: "all" }, lead)).toStartWith("Stopped scout c1.");
+      expect(host.listCalls).toBe(fails ? 2 : 0);
+      expect(write).toEqual([]);
+    }
+  });
+
+  test("steer and cancel take a helper's state from opencode, also for one started before the plugin", async () => {
+    const { host } = await start({});
+    host.listed = [child("late", "builder", running), child("finished", "scout", { busy: now - 40_000, idle: now - 20_000, outcome: "succeeded" })];
+    expect(await host.call("helpers_steer", { id: "late", text: "stop" }, lead)).toContain("Sent to builder late");
+    expect(await host.call("helpers_steer", { id: "finished", text: "x" }, lead)).toContain("scout finished is not running");
+    expect(await host.call("helpers_cancel", { id: "finished" }, lead)).toBe("scout finished is not running.");
+    expect(await host.call("helpers_cancel", { id: "late" }, lead)).toStartWith("Stopped builder late.");
+    expect(host.interrupts).toEqual(["late"]);
+  });
+
+  test("a run opencode lists as started but does not run, cut off when it stopped, is shown stopped and cannot be steered", async () => {
+    const { host } = await start({});
+    host.serveList();
+    host.listed = [child("cut", "builder", running), child("live", "scout", running)];
+    host.stale.add("cut");
+    const status = await host.call("helpers_status", {}, lead);
+    expect(status).toContain("cut, builder, stopped");
+    expect(status).toContain("live, scout, running");
+    expect(await host.call("helpers_steer", { id: "cut", text: "x" }, lead)).toContain("builder cut is not running");
+    expect(await host.call("helpers_cancel", { id: "all" }, lead)).toStartWith("Stopped scout live.");
+    expect(host.interrupts).toEqual(["live"]);
+  });
+
+  test("a run that ends while the plugin probes it is shown as it ended, not stopped; one opencode still lists running is stopped", async () => {
+    const { host } = await start({});
+    host.serveList();
+    host.listed = [child("ok", "scout", running), child("bad", "builder", running), child("cut", "reviewer", running)];
+    for (const id of ["ok", "bad", "cut"]) host.stale.add(id);
+    // By the time the probe's wait answers, opencode has recorded how the runs of ok and bad ended.
+    const ends: Record<string, V2SessionInfo["outcome"]> = { ok: "succeeded", bad: "failed" };
+    host.ctx.session!.get = async ({ sessionID }) => {
+      const listed = host.listed.find((session) => session.id === sessionID)!;
+      const outcome = ends[sessionID];
+      return outcome === undefined ? listed : { ...listed, time: { ...listed.time, idle: now }, outcome };
+    };
+    const status = await host.call("helpers_status", {}, lead);
+    expect(status).toContain("ok, scout, done");
+    expect(status).toContain("bad, builder, failed");
+    expect(status).toContain("cut, reviewer, stopped");
+    expect(await host.call("helpers_steer", { id: "ok", text: "x" }, lead)).toContain("scout ok is not running");
+    // Without an answer from get, the run counts as stopped.
+    host.ctx.session!.get = async () => {
+      throw new Error("get failed");
+    };
+    expect(await host.call("helpers_status", {}, lead)).toContain("ok, scout, stopped");
+  });
+
+  test("a helper continued while the plugin probes its last run is probed again in its new run: running, not stopped", async () => {
+    for (const newRunHere of [true, false]) {
+      const { host } = await start({});
+      host.serveList();
+      host.listed = [child("c", "scout", running)];
+      // The listed run's wait answers at once: that run ended, and lead has continued the helper.
+      let waits = 0;
+      host.ctx.session!.wait = () => (++waits === 1 || !newRunHere ? Promise.resolve() : new Promise<never>(() => {}));
+      host.ctx.session!.get = async () => child("c", "scout", { busy: now - 1_000, idle: now - 2_000, outcome: "succeeded" });
+      const status = await host.call("helpers_status", {}, lead);
+      // Without a run for the new start either, and the same start read again, nothing runs it.
+      expect(status).toContain(newRunHere ? "c, scout, running" : "c, scout, stopped");
+      expect(waits).toBe(2);
+    }
+  });
+});
+
+describe("v2 run probe", () => {
+  test("probes of a long-running helper share one session.wait; once it settles, the next probe waits anew", async () => {
+    const waits: Array<() => void> = [];
+    const { ctx } = new FakeHost();
+    ctx.session!.wait = () => new Promise<void>((resolve) => waits.push(resolve));
+    expect(await Promise.all([runsHere(ctx, "long"), runsHere(ctx, "long"), runsHere(ctx, "long")])).toEqual([true, true, true]);
+    expect(await runsHere(ctx, "long")).toBe(true);
+    expect(waits).toHaveLength(1);
+    // Another helper has its own.
+    expect(await runsHere(ctx, "other")).toBe(true);
+    expect(waits).toHaveLength(2);
+    waits[0]!();
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    const probe = runsHere(ctx, "long");
+    expect(waits).toHaveLength(3);
+    waits[2]!();
+    expect(await probe).toBe(false);
+  });
+});
+
+describe("v2 helper slots", () => {
+  const lead = { sessionID: "root", agent: "lead" };
+  const slots = (count: number) => ({ [PROJECT]: `{ "max_helper_slots": ${count} }` });
+  const brief = (more: Record<string, unknown> = {}) => ({ agent: "builder", description: "job", prompt: "do it", background: true, ...more });
+  const running = (id: string, agent = "builder"): V2SessionInfo => ({ id, parentID: "root", agent, time: { created: Date.now(), updated: Date.now(), busy: Date.now() } });
+  const finished = (id: string, agent = "builder"): V2SessionInfo => ({
+    id,
+    parentID: "root",
+    agent,
+    time: { created: Date.now() - 60_000, updated: Date.now(), busy: Date.now() - 60_000, idle: Date.now() - 1_000 },
+    outcome: "succeeded",
+  });
+  let calls = 0;
+  /** A delegation call as opencode starts it: the execute.before hooks; undefined, or the refusal. */
+  const handOff = async (host: FakeHost, input: Record<string, unknown> = brief(), context = lead, id = `call${++calls}`): Promise<string | undefined> => {
+    try {
+      for (const hook of host.toolHooks) await hook({ tool: "subagent", input, id, ...context });
+      return undefined;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  };
+  /** The end of a delegation call: the execute.after hooks, with the result naming the helper as opencode's does. */
+  const ended = async (host: FakeHost, id: string, status: "completed" | "error" = "completed", child?: string) => {
+    const result = child === undefined ? {} : { result: { output: { sessionID: child, status: "completed" }, metadata: { sessionID: child, status: "completed" } } };
+    for (const hook of host.afterHooks) await hook({ tool: "subagent", input: brief(), id, status, ...result, ...lead });
+  };
+
+  test("at the limit lead's hand-off is refused with a message that names the limit, the running helpers and what to do", async () => {
+    const { host } = await start(slots(2));
+    host.serveList();
+    host.listed = [running("c1"), running("c2", "scout"), finished("c3")];
+    expect(await handOff(host)).toBe(
+      "ecmwf-multi-agents: hand-off refused. You may run at most 2 helpers at once (max_helper_slots), and 2 are running: builder c1, scout c2. " +
+        "Wait for a running helper's report before you hand off this work, or use helpers_status to see what they are doing.",
+    );
+    // Other tools are not limited.
+    for (const hook of host.toolHooks) await hook({ tool: "read", input: { filePath: "/a" }, ...lead });
+    host.listed[1] = finished("c2", "scout");
+    expect(await handOff(host)).toBeUndefined();
+  });
+
+  test("two hand-offs in one step with one slot left: one is admitted, the other refused", async () => {
+    const { host } = await start(slots(2));
+    host.serveList();
+    host.listed = [running("c1")];
+    const results = await Promise.all([handOff(host, brief(), lead, "a"), handOff(host, brief({ background: false }), lead, "b")]);
+    expect(results.filter((result) => result === undefined)).toHaveLength(1);
+    expect(results.find((result) => result !== undefined)).toContain("and 2 are running: builder c1, a helper that is starting.");
+  });
+
+  test("an admitted hand-off counts once, before and after its helper starts, until its helper finishes", async () => {
+    const { host } = await start(slots(3));
+    host.serveList();
+    host.listed = [running("c1")];
+    expect(await handOff(host, brief(), lead, "a")).toBeUndefined();
+    // opencode lists the new helper before the plugin has seen its events.
+    host.listed.push(running("c2"));
+    expect(await handOff(host, brief(), lead, "b")).toBeUndefined();
+    expect(await handOff(host, brief(), lead, "c")).toContain("3 are running: builder c1, builder c2, a helper that is starting.");
+    await settle();
+    host.emit("session.created", { sessionID: "c3", parentID: "root", agent: "builder" });
+    host.listed.push(running("c3"));
+    await ended(host, "a");
+    await ended(host, "b");
+    expect(await handOff(host)).toContain("3 are running: builder c1, builder c2, builder c3.");
+    host.listed[0] = finished("c1");
+    expect(await handOff(host)).toBeUndefined();
+  });
+
+  test("a hand-off that fails before its helper starts frees its slot; a refused one never took one", async () => {
+    const { host } = await start(slots(1));
+    host.serveList();
+    expect(await handOff(host, brief(), lead, "a")).toBeUndefined();
+    expect(await handOff(host, brief(), lead, "b")).toContain("1 is running: a helper that is starting.");
+    await ended(host, "a", "error");
+    expect(await handOff(host)).toBeUndefined();
+  });
+
+  test("continuing a running helper takes no new slot; continuing an idle one starts a run and takes one", async () => {
+    const { host } = await start(slots(1));
+    host.serveList();
+    host.listed = [running("c1"), finished("c2")];
+    // c1 already holds the only slot, so continuing it adds nothing.
+    expect(await handOff(host, brief({ sessionID: "c1" }))).toBeUndefined();
+    // c2 is idle: continuing it would make two run at once.
+    expect(await handOff(host, brief({ sessionID: "c2" }))).toContain("1 is running: builder c1.");
+    expect(await handOff(host, brief({ sessionID: "" }))).toContain("1 is running: builder c1.");
+  });
+
+  test("a continued idle helper holds its slot from the hand-off until its run ends", async () => {
+    const { host } = await start(slots(1));
+    host.serveList();
+    host.listed = [finished("c2")];
+    expect(await handOff(host, brief({ sessionID: "c2" }), lead, "k")).toBeUndefined();
+    // Its run has not started yet: the slot is still taken, by c2 and not by a new helper.
+    expect(await handOff(host)).toContain("1 is running: builder c2.");
+    host.listed = [running("c2")];
+    host.emit("session.execution.started", { sessionID: "c2" });
+    await settle();
+    expect(await handOff(host)).toContain("1 is running: builder c2.");
+    host.listed = [finished("c2")];
+    host.emit("session.execution.succeeded", { sessionID: "c2" });
+    await settle();
+    expect(await handOff(host)).toBeUndefined();
+  });
+
+  test("a foreground hand-off holds its slot while its helper runs", async () => {
+    const { host } = await start(slots(1));
+    await settle();
+    expect(await handOff(host, brief({ background: false }), lead, "f")).toBeUndefined();
+    expect(await handOff(host)).toContain("1 is running: a helper that is starting.");
+    host.emit("session.created", { sessionID: "f1", parentID: "root", agent: "builder" });
+    host.emit("session.execution.started", { sessionID: "f1" });
+    await settle();
+    expect(await handOff(host)).toContain("1 is running: builder f1.");
+    host.emit("session.execution.succeeded", { sessionID: "f1" });
+    await settle();
+    await ended(host, "f", "completed", "f1");
+    expect(await handOff(host)).toBeUndefined();
+  });
+
+  test("only lead is limited", async () => {
+    const { host } = await start(slots(1));
+    host.serveList();
+    host.listed = [running("c1")];
+    expect(await handOff(host, brief(), { sessionID: "root", agent: "build" })).toBeUndefined();
+    expect(await handOff(host, brief(), { sessionID: "c1", agent: "builder" })).toBeUndefined();
+    expect(await handOff(host)).toContain("at most 1 helper at once");
+  });
+
+  test("without the setting the limit is the default, 4", async () => {
+    const { host } = await start({});
+    host.serveList();
+    host.listed = ["c1", "c2", "c3", "c4"].map((id) => running(id));
+    expect(await handOff(host)).toContain("at most 4 helpers at once (max_helper_slots), and 4 are running");
+    host.listed[3] = finished("c4");
+    expect(await handOff(host)).toBeUndefined();
+  });
+
+  test("without session.list the helpers the event stream announced count; when the list fails nothing throws", async () => {
+    const { host } = await start(slots(1));
+    await settle();
+    host.emit("session.created", { sessionID: "c1", parentID: "root", agent: "scout" });
+    host.emit("session.execution.started", { sessionID: "c1" });
+    await settle();
+    expect(await handOff(host)).toContain("1 is running: scout c1.");
+
+    const failing = await start(slots(1));
+    failing.host.serveList();
+    failing.host.listFails = true;
+    expect(await handOff(failing.host)).toBeUndefined();
+    expect(failing.write).toEqual([]);
   });
 });
 

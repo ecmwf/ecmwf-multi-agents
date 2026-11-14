@@ -215,7 +215,14 @@ export interface V2SessionInfo {
   agent?: string;
   model?: V2ModelRef;
   title?: string;
-  time?: { created?: number; updated?: number };
+  /**
+   * Milliseconds. `busy` is the start of the latest run and `idle` the end of the latest finished
+   * one, so a run is in progress while `busy` is later than `idle` (`Session.Info` in
+   * schema/src/session.ts, opencode 2.2.5 and 2.2.6).
+   */
+  time?: { created?: number; updated?: number; busy?: number; idle?: number };
+  /** How the latest finished run ended; absent until one has. */
+  outcome?: "succeeded" | "failed" | "interrupted";
 }
 
 /** A stored message of a session, as `session.context` returns it (@opencode/schema SessionMessage). */
@@ -296,7 +303,13 @@ export interface V2ToolCall {
   tool: string;
   sessionID: string;
   agent: string;
+  /** The call's id, the same in `execute.before` and `execute.after`. */
+  id?: string;
   input?: unknown;
+  /** `execute.after` only: how the call ended. */
+  status?: "completed" | "error";
+  /** `execute.after` of a completed call only: its `output`, `content` and `metadata` (`Tool.Result`). */
+  result?: unknown;
 }
 
 /** A message as a model request carries it (@opencode/ai Message: a role and content parts). */
@@ -360,10 +373,16 @@ export interface V2Context {
   event?: { subscribe?: (options?: { signal?: AbortSignal }) => AsyncIterable<V2Event> };
   tool?: {
     transform?: (callback: (editor: V2ToolEditor) => void) => Promise<V2Registration>;
-    hook?: (name: "execute.before", callback: (call: V2ToolCall) => Promise<void> | void) => Promise<V2Registration>;
+    hook?: (name: "execute.before" | "execute.after", callback: (call: V2ToolCall) => Promise<void> | void) => Promise<V2Registration>;
   };
   session?: {
     get?: (input: { sessionID: string }) => Promise<V2SessionInfo | undefined>;
+    /**
+     * Sessions, latest change first, a page at a time: `{ data, cursor: { next } }`. A cursor
+     * carries the filters of the request that made it (`Session.list` in core/src/session.ts,
+     * opencode 2.2.5 and 2.2.6).
+     */
+    list?: (input: { parentID?: string; limit?: number; cursor?: string }) => Promise<unknown>;
     create?: (input: { parentID?: string; title?: string; agent?: string; model?: V2ModelRef }) => Promise<unknown>;
     switchAgent?: (input: { sessionID: string; agent: string }) => Promise<unknown>;
     switchModel?: (input: { sessionID: string; model: V2ModelRef }) => Promise<unknown>;
