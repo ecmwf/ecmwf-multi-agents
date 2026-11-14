@@ -205,6 +205,8 @@ in `.opencode/ecmwf-multi-agents.jsonc`.
   "profile": "default",
   // Helpers lead may run at once: an integer of at least 1, default 4.
   "max_helper_slots": 4,
+  // How lead writes for you: plain (short sentences, steps as numbered commands) or off.
+  "writing_guidance": "plain",
   // Optional per-agent overrides, applied after the profile: enabled (helpers only), model,
   // effort, fallback and steps.
   "agents": {

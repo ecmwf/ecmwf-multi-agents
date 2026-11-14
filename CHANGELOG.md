@@ -13,6 +13,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ### Added
 
+- `lead` writes for readers whose first language may not be English: short sentences, the
+  active voice, steps as numbered commands, one term for one thing, and code, commands and
+  error messages left as they are. The rules are inspired by ASD-STE100, not compliant with it
+  (ADR 0006). Set `"writing_guidance": "off"` to switch them off.
 - Per-agent `fallback` setting: an ordered list of models (`"provider/model"` or
   `{ "model": "...", "effort": "..." }`) the plugin uses, at startup and when providers change,
   when opencode does not list an agent's own model as available, and shows a notice when it

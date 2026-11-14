@@ -359,6 +359,19 @@ describe.skipIf(!enabled)(`plugin in opencode ${V2_VERSION}`, () => {
     }
   }, 180_000);
 
+  test("writing guidance: lead ends with its writing section by default, and a project's writing_guidance off removes it", async () => {
+    writeSettings(box, '{ "review": "never" }');
+    await start();
+    const on = await until("the settings to apply", (items) => reviewLine(find(items, "lead")) === "Review policy: never");
+    expect(find(on, "lead")!.system).toContain("\n## Writing\n");
+    await stop();
+    writeSettings(box, '{ "review": "never" }', '{ "writing_guidance": "off" }');
+    await start();
+    const off = await until("the writing section to go", (items) => reviewLine(find(items, "lead")) === "Review policy: never" && find(items, "lead")?.system?.includes("## Writing") === false);
+    expect(find(off, "lead")!.system).toContain("Run at most 4 helpers at once.");
+    await stop();
+  }, 180_000);
+
   test("an invalid settings file leaves the defaults", async () => {
     writeSettings(box, INVALID);
     await start();

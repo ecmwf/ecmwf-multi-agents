@@ -42,7 +42,11 @@
   //   change (a higher step limit, keeping a fallback model) to the user and edits only on a
   //   yes; the plugin detects the case and words the offer (plugin/offers.ts). Measured 1839
   //   and 2187.
-  "budgets": { "lead": 1850, "helper": 750, "command": 500, "skill": 1850, "routing": 100, "lead-all": 2200 },
+  // - lead 1850 -> 2050, lead-all 2200 -> 2400: the writing guidance for text for people
+  //   (src/fragments/writing.md, ADR 0006), which the setting writing_guidance "off" removes.
+  //   Measured 2004 and 2352.
+  // - skill 1850 -> 1900: the users' guide names the setting writing_guidance. Measured 1867.
+  "budgets": { "lead": 2050, "helper": 750, "command": 500, "skill": 1900, "routing": 100, "lead-all": 2400 },
 
   // Named lists of {action, resource}. A permission entry {"use": name, "effect": e}
   // expands to one rule per item, all with effect e.
@@ -133,7 +137,7 @@
     "lead": {
       "mode": "primary",
       "description": "Talks to you, plans, hands work to helpers and checks the results. Start here.",
-      "prompt": ["agents/lead.md"],
+      "prompt": ["agents/lead.md", "fragments/writing.md"],
       "budget": "lead",
       "color": "#0b5394",
       "permissions": [

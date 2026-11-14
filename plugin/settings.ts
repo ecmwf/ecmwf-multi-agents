@@ -9,6 +9,7 @@ import path from "node:path";
 import { JsoncError, parseJsonc } from "./jsonc.ts";
 import {
   REVIEW_POLICIES,
+  WRITING_GUIDANCE,
   type AgentOverride,
   type EmbeddedHarness,
   type Environment,
@@ -17,6 +18,7 @@ import {
   type ReviewPolicy,
   type Settings,
   type SettingsFile,
+  type WritingGuidance,
 } from "./types.ts";
 
 export const SETTINGS_FILE = "ecmwf-multi-agents.jsonc";
@@ -27,7 +29,7 @@ export const MODEL_PATTERN = /^[^/#\s]+\/[^#\s]+$/;
 /** A non-empty effort name, such as "high", without "#" or spaces. opencode calls it the model variant. */
 export const EFFORT_PATTERN = /^[^#\s]+$/;
 
-const TOP_KEYS = ["$schema", "review", "profile", "default_agent", "max_helper_slots", "agents"];
+const TOP_KEYS = ["$schema", "review", "profile", "default_agent", "max_helper_slots", "writing_guidance", "agents"];
 const AGENT_KEYS = ["enabled", "model", "effort", "fallback", "steps"];
 const FALLBACK_KEYS = ["model", "effort"];
 /** Agent keys that were renamed, to the name they have now. */
@@ -128,6 +130,10 @@ export function validateSettings(value: unknown, harness: EmbeddedHarness): { se
         if (typeof item === "number" && Number.isInteger(item) && item >= 1) settings.max_helper_slots = item;
         else problems.push(`"max_helper_slots" must be a whole number of at least 1, not ${shown(item)}`);
         break;
+      case "writing_guidance":
+        if (typeof item === "string" && (WRITING_GUIDANCE as readonly string[]).includes(item)) settings.writing_guidance = item as WritingGuidance;
+        else problems.push(`"writing_guidance" must be ${listWords(WRITING_GUIDANCE)}, not ${shown(item)}`);
+        break;
       default:
         problems.push(`unknown setting ${shown(key)}; the settings are ${listWords(TOP_KEYS, "and")}`);
     }
@@ -225,6 +231,7 @@ export function mergeSettings(files: readonly SettingsFile[], harness: EmbeddedH
     defaultAgent: true,
     maxHelperSlots: DEFAULT_MAX_HELPER_SLOTS,
     maxHelperSlotsSet: false,
+    writingGuidance: "plain",
     agents: {},
   };
   for (const file of files) {
@@ -234,6 +241,7 @@ export function mergeSettings(files: readonly SettingsFile[], harness: EmbeddedH
     }
     if (file.profile !== undefined) settings.profile = file.profile;
     if (file.default_agent !== undefined) settings.defaultAgent = file.default_agent;
+    if (file.writing_guidance !== undefined) settings.writingGuidance = file.writing_guidance;
     if (file.max_helper_slots !== undefined) {
       settings.maxHelperSlots = file.max_helper_slots;
       settings.maxHelperSlotsSet = true;
@@ -269,6 +277,7 @@ export function settingSources(files: readonly SettingsFile[], applied: readonly
     if (file.profile !== undefined) sources.profile = from;
     if (file.default_agent !== undefined) sources.default_agent = from;
     if (file.max_helper_slots !== undefined) sources.max_helper_slots = from;
+    if (file.writing_guidance !== undefined) sources.writing_guidance = from;
     for (const [id, override] of Object.entries(file.agents ?? {})) {
       for (const key of Object.keys(override)) sources[`agents.${id}.${key}`] = from;
     }

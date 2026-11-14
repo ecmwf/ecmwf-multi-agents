@@ -186,6 +186,26 @@ function planAgents(harness, settings) {
   });
   return { plans, problems };
 }
+var WRITING_HEADING = "## Writing";
+function writingSection(prompt, guidance) {
+  if (guidance !== "off")
+    return prompt;
+  const lines = prompt.split(`
+`);
+  const start = lines.indexOf(WRITING_HEADING);
+  if (start < 0)
+    return prompt;
+  let end = lines.findIndex((line, index) => index > start && line.startsWith("## "));
+  if (end < 0)
+    end = lines.length;
+  const before = lines.slice(0, start).join(`
+`).replace(/\s+$/, "");
+  const after = lines.slice(end).join(`
+`);
+  return after === "" ? before : `${before}
+
+${after}`;
+}
 var REVIEW_LINE = /^Review policy:[^\r\n]*/gm;
 var HELPER_SLOTS_LINE = /^Run at most \S+ helpers? at once\./gm;
 function helperSlotsLine(prompt) {
@@ -291,6 +311,8 @@ function applyToV2Agents(editor, harness, settings, plans) {
       if (slots.problem !== undefined)
         problems.push({ message: `${harness.name}: ${slots.problem}`, notify: settings.maxHelperSlotsSet });
       let prompt = slots.prompt ?? result.prompt;
+      if (settings.writingGuidance === "off")
+        prompt = writingSection(prompt ?? lead.system, "off");
       if (helpersSwitched(harness, on)) {
         const list = rewriteHelperList(prompt ?? lead.system, helpers, on, harness.helperOff, harness.defaultAgent);
         if (list.problem !== undefined)
@@ -2002,6 +2024,7 @@ function leadChanges(lead, harness, settings, home, plans) {
     const on = enabledHelpers(harness, settings);
     expected.system = rewriteReviewLine(expected.system, effectiveReview(harness, settings, on), embedded.id, harness.reviewPolicies).prompt ?? expected.system;
     expected.system = rewriteHelperSlotsLine(expected.system, settings.maxHelperSlots, embedded.id).prompt ?? expected.system;
+    expected.system = writingSection(expected.system, settings.writingGuidance);
     if (helpersSwitched(harness, on))
       expected.system = rewriteHelperList(expected.system, helpersOf(harness), on, harness.helperOff, embedded.id).prompt ?? expected.system;
   }
@@ -2072,6 +2095,7 @@ async function doctorReport(input) {
       profile: settings.profile,
       default_agent: settings.defaultAgent,
       max_helper_slots: settings.maxHelperSlots,
+      writing_guidance: settings.writingGuidance,
       agents: settings.agents
     },
     settingsFiles: loaded.applied,
@@ -2114,13 +2138,14 @@ import path5 from "path";
 
 // plugin/types.ts
 var REVIEW_POLICIES = ["auto", "ask", "always", "never"];
+var WRITING_GUIDANCE = ["plain", "off"];
 
 // plugin/settings.ts
 var SETTINGS_FILE = "ecmwf-multi-agents.jsonc";
 var DEFAULT_MAX_HELPER_SLOTS = 4;
 var MODEL_PATTERN = /^[^/#\s]+\/[^#\s]+$/;
 var EFFORT_PATTERN = /^[^#\s]+$/;
-var TOP_KEYS = ["$schema", "review", "profile", "default_agent", "max_helper_slots", "agents"];
+var TOP_KEYS = ["$schema", "review", "profile", "default_agent", "max_helper_slots", "writing_guidance", "agents"];
 var AGENT_KEYS = ["enabled", "model", "effort", "fallback", "steps"];
 var FALLBACK_KEYS = ["model", "effort"];
 var RENAMED_AGENT_KEYS = { variant: "effort" };
@@ -2218,6 +2243,12 @@ function validateSettings(value, harness) {
           settings.max_helper_slots = item;
         else
           problems.push(`"max_helper_slots" must be a whole number of at least 1, not ${shown(item)}`);
+        break;
+      case "writing_guidance":
+        if (typeof item === "string" && WRITING_GUIDANCE.includes(item))
+          settings.writing_guidance = item;
+        else
+          problems.push(`"writing_guidance" must be ${listWords(WRITING_GUIDANCE)}, not ${shown(item)}`);
         break;
       default:
         problems.push(`unknown setting ${shown(key)}; the settings are ${listWords(TOP_KEYS, "and")}`);
@@ -2321,6 +2352,7 @@ function mergeSettings(files, harness) {
     defaultAgent: true,
     maxHelperSlots: DEFAULT_MAX_HELPER_SLOTS,
     maxHelperSlotsSet: false,
+    writingGuidance: "plain",
     agents: {}
   };
   for (const file of files) {
@@ -2332,6 +2364,8 @@ function mergeSettings(files, harness) {
       settings.profile = file.profile;
     if (file.default_agent !== undefined)
       settings.defaultAgent = file.default_agent;
+    if (file.writing_guidance !== undefined)
+      settings.writingGuidance = file.writing_guidance;
     if (file.max_helper_slots !== undefined) {
       settings.maxHelperSlots = file.max_helper_slots;
       settings.maxHelperSlotsSet = true;
@@ -2355,6 +2389,8 @@ function settingSources(files, applied) {
       sources.default_agent = from;
     if (file.max_helper_slots !== undefined)
       sources.max_helper_slots = from;
+    if (file.writing_guidance !== undefined)
+      sources.writing_guidance = from;
     for (const [id, override] of Object.entries(file.agents ?? {})) {
       for (const key of Object.keys(override))
         sources[`agents.${id}.${key}`] = from;
@@ -3428,7 +3464,19 @@ Work files live in \`.ecmwf-multi-agents/\` at the top of the repository (\`git 
 
 ## Help
 
-When the user asks how this harness works, load the skill \`ecmwf-multi-agents-guide\` with the skill tool and answer from it. The user's commands are \`/onboard\`, \`/plan\`, \`/execute\`, \`/review\`, \`/progress\` and \`/guide\`.` }, { id: "scout", mode: "subagent", description: "Read-only lookups and investigations in code, docs or the web. Returns a short answer with file:line evidence; long findings go to a notes file.", model: "anthropic/claude-sonnet-5-5#medium", steps: 30, permissions: [{ action: "edit", resource: "*", effect: "deny" }, { action: "edit", resource: ".ecmwf-multi-agents/notes/*", effect: "allow" }, { action: "edit", resource: "*/.ecmwf-multi-agents/notes/*", effect: "allow" }, { action: "shell", resource: "*", effect: "deny" }, { action: "shell", resource: "git log *", effect: "allow" }, { action: "shell", resource: "git show *", effect: "allow" }, { action: "shell", resource: "git diff *", effect: "allow" }, { action: "shell", resource: "git blame *", effect: "allow" }, { action: "shell", resource: "git status *", effect: "allow" }, { action: "shell", resource: "git grep *", effect: "allow" }, { action: "shell", resource: "git ls-files *", effect: "allow" }, { action: "shell", resource: "git rev-parse *", effect: "allow" }, { action: "shell", resource: "ls *", effect: "allow" }, { action: "shell", resource: "wc *", effect: "allow" }, { action: "shell", resource: "file *", effect: "allow" }, { action: "shell", resource: "tree *", effect: "allow" }, { action: "subagent", resource: "*", effect: "deny" }, { action: "question", resource: "*", effect: "deny" }, { action: "execute", resource: "*", effect: "deny" }, { action: "skill", resource: "ecmwf-multi-agents-*", effect: "deny" }, { action: "helpers_status", resource: "*", effect: "deny" }, { action: "helpers_steer", resource: "*", effect: "deny" }, { action: "helpers_cancel", resource: "*", effect: "deny" }], system: "You are a scout: a read-only helper that finds facts in code, docs and on the web, from quick lookups to longer investigations. The `lead` agent sends you a brief with some of GOAL, CONTEXT, FILES, DONE WHEN, CHECKS and LIMITS; it is all you know about the conversation. You cannot ask questions or delegate.\n\n## Rules\n\n- Never create, change or delete files, with one exception: you may write a notes file, `.ecmwf-multi-agents/notes/<slug>.md` at the repository top, and nothing else. Use the slug the brief gives, or a short hyphenated one.\n- The shell runs only read-only inspection commands: `git` with `log`, `show`, `diff`, `blame`, `status`, `grep`, `ls-files` or `rev-parse`, and `ls`, `wc`, `file`, `tree`. Run each on its own, with paths as arguments: no pipes, `&&`, `cd`, `git -C` or `--no-pager`. Everything else is denied, so never try to build, install or run code.\n- If a call is denied, do not work around it: rerun it only in an allowed form, else note the gap under NOT CHECKED.\n- Follow LIMITS and the project's AGENTS.md.\n- Work files live in `.ecmwf-multi-agents/` at the repository top (`git rev-parse --show-toplevel`). Search tools skip that folder: read its files by exact path or list them with `ls`.\n- Never print or copy secrets or credentials; mention only that they exist.\n- A later message from `lead` or the user amends your brief: follow it, keep the earlier LIMITS unless it lifts them, and say in ANSWER what it changed.\n\n## Method\n\n1. For a bigger question, plan the search first: the questions to settle and where to look for each.\n2. Search with the grep and glob tools, `git grep` or `git log`. Then read only the parts that answer the question.\n3. Where the answer depends on it, follow call chains to their source and use history: `git log -S <text>`, `git log -p <path>`, `git blame`.\n4. Make independent tool calls in parallel.\n5. Keep facts apart from inferences. Back each fact with evidence and label each inference.\n6. Stop as soon as the question is answered. If you cannot find the answer, say so; never guess.\n7. If the brief is ambiguous, answer the most likely reading and say which one you chose.\n8. On the web, prefer official documentation.\n9. When the findings do not fit the report, write them to the notes file, starting with the question and the commit from `git rev-parse HEAD`. Keep ANSWER short and give the path under NOTES.\n10. When told the step limit is reached, stop and report at once with what you have.\n\n## Report\n\nReply with exactly these sections, unless the request sets another format. Cite only lines and pages you have read.\n\n```text\nANSWER: the direct answer, at most five lines.\nEVIDENCE: up to eight items, each `path:line` or URL, with what it shows.\nNOTES: path to a notes file, if one was written.\nNOT CHECKED: what was out of reach or skipped.\n```" }, { id: "builder", mode: "subagent", description: "Makes one clearly specified change, runs its checks and reports. Never commits.", model: "anthropic/claude-sonnet-5-5#high", steps: 60, permissions: [{ action: "shell", resource: "git add *", effect: "deny" }, { action: "shell", resource: "git commit *", effect: "deny" }, { action: "shell", resource: "git push *", effect: "deny" }, { action: "shell", resource: "git pull *", effect: "deny" }, { action: "shell", resource: "git fetch *", effect: "deny" }, { action: "shell", resource: "git reset *", effect: "deny" }, { action: "shell", resource: "git rebase *", effect: "deny" }, { action: "shell", resource: "git merge *", effect: "deny" }, { action: "shell", resource: "git cherry-pick *", effect: "deny" }, { action: "shell", resource: "git revert *", effect: "deny" }, { action: "shell", resource: "git am *", effect: "deny" }, { action: "shell", resource: "git checkout *", effect: "deny" }, { action: "shell", resource: "git switch *", effect: "deny" }, { action: "shell", resource: "git restore *", effect: "deny" }, { action: "shell", resource: "git stash *", effect: "deny" }, { action: "shell", resource: "git clean *", effect: "deny" }, { action: "shell", resource: "git rm *", effect: "deny" }, { action: "shell", resource: "git mv *", effect: "deny" }, { action: "shell", resource: "git tag *", effect: "deny" }, { action: "shell", resource: "git branch *", effect: "deny" }, { action: "shell", resource: "git remote *", effect: "deny" }, { action: "shell", resource: "git worktree *", effect: "deny" }, { action: "shell", resource: "git update-ref *", effect: "deny" }, { action: "shell", resource: "git config *", effect: "deny" }, { action: "shell", resource: "git -C *", effect: "deny" }, { action: "shell", resource: "gh *", effect: "deny" }, { action: "subagent", resource: "*", effect: "deny" }, { action: "question", resource: "*", effect: "deny" }, { action: "skill", resource: "ecmwf-multi-agents-*", effect: "deny" }, { action: "helpers_status", resource: "*", effect: "deny" }, { action: "helpers_steer", resource: "*", effect: "deny" }, { action: "helpers_cancel", resource: "*", effect: "deny" }], system: `You are a builder: you make one specified change, run its checks and report. The change may be a small edit or a hard fix. The \`lead\` agent sends you a brief with some of GOAL, CONTEXT, FILES, DONE WHEN, CHECKS and LIMITS; it is all you know about the conversation. You cannot ask questions or delegate.
+When the user asks how this harness works, load the skill \`ecmwf-multi-agents-guide\` with the skill tool and answer from it. The user's commands are \`/onboard\`, \`/plan\`, \`/execute\`, \`/review\`, \`/progress\` and \`/guide\`.
+
+## Writing
+
+Many readers do not have English as their first language. Write so they understand you the first time, in a natural and friendly tone. Follow these rules most of the time; clarity comes first.
+- One idea per sentence. Keep most sentences under 20 words.
+- Use the active voice and simple tenses.
+- Give steps as commands, one action each, in a numbered list.
+- Use one term for one thing, and keep it.
+- Prefer common words to idioms and phrasal verbs.
+- Say how sure you are when it matters.
+- Never change code, commands, names, paths, quotes or error messages.
+These rules apply to text for people, not to code, tool input or briefs to helpers.` }, { id: "scout", mode: "subagent", description: "Read-only lookups and investigations in code, docs or the web. Returns a short answer with file:line evidence; long findings go to a notes file.", model: "anthropic/claude-sonnet-5-5#medium", steps: 30, permissions: [{ action: "edit", resource: "*", effect: "deny" }, { action: "edit", resource: ".ecmwf-multi-agents/notes/*", effect: "allow" }, { action: "edit", resource: "*/.ecmwf-multi-agents/notes/*", effect: "allow" }, { action: "shell", resource: "*", effect: "deny" }, { action: "shell", resource: "git log *", effect: "allow" }, { action: "shell", resource: "git show *", effect: "allow" }, { action: "shell", resource: "git diff *", effect: "allow" }, { action: "shell", resource: "git blame *", effect: "allow" }, { action: "shell", resource: "git status *", effect: "allow" }, { action: "shell", resource: "git grep *", effect: "allow" }, { action: "shell", resource: "git ls-files *", effect: "allow" }, { action: "shell", resource: "git rev-parse *", effect: "allow" }, { action: "shell", resource: "ls *", effect: "allow" }, { action: "shell", resource: "wc *", effect: "allow" }, { action: "shell", resource: "file *", effect: "allow" }, { action: "shell", resource: "tree *", effect: "allow" }, { action: "subagent", resource: "*", effect: "deny" }, { action: "question", resource: "*", effect: "deny" }, { action: "execute", resource: "*", effect: "deny" }, { action: "skill", resource: "ecmwf-multi-agents-*", effect: "deny" }, { action: "helpers_status", resource: "*", effect: "deny" }, { action: "helpers_steer", resource: "*", effect: "deny" }, { action: "helpers_cancel", resource: "*", effect: "deny" }], system: "You are a scout: a read-only helper that finds facts in code, docs and on the web, from quick lookups to longer investigations. The `lead` agent sends you a brief with some of GOAL, CONTEXT, FILES, DONE WHEN, CHECKS and LIMITS; it is all you know about the conversation. You cannot ask questions or delegate.\n\n## Rules\n\n- Never create, change or delete files, with one exception: you may write a notes file, `.ecmwf-multi-agents/notes/<slug>.md` at the repository top, and nothing else. Use the slug the brief gives, or a short hyphenated one.\n- The shell runs only read-only inspection commands: `git` with `log`, `show`, `diff`, `blame`, `status`, `grep`, `ls-files` or `rev-parse`, and `ls`, `wc`, `file`, `tree`. Run each on its own, with paths as arguments: no pipes, `&&`, `cd`, `git -C` or `--no-pager`. Everything else is denied, so never try to build, install or run code.\n- If a call is denied, do not work around it: rerun it only in an allowed form, else note the gap under NOT CHECKED.\n- Follow LIMITS and the project's AGENTS.md.\n- Work files live in `.ecmwf-multi-agents/` at the repository top (`git rev-parse --show-toplevel`). Search tools skip that folder: read its files by exact path or list them with `ls`.\n- Never print or copy secrets or credentials; mention only that they exist.\n- A later message from `lead` or the user amends your brief: follow it, keep the earlier LIMITS unless it lifts them, and say in ANSWER what it changed.\n\n## Method\n\n1. For a bigger question, plan the search first: the questions to settle and where to look for each.\n2. Search with the grep and glob tools, `git grep` or `git log`. Then read only the parts that answer the question.\n3. Where the answer depends on it, follow call chains to their source and use history: `git log -S <text>`, `git log -p <path>`, `git blame`.\n4. Make independent tool calls in parallel.\n5. Keep facts apart from inferences. Back each fact with evidence and label each inference.\n6. Stop as soon as the question is answered. If you cannot find the answer, say so; never guess.\n7. If the brief is ambiguous, answer the most likely reading and say which one you chose.\n8. On the web, prefer official documentation.\n9. When the findings do not fit the report, write them to the notes file, starting with the question and the commit from `git rev-parse HEAD`. Keep ANSWER short and give the path under NOTES.\n10. When told the step limit is reached, stop and report at once with what you have.\n\n## Report\n\nReply with exactly these sections, unless the request sets another format. Cite only lines and pages you have read.\n\n```text\nANSWER: the direct answer, at most five lines.\nEVIDENCE: up to eight items, each `path:line` or URL, with what it shows.\nNOTES: path to a notes file, if one was written.\nNOT CHECKED: what was out of reach or skipped.\n```" }, { id: "builder", mode: "subagent", description: "Makes one clearly specified change, runs its checks and reports. Never commits.", model: "anthropic/claude-sonnet-5-5#high", steps: 60, permissions: [{ action: "shell", resource: "git add *", effect: "deny" }, { action: "shell", resource: "git commit *", effect: "deny" }, { action: "shell", resource: "git push *", effect: "deny" }, { action: "shell", resource: "git pull *", effect: "deny" }, { action: "shell", resource: "git fetch *", effect: "deny" }, { action: "shell", resource: "git reset *", effect: "deny" }, { action: "shell", resource: "git rebase *", effect: "deny" }, { action: "shell", resource: "git merge *", effect: "deny" }, { action: "shell", resource: "git cherry-pick *", effect: "deny" }, { action: "shell", resource: "git revert *", effect: "deny" }, { action: "shell", resource: "git am *", effect: "deny" }, { action: "shell", resource: "git checkout *", effect: "deny" }, { action: "shell", resource: "git switch *", effect: "deny" }, { action: "shell", resource: "git restore *", effect: "deny" }, { action: "shell", resource: "git stash *", effect: "deny" }, { action: "shell", resource: "git clean *", effect: "deny" }, { action: "shell", resource: "git rm *", effect: "deny" }, { action: "shell", resource: "git mv *", effect: "deny" }, { action: "shell", resource: "git tag *", effect: "deny" }, { action: "shell", resource: "git branch *", effect: "deny" }, { action: "shell", resource: "git remote *", effect: "deny" }, { action: "shell", resource: "git worktree *", effect: "deny" }, { action: "shell", resource: "git update-ref *", effect: "deny" }, { action: "shell", resource: "git config *", effect: "deny" }, { action: "shell", resource: "git -C *", effect: "deny" }, { action: "shell", resource: "gh *", effect: "deny" }, { action: "subagent", resource: "*", effect: "deny" }, { action: "question", resource: "*", effect: "deny" }, { action: "skill", resource: "ecmwf-multi-agents-*", effect: "deny" }, { action: "helpers_status", resource: "*", effect: "deny" }, { action: "helpers_steer", resource: "*", effect: "deny" }, { action: "helpers_cancel", resource: "*", effect: "deny" }], system: `You are a builder: you make one specified change, run its checks and report. The change may be a small edit or a hard fix. The \`lead\` agent sends you a brief with some of GOAL, CONTEXT, FILES, DONE WHEN, CHECKS and LIMITS; it is all you know about the conversation. You cannot ask questions or delegate.
 
 ## Work
 
@@ -3594,6 +3642,7 @@ Settings live in \`~/.config/opencode/ecmwf-multi-agents.jsonc\`. A project can 
   "profile": "default", // default, anthropic, copilot or inherit
   "default_agent": true, // start opencode on lead
   "max_helper_slots": 4, // helpers at once, integer at least 1
+  "writing_guidance": "plain", // lead writes short, plain sentences; "off" to stop
   "agents": { // per-agent overrides, after the profile
     "builder": { "effort": "xhigh" },
     "reviewer": { "model": "provider/model-name", "fallback": ["provider/other-model"], "steps": 40 },

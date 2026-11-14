@@ -88,7 +88,8 @@ export const REVIEW_MEANINGS = {
 export const LEAD_PROMPT =
   `You are lead, the coordinating agent.\n\n## Review\n\nReview policy: auto\n${REVIEW_MEANINGS.auto}\n\n` +
   "## Helpers\n\n- scout: reads and reports.\n- builder: makes one change.\n- reviewer: checks work.\n\n" +
-  "Run at most 4 helpers at once. Run builders only on disjoint files.";
+  "Run at most 4 helpers at once. Run builders only on disjoint files.\n\n" +
+  "## Writing\n\nWrite short, plain sentences for people.";
 
 export const HELPER_OFF = "Helpers not listed above are off in this project: do their work yourself.";
 export const TESTER_ROUTING = "tries to break a change; check that it changed only test files.";

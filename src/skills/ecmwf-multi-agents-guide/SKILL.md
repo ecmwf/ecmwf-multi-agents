@@ -54,6 +54,7 @@ Settings live in `~/.config/opencode/ecmwf-multi-agents.jsonc`. A project can ov
   "profile": "default", // default, anthropic, copilot or inherit
   "default_agent": true, // start opencode on lead
   "max_helper_slots": 4, // helpers at once, integer at least 1
+  "writing_guidance": "plain", // lead writes short, plain sentences; "off" to stop
   "agents": { // per-agent overrides, after the profile
     "builder": { "effort": "xhigh" },
     "reviewer": { "model": "provider/model-name", "fallback": ["provider/other-model"], "steps": 40 },

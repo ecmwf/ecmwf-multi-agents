@@ -138,6 +138,8 @@ const GOOD: unknown[] = [
   { max_helper_slots: 1 },
   { max_helper_slots: 4 },
   { max_helper_slots: 16 },
+  { writing_guidance: "plain" },
+  { writing_guidance: "off" },
   { agents: { scout: { model: "openai/gpt-6.1-sol", effort: "high", steps: 20 } } },
   // An override may change only the effort, keeping the profile's model.
   { agents: { lead: { effort: "low" } } },
@@ -157,6 +159,8 @@ const BAD: [unknown, string][] = [
   [{ profile: "fast" }, "$.profile: enum"],
   [{ default_agent: "yes" }, "$.default_agent: type"],
   [{ max_helper_slots: 0 }, "$.max_helper_slots: minimum"],
+  [{ writing_guidance: "ste" }, "$.writing_guidance: enum"],
+  [{ writing_guidance: false }, "$.writing_guidance: type"],
   [{ max_helper_slots: -1 }, "$.max_helper_slots: minimum"],
   [{ max_helper_slots: 2.5 }, "$.max_helper_slots: type"],
   [{ max_helper_slots: "4" }, "$.max_helper_slots: type"],
@@ -250,7 +254,8 @@ describe("settings schema", () => {
   });
 
   test("lists the settings, policies, profiles and agents", () => {
-    expect(Object.keys(sub(schema, "properties"))).toEqual(["$schema", "review", "profile", "default_agent", "max_helper_slots", "agents"]);
+    expect(Object.keys(sub(schema, "properties"))).toEqual(["$schema", "review", "profile", "default_agent", "max_helper_slots", "writing_guidance", "agents"]);
+    expect(sub(schema, "properties", "writing_guidance")).toMatchObject({ type: "string", enum: ["plain", "off"], default: "plain" });
     expect(sub(schema, "properties", "$schema").type).toBe("string");
     expect(sub(schema, "properties", "review").enum).toEqual(["auto", "ask", "always", "never"]);
     expect(sub(schema, "properties", "profile").enum).toEqual(["default", "inherit"]);

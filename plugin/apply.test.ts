@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, test } from "bun:test";
-import { applyToV2Agents, helperSlotsLine, planAgents, rewriteHelperSlotsLine, rewriteReviewLine } from "./apply.ts";
+import { applyToV2Agents, helperSlotsLine, planAgents, rewriteHelperSlotsLine, rewriteReviewLine, writingSection } from "./apply.ts";
 import { mergeSettings } from "./settings.ts";
 import { HELPER_OFF, LEAD_PROMPT, REVIEW_MEANINGS, TESTER_ROUTING, embeddedFixture, resolvedFixture } from "./testing.ts";
 import { REVIEW_POLICIES } from "./types.ts";
@@ -364,5 +364,33 @@ describe("applyToV2Agents with helpers switched on and off", () => {
       { message: "ecmwf-multi-agents: this opencode cannot remove agents, so scout stays although it is switched off", notify: true },
     ]);
     expect(editor.agents.has("scout")).toBe(true);
+  });
+});
+
+describe("writing guidance", () => {
+  const prompt = "You are lead.\n\n## Help\n\nAsk.\n\n## Writing\n\nShort sentences.\n- One idea each.\n";
+  test("plain keeps the section; off removes it and nothing else", () => {
+    expect(writingSection(prompt, "plain")).toBe(prompt);
+    expect(writingSection(prompt, "off")).toBe("You are lead.\n\n## Help\n\nAsk.");
+    const middle = "A.\n\n## Writing\n\nShort.\n\n## Help\n\nAsk.";
+    expect(writingSection(middle, "off")).toBe("A.\n\n## Help\n\nAsk.");
+  });
+
+  test("a prompt without the section is left as it is", () => {
+    expect(writingSection("You are lead.\n\n## Help\n\nAsk.", "off")).toBe("You are lead.\n\n## Help\n\nAsk.");
+  });
+
+  test("the settings transform removes it from lead when the settings say off", () => {
+    const run = (files: SettingsFile[]) => {
+      const settings = mergeSettings(files, harness);
+      const agents = new Map<string, V2AgentInfo>([["lead", { id: "lead", system: LEAD_PROMPT }]]);
+      const editor = { list: () => [...agents.values()], get: (id: string) => agents.get(id), default: () => {}, update: (id: string, update: (agent: V2AgentInfo) => void) => update(agents.get(id)!), remove: () => {} } as unknown as V2AgentEditor;
+      applyToV2Agents(editor, harness, settings, planAgents(harness, settings).plans);
+      return agents.get("lead")!.system!;
+    };
+    expect(run([])).toContain("## Writing");
+    expect(run([{ writing_guidance: "off" }])).not.toContain("## Writing");
+    expect(run([{ writing_guidance: "off" }])).toContain("Run at most 4 helpers at once.");
+    expect(run([{ writing_guidance: "off" }, { writing_guidance: "plain" }])).toContain("## Writing");
   });
 });

@@ -65,7 +65,7 @@ describe("doctor", () => {
       reviewLine: "Review policy: always",
       helperSlotsLine: "Run at most 8 helpers at once.",
       leadModel: "github-copilot/claude-opus-5.5#xhigh",
-      settings: { review: "always", profile: "copilot", default_agent: true, max_helper_slots: 8, agents: { scout: { steps: 9 }, lead: { steps: 40 } } },
+      settings: { review: "always", profile: "copilot", default_agent: true, max_helper_slots: 8, writing_guidance: "plain", agents: { scout: { steps: 9 }, lead: { steps: 40 } } },
       settingsFiles: [file],
       settingsSources: { review: file, profile: file, max_helper_slots: file, "agents.scout.steps": file, "agents.lead.steps": file },
       helpersOn: ["scout", "builder", "reviewer"],
@@ -103,6 +103,14 @@ describe("doctor", () => {
     expect(await doctorReport(doctor)).toMatchObject({ reviewLine: "Review policy: never" });
     doctor.ready = async () => Promise.reject(new Error("no"));
     expect(await doctorReport(doctor)).toMatchObject({ leadLoaded: true });
+  });
+
+  test("with writing_guidance off, a lead without the writing section is the harness's, and one with it is changed", async () => {
+    const files = { [`${GLOBAL}/ecmwf-multi-agents.jsonc`]: '{ "writing_guidance": "off" }' };
+    const lead = loadedLead(files);
+    expect(lead.system).not.toContain("## Writing");
+    expect(await doctorReport(input(files, [lead]))).toMatchObject({ leadDefinition: "harness", leadChanged: [], settings: { writing_guidance: "off" } });
+    expect((await doctorReport(input(files, [loadedLead({})]))).leadChanged).toEqual(["system"]);
   });
 
   test("lead changed through a config entry, with no agent file", async () => {

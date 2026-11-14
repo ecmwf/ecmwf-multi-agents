@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, test } from "bun:test";
-import { listWords, loadSettings, mergeSettings, settingsPaths, validateSettings } from "./settings.ts";
+import { listWords, loadSettings, mergeSettings, settingSources, settingsPaths, validateSettings } from "./settings.ts";
 import { embeddedFixture, fakeEnvironment } from "./testing.ts";
 
 const harness = embeddedFixture();
@@ -110,6 +110,15 @@ describe("validateSettings", () => {
     expect(validateSettings({ default_agent: true }, harness).settings).toEqual({ default_agent: true });
     expect(problemsOf({ default_agent: "yes" })).toEqual(['"default_agent" must be true or false, not "yes"']);
     expect(problemsOf({ default_agent: 1 })).toHaveLength(1);
+  });
+
+  test("writing_guidance is plain or off; plain unless a file says otherwise, and the last file wins", () => {
+    for (const writing_guidance of ["plain", "off"] as const) expect(validateSettings({ writing_guidance }, harness)).toEqual({ settings: { writing_guidance }, problems: [] });
+    for (const writing_guidance of ["ste", "", true, null, 1]) expect(problemsOf({ writing_guidance })[0]).toContain('"writing_guidance" must be plain or off');
+    expect(mergeSettings([], harness).writingGuidance).toBe("plain");
+    expect(mergeSettings([{ writing_guidance: "off" }, {}], harness).writingGuidance).toBe("off");
+    expect(mergeSettings([{ writing_guidance: "off" }, { writing_guidance: "plain" }], harness).writingGuidance).toBe("plain");
+    expect(settingSources([{ writing_guidance: "off" }], ["/a"])).toEqual({ writing_guidance: "/a" });
   });
 
   test("max_helper_slots is a whole number of at least 1", () => {
@@ -226,7 +235,7 @@ describe("validateSettings", () => {
     expect(problemsOf({ agents: { reviewer: { model: "openai/gpt-6.1-sol", variant: "high" } } })).toEqual([
       '"agents.reviewer" has the unknown key "variant"; it is now called "effort"',
     ]);
-    expect(problemsOf({ variant: "high" })).toEqual(['unknown setting "variant"; the settings are $schema, review, profile, default_agent, max_helper_slots and agents']);
+    expect(problemsOf({ variant: "high" })).toEqual(['unknown setting "variant"; the settings are $schema, review, profile, default_agent, max_helper_slots, writing_guidance and agents']);
   });
 
   test("steps is a whole number of at least 1", () => {
@@ -239,7 +248,7 @@ describe("validateSettings", () => {
   });
 
   test("no other keys, at the top or in an agent", () => {
-    expect(problemsOf({ reviews: "auto" })).toEqual(['unknown setting "reviews"; the settings are $schema, review, profile, default_agent, max_helper_slots and agents']);
+    expect(problemsOf({ reviews: "auto" })).toEqual(['unknown setting "reviews"; the settings are $schema, review, profile, default_agent, max_helper_slots, writing_guidance and agents']);
     expect(problemsOf({ agents: { scout: { temperature: 0.2 } } })).toEqual([
       '"agents.scout" has the unknown setting "temperature"; an agent takes enabled, model, effort, fallback or steps',
     ]);
@@ -252,7 +261,7 @@ describe("validateSettings", () => {
 
 describe("mergeSettings", () => {
   test("defaults: review auto, the harness's default profile, lead as default agent", () => {
-    expect(mergeSettings([], harness)).toEqual({ review: "auto", reviewSet: false, profile: "default", defaultAgent: true, maxHelperSlots: 4, maxHelperSlotsSet: false, agents: {} });
+    expect(mergeSettings([], harness)).toEqual({ review: "auto", reviewSet: false, profile: "default", defaultAgent: true, maxHelperSlots: 4, maxHelperSlotsSet: false, writingGuidance: "plain", agents: {} });
   });
 
   test("later files win; agents merge per agent and per field", () => {
@@ -271,6 +280,7 @@ describe("mergeSettings", () => {
       defaultAgent: false,
       maxHelperSlots: 4,
       maxHelperSlotsSet: false,
+      writingGuidance: "plain",
       agents: {
         // A model without a fallback list clears the list: [] means "cleared", undefined "not given".
         reviewer: { model: "openai/gpt-x", effort: "low", steps: 12, fallback: [] },
@@ -338,6 +348,7 @@ describe("loadSettings", () => {
       defaultAgent: true,
       maxHelperSlots: 4,
       maxHelperSlotsSet: false,
+      writingGuidance: "plain",
       agents: { scout: { steps: 7, effort: "low" }, reviewer: { steps: 9 } },
     });
     expect(loaded.sources).toEqual({

@@ -15,7 +15,7 @@
 //   problem   an event published for each new problem; the TUI entry shows it (tui.ts)
 
 import path from "node:path";
-import { effectiveReview, helperSlotsLine, helpersSwitched, modelRef, planAgents, rewriteHelperSlotsLine, rewriteReviewLine, type AgentPlan } from "./apply.ts";
+import { effectiveReview, helperSlotsLine, helpersSwitched, modelRef, planAgents, rewriteHelperSlotsLine, rewriteReviewLine, writingSection, type AgentPlan } from "./apply.ts";
 import { gitExcludeFile, workDirListed } from "./git-exclude.ts";
 import { enabledHelpers, helpersOf, rewriteHelperList } from "./helper-list.ts";
 import { parseJsonc } from "./jsonc.ts";
@@ -169,6 +169,7 @@ export function leadChanges(lead: V2AgentInfo, harness: EmbeddedHarness, setting
     const on = enabledHelpers(harness, settings);
     expected.system = rewriteReviewLine(expected.system, effectiveReview(harness, settings, on), embedded.id, harness.reviewPolicies).prompt ?? expected.system;
     expected.system = rewriteHelperSlotsLine(expected.system, settings.maxHelperSlots, embedded.id).prompt ?? expected.system;
+    expected.system = writingSection(expected.system, settings.writingGuidance);
     if (helpersSwitched(harness, on)) expected.system = rewriteHelperList(expected.system, helpersOf(harness), on, harness.helperOff, embedded.id).prompt ?? expected.system;
   }
   const plan = (plans ?? planAgents(harness, settings).plans).find((item) => item.id === embedded.id);
@@ -237,6 +238,7 @@ export async function doctorReport(input: DoctorInput): Promise<DoctorView> {
       profile: settings.profile,
       default_agent: settings.defaultAgent,
       max_helper_slots: settings.maxHelperSlots,
+      writing_guidance: settings.writingGuidance,
       agents: settings.agents,
     },
     settingsFiles: loaded.applied,

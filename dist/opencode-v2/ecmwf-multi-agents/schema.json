@@ -47,6 +47,16 @@
       "minimum": 1,
       "default": 4
     },
+    "writing_guidance": {
+      "title": "Writing guidance",
+      "description": "How lead writes for you. Default: plain. plain: short sentences, the active voice, steps as numbered commands and one term for one thing, for readers whose first language may not be English. off: lead without these rules.",
+      "type": "string",
+      "enum": [
+        "plain",
+        "off"
+      ],
+      "default": "plain"
+    },
     "agents": {
       "title": "Per-agent settings",
       "description": "Helpers switched on or off, and model, reasoning effort and step limit for single agents, applied after the profile.",

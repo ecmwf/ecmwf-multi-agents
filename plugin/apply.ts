@@ -8,7 +8,7 @@
 // changes nothing.
 
 import { enabledHelpers, helpersOf, rewriteHelperList } from "./helper-list.ts";
-import type { EmbeddedHarness, FallbackEntry, Problem, ReviewPolicy, Settings, V2AgentEditor, V2ModelRef } from "./types.ts";
+import type { EmbeddedHarness, FallbackEntry, Problem, ReviewPolicy, Settings, V2AgentEditor, V2ModelRef, WritingGuidance } from "./types.ts";
 
 /** The model, reasoning effort and step limit one agent ends up with. */
 export interface AgentPlan {
@@ -65,6 +65,25 @@ export function planAgents(harness: EmbeddedHarness, settings: Settings): { plan
     return plan;
   });
   return { plans, problems };
+}
+
+/** The heading of lead's writing guidance (src/fragments/writing.md; ADR 0006). */
+export const WRITING_HEADING = "## Writing";
+
+/**
+ * lead's prompt with its writing guidance, or without it when the settings say "off": the section
+ * from its heading to the next heading or the end. A prompt without the section stays as it is.
+ */
+export function writingSection(prompt: string, guidance: WritingGuidance): string {
+  if (guidance !== "off") return prompt;
+  const lines = prompt.split("\n");
+  const start = lines.indexOf(WRITING_HEADING);
+  if (start < 0) return prompt;
+  let end = lines.findIndex((line, index) => index > start && line.startsWith("## "));
+  if (end < 0) end = lines.length;
+  const before = lines.slice(0, start).join("\n").replace(/\s+$/, "");
+  const after = lines.slice(end).join("\n");
+  return after === "" ? before : `${before}\n\n${after}`;
 }
 
 const REVIEW_LINE = /^Review policy:[^\r\n]*/gm;
@@ -205,6 +224,7 @@ export function applyToV2Agents(editor: V2AgentEditor, harness: EmbeddedHarness,
       const slots = rewriteHelperSlotsLine(result.prompt ?? lead.system, settings.maxHelperSlots, harness.defaultAgent);
       if (slots.problem !== undefined) problems.push({ message: `${harness.name}: ${slots.problem}`, notify: settings.maxHelperSlotsSet });
       let prompt = slots.prompt ?? result.prompt;
+      if (settings.writingGuidance === "off") prompt = writingSection(prompt ?? lead.system, "off");
       if (helpersSwitched(harness, on)) {
         const list = rewriteHelperList(prompt ?? lead.system, helpers, on, harness.helperOff, harness.defaultAgent);
         if (list.problem !== undefined) problems.push({ message: `${harness.name}: ${list.problem}`, notify: true });

@@ -13,6 +13,7 @@ SPDX-License-Identifier = "Apache-2.0"
 path = [
     "src/agents/**",
     "src/commands/**",
+    "src/fragments/**",
     "src/skills/**",
     "dist/**",
     "**/*.json",

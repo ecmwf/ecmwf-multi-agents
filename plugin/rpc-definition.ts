@@ -44,7 +44,7 @@ export interface DoctorView {
   reviewLine: string | null;
   helperSlotsLine: string | null;
   leadModel: string | null;
-  settings: { review: string; profile: string; default_agent: boolean; max_helper_slots: number; agents: Record<string, unknown> };
+  settings: { review: string; profile: string; default_agent: boolean; max_helper_slots: number; writing_guidance: string; agents: Record<string, unknown> };
   settingsFiles: string[];
   settingsSources: Record<string, string>;
   /** The helpers the settings leave on, and those they leave off, in harness order. */

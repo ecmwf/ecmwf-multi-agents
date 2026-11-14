@@ -116,8 +116,13 @@ export interface SettingsFile {
   profile?: string;
   default_agent?: boolean;
   max_helper_slots?: number;
+  writing_guidance?: WritingGuidance;
   agents?: Record<string, AgentOverride>;
 }
+
+/** Whether lead's prompt keeps its writing guidance for text for people (ADR 0006). */
+export const WRITING_GUIDANCE = ["plain", "off"] as const;
+export type WritingGuidance = (typeof WRITING_GUIDANCE)[number];
 
 /** Settings after merging every valid file and filling in the defaults. */
 export interface Settings {
@@ -129,6 +134,7 @@ export interface Settings {
   maxHelperSlots: number;
   /** True when a settings file chose the helper limit. */
   maxHelperSlotsSet: boolean;
+  writingGuidance: WritingGuidance;
   agents: Record<string, AgentOverride>;
 }
 

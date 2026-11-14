@@ -46,7 +46,7 @@ const GOOD_DOCTOR = {
     reviewLine: "Review policy: auto",
     helperSlotsLine: "Run at most 4 helpers at once.",
     leadModel: "anthropic/claude-opus-5-5#xhigh",
-    settings: { review: "auto", profile: "default", default_agent: true, max_helper_slots: 4, agents: {} },
+    settings: { review: "auto", profile: "default", default_agent: true, max_helper_slots: 4, writing_guidance: "plain", agents: {} },
     settingsFiles: [],
     settingsSources: {},
     helpersOn: ["scout", "builder", "reviewer"],
@@ -593,6 +593,7 @@ describe("doctor", () => {
     expect(out).toContain("OK    lead is the harness's, with the plugin 9.9.9 active");
     expect(out).toContain("OK    lead's Review policy: auto");
     expect(out).toContain("OK    max_helper_slots 4; lead's instruction: Run at most 4 helpers at once.");
+    expect(out).toContain("OK    writing_guidance plain: lead writes short, plain sentences for readers whose first language may not be English");
     expect(out).toContain("OK    helpers on: scout, builder, reviewer; off: researcher, tester, designer, data-scientist");
     expect(out).not.toContain("switched in the settings");
     expect(out).toContain("OK    git's exclude file lists the work folder .ecmwf-multi-agents/");
@@ -712,6 +713,16 @@ describe("doctor asks opencode through the plugin's RPC", () => {
     const { code, out } = run(box, ["doctor"]);
     expect(code).toBe(1);
     expect(out).toContain(`FAIL  the ${NAME} plugin is not active in ${box.dir}, so opencode has no lead there.`);
+  });
+
+  test("writing guidance off, and an older plugin that does not report it", () => {
+    const box = makeBox();
+    run(box, []);
+    answer(box, { output: { ...GOOD_DOCTOR.output, settings: { ...GOOD_DOCTOR.output.settings, writing_guidance: "off" } } });
+    expect(run(box, ["doctor"]).out).toContain("OK    writing_guidance off: lead writes without the plain-English rules");
+    const { writing_guidance: _, ...older } = GOOD_DOCTOR.output.settings;
+    answer(box, { output: { ...GOOD_DOCTOR.output, settings: older } });
+    expect(run(box, ["doctor"]).out).not.toContain("writing_guidance");
   });
 
   test("problems, another default agent, a lead.md that changes nothing, a changed lead, and no lead", () => {

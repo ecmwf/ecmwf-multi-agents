@@ -1422,6 +1422,10 @@ doctor_live() {
 	'' | null) note "lead's prompt has no single helper limit instruction; max_helper_slots ${live_slots:-unknown} may not apply" ;;
 	*) ok "max_helper_slots $live_slots; lead's instruction: $live_slots_line" ;;
 	esac
+	case $(json_value writing_guidance) in
+	plain) ok "writing_guidance plain: lead writes short, plain sentences for readers whose first language may not be English" ;;
+	off) ok "writing_guidance off: lead writes without the plain-English rules" ;;
+	esac
 	live_on=$(json_list helpersOn)
 	live_off=$(json_list helpersOff)
 	ok "helpers on: ${live_on:-none}; off: ${live_off:-none}"

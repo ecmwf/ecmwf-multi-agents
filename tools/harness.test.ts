@@ -202,6 +202,19 @@ describe("lead", () => {
     expect(asking).toContain("recommendation first");
   });
 
+  test("ends with the writing guidance for text for people, one section the plugin can remove", () => {
+    const prompt = agent("lead").prompt;
+    expect(prompt.match(/^## Writing$/gm)).toHaveLength(1);
+    const section = /\n## Writing\n\n([\s\S]*)$/.exec(prompt)?.[1] ?? "";
+    expect(section).not.toContain("\n## ");
+    for (const rule of ["One idea per sentence", "active voice", "numbered list", "one term for one thing", "Say how sure you are", "Never change code, commands, names, paths, quotes or error messages."]) expect(section).toContain(rule);
+    // Briefs to helpers are tool input: the rules are for text people read.
+    expect(section).toContain("not to code, tool input or briefs to helpers");
+    // Off gives today's lead, which keeps its own plain-words line.
+    expect(prompt).toContain("Use plain words and short answers.");
+    expect(section).not.toMatch(/\u2014/);
+  });
+
   test("puts the plugin's offers of a settings change to the user, and edits only on a yes", () => {
     const asking = /## Asking the user\n\n([\s\S]*?)\n\n##/.exec(agent("lead").prompt)?.[1] ?? "";
     // The plugin's notes start with these words (plugin/offers.ts, OFFER_PREFIX).

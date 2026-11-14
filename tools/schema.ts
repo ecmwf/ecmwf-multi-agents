@@ -8,7 +8,7 @@
 // the plugin accept the same files.
 
 import { DEFAULT_MAX_HELPER_SLOTS, EFFORT_PATTERN, MODEL_PATTERN, SETTINGS_FILE } from "../plugin/settings.ts";
-import { REVIEW_POLICIES } from "../plugin/types.ts";
+import { REVIEW_POLICIES, WRITING_GUIDANCE } from "../plugin/types.ts";
 import { DEFAULT_REVIEW_POLICY } from "./resolve.ts";
 import type { ResolvedAgent, ResolvedHarness } from "./types.ts";
 import { listWords, own } from "./util.ts";
@@ -208,6 +208,16 @@ export function settingsSchema(harness: ResolvedHarness): JsonSchema {
         type: "integer",
         minimum: 1,
         default: DEFAULT_MAX_HELPER_SLOTS,
+      },
+      writing_guidance: {
+        title: "Writing guidance",
+        description:
+          `How ${lead} writes for you. Default: plain. plain: short sentences, the active voice, steps as ` +
+          `numbered commands and one term for one thing, for readers whose first language may not be English. ` +
+          `off: ${lead} without these rules.`,
+        type: "string",
+        enum: [...WRITING_GUIDANCE],
+        default: "plain",
       },
       agents: {
         title: "Per-agent settings",

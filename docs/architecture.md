@@ -28,7 +28,10 @@ answers land in `docs/research/` and `docs/adr/`.
    and an independent reviewer checks non-trivial work.
 8. Small prompts. Procedures that are only needed sometimes live in commands and skills, which
    cost nothing until used.
-9. Plain language. Users include scientists and analysts who are not software-process experts.
+9. Plain language. Users include scientists and analysts who are not software-process experts,
+   and many read English as a second language. `lead` follows a short writing guidance for text
+   people read, inspired by ASD-STE100 and applied loosely (ADR 0006); the setting
+   `writing_guidance` switches it off.
 
 ## Roles
 
@@ -549,6 +552,7 @@ Changes take effect when opencode restarts.
   "profile": "default",       // a profile name from src/profiles/
   "default_agent": true,      // make lead the default agent
   "max_helper_slots": 4,      // concurrent helpers, integer at least 1
+  "writing_guidance": "plain", // plain or off: lead's writing guidance (ADR 0006)
   "agents": {                 // per-agent overrides, applied after the profile
     "builder": { "effort": "xhigh" },
     "reviewer": {
