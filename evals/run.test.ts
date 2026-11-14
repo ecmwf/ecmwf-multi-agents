@@ -17,9 +17,15 @@ describe("command line", () => {
       timeoutMin: 20,
       opencode: "opencode",
       out: undefined,
+      writing: undefined,
       list: false,
       help: false,
     });
+  });
+
+  test("--writing sets the harness's writing guidance for every run", () => {
+    expect(parseArgs(["--writing", "off"]).writing).toBe("off");
+    expect(parseArgs(["--writing=plain"]).writing).toBe("plain");
   });
 
   test("every flag, in both spellings", () => {
@@ -66,6 +72,7 @@ describe("command line", () => {
     [["--case"], "--case needs a value"],
     [["--case", "--list"], "--case needs a value"],
     [["--frobnicate"], "unknown option: --frobnicate"],
+    [["--writing", "ste"], "--writing must be plain or off"],
   ])("rejects %p", (argv, message) => {
     expect(() => parseArgs(argv)).toThrow(message);
   });

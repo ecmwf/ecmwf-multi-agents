@@ -20,6 +20,7 @@ import {
   exec,
   HIDDEN,
   installHarness,
+  setWritingGuidance,
   linkOpencode,
   listProjectFiles,
   opencodeConfig,
@@ -53,6 +54,8 @@ export interface RunOptions {
   env?: Record<string, string>;
   /** Extra opencode plugins (see loginPlugins in project.ts). */
   plugins?: string[];
+  /** The harness's writing_guidance, written into the sandbox's user settings file. */
+  writing?: "plain" | "off";
   /** How long to wait for the profile's providers after the login is copied in. */
   providersMs?: number;
   repo?: string;
@@ -94,6 +97,7 @@ export async function runCase(item: EvalCase, options: RunOptions): Promise<RunR
     variant: options.variant,
     repeat: options.repeat,
     profile: options.profile.name,
+    ...(options.writing === undefined ? {} : { writing: options.writing }),
     review,
     opencode: { bin: options.opencode, version: options.opencodeVersion },
     started: started.toISOString(),
@@ -124,7 +128,10 @@ export async function runCase(item: EvalCase, options: RunOptions): Promise<RunR
     // The run's binary, linked into the sandbox as `opencode` and first on PATH, so install.sh
     // and every command the agents run find this one.
     const opencode = linkOpencode(box, options.opencode);
-    if (options.variant === "harness") installHarness(box, options.profile.name, review, options.repo ?? REPO);
+    if (options.variant === "harness") {
+      installHarness(box, options.profile.name, review, options.repo ?? REPO);
+      if (options.writing !== undefined) setWritingGuidance(box, options.writing);
+    }
     const config = opencodeConfig(options.variant, options.profile, options.config, options.plugins);
     writeConfig(box, config);
 

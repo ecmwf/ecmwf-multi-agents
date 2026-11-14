@@ -8,7 +8,7 @@
 //
 // Usage: bun evals/run.ts [--case ID]... [--repeat N] [--variant harness|baseline|both]
 //          [--profile NAME] [--jobs N] [--max-cost USD] [--timeout MIN] [--opencode BIN]
-//          [--out DIR] [--list]
+//          [--out DIR] [--writing plain|off] [--list]
 
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -31,6 +31,8 @@ export interface Options {
   timeoutMin: number;
   opencode: string;
   out: string | undefined;
+  /** The harness's writing_guidance for every run; the settings' default when left out. */
+  writing: "plain" | "off" | undefined;
   list: boolean;
   help: boolean;
 }
@@ -47,6 +49,7 @@ Options:
   --timeout MIN    Time limit for each turn, in minutes (default 20).
   --opencode BIN   opencode 2 binary (default "opencode").
   --out DIR        Output folder (default evals/runs/<UTC timestamp>/).
+  --writing W      The harness's writing_guidance, plain or off (default: the settings' own).
   --list           List the cases and exit.
   -h, --help       Show this help.
 
@@ -73,6 +76,7 @@ export function parseArgs(argv: string[]): Options {
     timeoutMin: 20,
     opencode: "opencode",
     out: undefined,
+    writing: undefined,
     list: false,
     help: false,
   };
@@ -121,6 +125,12 @@ export function parseArgs(argv: string[]): Options {
       case "--out":
         options.out = take();
         break;
+      case "--writing": {
+        const writing = take();
+        if (writing !== "plain" && writing !== "off") throw new Error(`--writing must be plain or off, not ${writing}`);
+        options.writing = writing;
+        break;
+      }
       case "--list":
         options.list = true;
         break;
@@ -265,6 +275,7 @@ async function main(argv: string[]): Promise<number> {
         timeoutMs: options.timeoutMin * 60_000,
         auth: { kind: "login", db: login.path },
         plugins,
+        ...(options.writing === undefined ? {} : { writing: options.writing }),
         log: (line) => console.log(`  [${label}] ${line}`),
       });
       // Every later run would fail the same way.
@@ -288,6 +299,7 @@ async function main(argv: string[]): Promise<number> {
     profile: profile.name,
     opencodeVersion: version,
     maxCost: options.maxCost,
+    ...(options.writing === undefined ? {} : { writing: options.writing }),
     skipped: skipped.map((item) => `${item.case.id}.${item.variant}.${item.repeat}`),
     skippedReason: blocked !== undefined ? "the sandbox cannot use the profile's models" : "the total cost reached the limit",
   });

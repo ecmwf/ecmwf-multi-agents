@@ -32,6 +32,7 @@ import {
   resolveBinary,
   sandboxParentProblem,
   sandboxPath,
+  setWritingGuidance,
   snapshot,
 } from "./project.ts";
 import type { Box } from "./project.ts";
@@ -409,6 +410,24 @@ describe("the generated readings of data-question", () => {
         "for s in sorted(rows):\n    print(s, len(rows[s]), f'{sum(rows[s]) / len(rows[s]):.1f}')\n";
       const result = exec(["python3", "-c", script], { cwd: dir });
       expect(result.output.trim().split("\n")).toEqual(first.stations.map((station) => `${station.id} ${station.valid} ${station.mean.toFixed(1)}`));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("setWritingGuidance", () => {
+  test("adds writing_guidance to the user settings file the installer wrote, keeping the rest", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "writing-"));
+    try {
+      const box = { dir, home: dir, config: dir, project: dir } as Box;
+      const file = path.join(dir, "ecmwf-multi-agents.jsonc");
+      writeFileSync(file, '{\n  "$schema": "./ecmwf-multi-agents/schema.json",\n  // x\n  "review": "auto"\n}\n');
+      setWritingGuidance(box, "off");
+      const text = readFileSync(file, "utf8");
+      expect(text).toBe('{\n  "writing_guidance": "off",\n  "$schema": "./ecmwf-multi-agents/schema.json",\n  // x\n  "review": "auto"\n}\n');
+      rmSync(file);
+      expect(() => setWritingGuidance(box, "off")).toThrow("no user settings file");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

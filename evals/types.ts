@@ -395,6 +395,8 @@ export interface RunRecord {
   variant: Variant;
   repeat: number;
   profile: string;
+  /** The writing_guidance the run set, when it set one. */
+  writing?: "plain" | "off";
   review: ReviewPolicy;
   opencode: { bin: string; version: string };
   started: string;

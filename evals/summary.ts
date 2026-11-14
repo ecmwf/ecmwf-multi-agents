@@ -12,6 +12,8 @@ export interface SummaryInfo {
   profile: string;
   opencodeVersion: string;
   maxCost: number;
+  /** The writing_guidance every run set, when they set one. */
+  writing?: string;
   /** Runs not started, and why. */
   skipped: string[];
   skippedReason?: string;
@@ -129,7 +131,7 @@ export function renderSummary(records: RunRecord[], info: SummaryInfo): string {
   const all = totals(records);
   lines.push(
     `- Started ${info.started.toISOString()}, finished ${info.finished.toISOString()} (${formatDuration(info.finished.getTime() - info.started.getTime())}).`,
-    `- opencode ${info.opencodeVersion}, profile \`${info.profile}\`.`,
+    `- opencode ${info.opencodeVersion}, profile \`${info.profile}\`${info.writing === undefined ? "" : `, writing guidance \`${info.writing}\``}.`,
     `- ${all.runs} run(s), ${all.passed} passed. Total cost ${formatCost(all.cost)} (limit ${formatCost(info.maxCost)}).`,
   );
   if (info.skipped.length > 0) lines.push(`- Not started because ${info.skippedReason ?? "the total cost reached the limit"}: ${info.skipped.join(", ")}.`);

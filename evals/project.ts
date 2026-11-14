@@ -310,6 +310,18 @@ export function inSandbox(box: Box, argv: string[], options: { cwd: string; env?
 }
 
 /** Installs the harness from this checkout into the sandbox: global and linked, for the run's opencode. */
+/**
+ * Set the harness's writing_guidance in the user settings file install.sh wrote, which always
+ * starts with "{" on its own line. A case's project settings file can still change other keys.
+ */
+export function setWritingGuidance(box: Box, writing: "plain" | "off"): void {
+  const file = path.join(box.config, "ecmwf-multi-agents.jsonc");
+  if (!existsSync(file)) throw new Error(`no user settings file at ${file}`);
+  const text = readFileSync(file, "utf8");
+  if (!text.startsWith("{\n")) throw new Error(`${file} does not start with "{" on its own line`);
+  writeFileSync(file, `{\n  "writing_guidance": "${writing}",\n${text.slice(2)}`);
+}
+
 export function installHarness(box: Box, profile: string, review: string, repo = REPO): void {
   const result = inSandbox(box, ["sh", path.join(repo, "install.sh"), "--link", "--profile", profile, "--review", review], { cwd: repo, env: { PATH: sandboxPath(box) } });
   if (result.code !== 0) throw new Error(`install.sh failed (${result.code}):\n${result.output.trim()}`);

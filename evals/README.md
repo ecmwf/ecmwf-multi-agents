@@ -52,6 +52,7 @@ bun evals/run.ts --case feature --case bug-fix --repeat 3 --jobs 3 --opencode op
 | `--timeout MIN` | 20 | Time limit for each turn; a turn that runs over is stopped and the run counts as timed out |
 | `--opencode BIN` | `opencode` | The opencode 2 binary: a path, or a name looked up on `PATH` |
 | `--out DIR` | `evals/runs/<UTC timestamp>/` | Output folder (`evals/runs/` is ignored by git) |
+| `--writing W` | the settings' own | The harness's `writing_guidance` for every run, `plain` or `off` (ADR 0006) |
 | `--list` | | List the cases and exit |
 
 Requirements: opencode 2 (tested with 2.2.6; the runner refuses other major versions), Bun,
@@ -198,6 +199,12 @@ named after the release they measured, with the licence header added (for exampl
 
 Results vary between runs of the same case, so compare with `--repeat 3` or more before drawing
 conclusions.
+
+To compare runs with the writing guidance on and off, run the same cases with `--writing plain`
+and `--writing off` into two folders, then `bun evals/readability.ts on=DIR off=DIR` (several
+folders per arm, separated by commas). It prints pass rates, lead's output tokens, cost, and
+rough measures of lead's answers: words per sentence, sentences over 30 words, passive
+sentences and em dashes. Read some answers too: the measures show a direction only.
 
 ## Tests
 

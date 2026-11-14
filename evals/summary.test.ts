@@ -105,3 +105,9 @@ describe("summary", () => {
     expect(childSessions(records[1]!)).toBe("none");
   });
 });
+
+test("the summary names the writing guidance when the runs set it", () => {
+  const info = { started: new Date(0), finished: new Date(1000), profile: "default", opencodeVersion: "2.2.6", maxCost: 1, skipped: [] };
+  expect(renderSummary([], { ...info, writing: "off" })).toContain("- opencode 2.2.6, profile `default`, writing guidance `off`.");
+  expect(renderSummary([], info)).toContain("- opencode 2.2.6, profile `default`.\n");
+});
