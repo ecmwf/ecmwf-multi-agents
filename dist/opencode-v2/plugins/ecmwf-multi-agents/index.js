@@ -2759,12 +2759,21 @@ class HelperSlots {
       return Promise.resolve(undefined);
     if (typeof call.sessionID !== "string" || call.sessionID === "")
       return Promise.resolve(undefined);
+    if (!this.helperCall(call.input))
+      return Promise.resolve(undefined);
     const target = continued(call.input);
     const check = this.queue.then(() => this.check(call.sessionID, call.id, target));
     this.queue = check.catch(() => {
       return;
     });
     return check;
+  }
+  helperCall(input) {
+    const agent = member(input, "agent");
+    return typeof agent !== "string" || agent === "" || this.deps.helpers.has(agent);
+  }
+  helperChild(agent) {
+    return agent === undefined || this.deps.helpers.has(agent);
   }
   own(entry, child) {
     entry.child = child;
@@ -2835,7 +2844,7 @@ class HelperSlots {
     for (const entry of this.admitted) {
       if (entry.parent !== parent || entry.child !== undefined)
         continue;
-      const match = earliest.find((child) => !this.owned.has(child.id) && !entry.before.has(child.id) && !ENDED.has(child.state));
+      const match = earliest.find((child) => this.helperChild(child.agent) && !this.owned.has(child.id) && !entry.before.has(child.id) && !ENDED.has(child.state));
       if (match !== undefined)
         this.own(entry, match.id);
     }
@@ -2907,6 +2916,8 @@ class HelperSlots {
     }
     if (event.type === "session.created") {
       if (typeof event.parentID !== "string" || this.owned.has(id))
+        return;
+      if (!this.helperChild(typeof event.agent === "string" ? event.agent : undefined))
         return;
       const entry = this.admitted.find((item) => item.parent === event.parentID && item.child === undefined);
       if (entry === undefined)

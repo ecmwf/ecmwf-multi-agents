@@ -119,10 +119,23 @@ export class HelperSlots {
   admit(call: V2ToolCall | undefined): Promise<string | undefined> {
     if (call?.tool !== DELEGATION_TOOL || call.agent !== this.deps.harness.defaultAgent) return Promise.resolve(undefined);
     if (typeof call.sessionID !== "string" || call.sessionID === "") return Promise.resolve(undefined);
+    // The limit is on the harness's helpers: a hand-off to another agent is neither held nor counted.
+    if (!this.helperCall(call.input)) return Promise.resolve(undefined);
     const target = continued(call.input);
     const check = this.queue.then(() => this.check(call.sessionID, call.id, target));
     this.queue = check.catch(() => undefined);
     return check;
+  }
+
+  /** A call to a harness helper, or one that names no agent. */
+  private helperCall(input: unknown): boolean {
+    const agent = member(input, "agent");
+    return typeof agent !== "string" || agent === "" || this.deps.helpers.has(agent);
+  }
+
+  /** A child that may be a hand-off's helper: one of a harness helper, or of an agent not yet known. */
+  private helperChild(agent: string | undefined): boolean {
+    return agent === undefined || this.deps.helpers.has(agent);
   }
 
   private own(entry: Admitted, child: string): void {
@@ -200,7 +213,7 @@ export class HelperSlots {
     const earliest = [...children].sort((a, b) => a.startedAt - b.startedAt);
     for (const entry of this.admitted) {
       if (entry.parent !== parent || entry.child !== undefined) continue;
-      const match = earliest.find((child) => !this.owned.has(child.id) && !entry.before.has(child.id) && !ENDED.has(child.state));
+      const match = earliest.find((child) => this.helperChild(child.agent) && !this.owned.has(child.id) && !entry.before.has(child.id) && !ENDED.has(child.state));
       if (match !== undefined) this.own(entry, match.id);
     }
     // A snapshot shows a helper's run ended only if it was read after that run was seen to start.
@@ -275,6 +288,7 @@ export class HelperSlots {
     }
     if (event.type === "session.created") {
       if (typeof event.parentID !== "string" || this.owned.has(id)) return;
+      if (!this.helperChild(typeof event.agent === "string" ? event.agent : undefined)) return;
       const entry = this.admitted.find((item) => item.parent === event.parentID && item.child === undefined);
       if (entry === undefined) return;
       this.own(entry, id);

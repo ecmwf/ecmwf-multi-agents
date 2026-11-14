@@ -259,4 +259,37 @@ describe("helper slots", () => {
     expect(await handOff("e")).toBeUndefined();
     expect(await handOff("f")).toBeUndefined();
   });
+
+  test("a hand-off to an agent that is not a harness helper is neither limited nor counted, and its child is no helper's", async () => {
+    const { children, handOff, emit, progress } = setup(1);
+    expect(await handOff("a")).toBeUndefined();
+    // The limit is full with a's helper on the way; a hand-off to opencode's own agent still runs.
+    expect(await handOff("g", { agent: "general", prompt: "look" })).toBeUndefined();
+    // Its child appears first: it is not taken for a's helper, and takes no slot.
+    emit("session.created", "o", { parentID: PARENT, agent: "general" });
+    emit("session.execution.started", "o");
+    children.sessions.push({ id: "o", parentID: PARENT, agent: "general", state: "running", startedAt: 0, updatedAt: 0 });
+    emit("session.created", "x", { parentID: PARENT, agent: "builder" });
+    emit("session.execution.started", "x");
+    children.set("x", "running", 1);
+    expect(await handOff()).toContain("1 is running: builder x.");
+    progress("a", "x");
+    emit("session.execution.succeeded", "x");
+    children.set("x", "done");
+    expect(await handOff()).toBeUndefined();
+  });
+
+  test("a hand-off interrupted before it reports back (no execute.after) holds its slot until ADMITTED_MS after its helper's last event", async () => {
+    const { children, handOff, emit, tick } = setup(1);
+    expect(await handOff("a")).toBeUndefined();
+    emit("session.created", "x", { parentID: PARENT, agent: "builder" });
+    emit("session.execution.started", "x");
+    children.set("x", "running");
+    // The user stops lead's turn: no answer for call a, and x's run is cut off without an event.
+    children.set("x", "stopped");
+    tick(ADMITTED_MS - 1);
+    expect(await handOff()).toContain("1 is running");
+    tick(2);
+    expect(await handOff()).toBeUndefined();
+  });
 });

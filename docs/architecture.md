@@ -251,14 +251,14 @@ that the oldest waiting hand-off owns the next new helper, and the call's word c
 guess. A helper only guessed to belong to a hand-off that fails goes to the next waiting one.
 When a guessed helper's run ends, the hand-off keeps its slot until its own call has reported
 success or failure, since the guess may be wrong and the hand-off's own helper may still be
-starting.
-Once a hand-off's helper is known, it stands for that hand-off only. If opencode's events about the helper stop, the hold lapses
-two minutes after the last one, and the helper counts by its listed state alone. Continuing a running
-helper with its `sessionID` takes no new slot; continuing an idle one starts a run, so it takes
-one like a new hand-off, held from the hand-off until that run ends. Several calls that continue
-the same helper hold its one slot together, so one of them failing leaves the slot to the
-others. Only `lead` is limited,
-and only its own session's helpers count. Without the plugin the limit is an instruction in `lead`'s prompt only.
+starting. Once a hand-off's helper is known, it stands for that hand-off only. If opencode's
+events about the helper stop, the hold lapses two minutes after the last one, and the helper
+counts by its listed state alone. Continuing a running helper with its `sessionID` takes no new
+slot; continuing an idle one starts a run, so it takes one like a new hand-off, held from the
+hand-off until that run ends. Several calls that continue the same helper hold its one slot
+together, so one of them failing leaves the slot to the others. Only `lead` is limited, only
+its own session's helpers count, and a hand-off to an agent that is not a harness helper takes
+no slot. Without the plugin the limit is an instruction in `lead`'s prompt only.
 
 A steer amends the brief (principle 3): the helper follows the latest message, keeps the
 earlier LIMITS unless the steer lifts them, and reports what changed in the section its

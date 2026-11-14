@@ -181,6 +181,8 @@ export async function listedChildren(ctx: V2Context, parent: string): Promise<Tr
   if (typeof list !== "function") return undefined;
   const children = new Map<string, TrackedSession>();
   let cursor: string | undefined;
+  // Pages go newest first by update time: a child that runs while the pages are read may move
+  // ahead and be missed. That matters only above one page (LIST_PAGE children of one session).
   for (let page = 0; page < MAX_PAGES; page++) {
     const answer = (await list.call(ctx.session, cursor === undefined ? { parentID: parent, limit: LIST_PAGE } : { cursor, limit: LIST_PAGE })) as
       | { data?: unknown; cursor?: { next?: unknown } }

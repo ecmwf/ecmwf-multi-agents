@@ -1146,7 +1146,10 @@ on, checked in the `v2.2.5` source and against `v2.2.6`; both versions agree on 
    gets the same with `status`, after the tool ends, also when it failed, but not when an
    `execute.before` hook refused the call (`executeTool` and `beforeExecute` in
    core/src/tool.ts). A foreground hand-off ends when the child's run ends; a background one
-   returns once the child has started.
+   returns once the child has started. Two cases never reach `execute.after`: a call
+   interrupted with lead's turn, and a call that another plugin's `execute.before` refuses after
+   this plugin admitted it. Their slots lapse two minutes after the last event of their helper,
+   or after the hand-off when no helper came.
 8. Which child did a hand-off create? The call says so itself. Right after creating or finding
    the child, the delegation tool reports `{ sessionID: child, status: "running" }` as the
    call's progress (`SubagentTool` in core/src/tool/plugin/subagent.ts). The step runner
