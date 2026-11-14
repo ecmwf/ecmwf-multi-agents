@@ -952,6 +952,19 @@ Copilot agents; the two follow-ups below, which Tiago takes. Tests come first in
   them; on real models `designer-limit-twice`, `review-off`, `review-background` and `feature`
   pass for $3.14 (`evals/results/settings-offers.md`); `designer-limit` not run again, to stay
   within $5, since `designer-limit-twice` covers its path
+- [~] Tiago: Bring in Samet's PR #8 (enforced helper slots, helpers from opencode's session
+  list): review as for PR #7 (gate, integration on 2.2.6, an independent review), findings to
+  the owner, fixes on its branch only with approval, then a merge commit
+- [~] Tiago: Writing guidance for text for people, inspired by ASD-STE100 and applied loosely
+  (ADR 0006): a `## Writing` section in `lead`'s prompt, on by default; the setting
+  `writing_guidance`, `"plain"` or `"off"`, with which the plugin removes the section, so off
+  is today's `lead`. Briefs to helpers stay out of scope. Schema, settings, `doctor`, an
+  integration test, README, guide, architecture, budgets at the measured size
+- [~] Tiago: Evals on the build with PR #8 and the writing guidance: all 28 cases once with
+  `writing_guidance` on and once off, and the 7 text-heavy cases (`answer`, `investigate`,
+  `inventory`, `plan-execute`, `progress`, `review-reject`, `onboard`) twice more each way;
+  pass rates, tokens and readability measures compared; at most $45. The owner decides the
+  default from the results
 - [ ] Tiago: Release 0.10.0
 
 Exit: `make check` and the integration suites pass on 2.2.6; PR #7 merged; the evals above pass.
