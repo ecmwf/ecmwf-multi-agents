@@ -39,8 +39,11 @@ describe("step limits", () => {
     expect(note).toContain(files.user);
     expect(note).toContain("restarts");
     expect(note).toContain("cost");
-    // Taken once; a third hit in the same session asks nothing more.
+    // In every request of lead's until it asks the user, or its turn ends.
+    expect(offers.take("root")).toEqual(notes);
+    offers.settle("root");
     expect(offers.take("root")).toEqual([]);
+    // A third hit in the same session asks nothing more.
     offers.stepLimit("root", "designer", "child-3:9");
     expect(offers.take("root")).toEqual([]);
   });
@@ -104,7 +107,18 @@ describe("fallback models", () => {
     offers.fallback(chosen);
     offers.fallback(chosen);
     expect(offers.take("root")).toHaveLength(1);
+    offers.settle("root");
     offers.fallback(chosen);
+    expect(offers.take("root")).toEqual([]);
+  });
+
+  test("a fallback note stays with the session that first got it until it is settled there", () => {
+    const offers = makeOffers();
+    offers.fallback(chosen);
+    expect(offers.take("root")).toHaveLength(1);
+    expect(offers.take("other")).toEqual([]);
+    expect(offers.take("root")).toHaveLength(1);
+    offers.settle("root");
     expect(offers.take("root")).toEqual([]);
   });
 

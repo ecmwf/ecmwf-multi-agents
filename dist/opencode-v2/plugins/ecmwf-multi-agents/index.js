@@ -1546,7 +1546,7 @@ ${helper}`;
       return;
     const raised = Math.ceil(limit * 1.5);
     const where = this.deps.files.project === undefined ? `in ${this.deps.files.user}` : `in ${this.deps.files.project} for this project, or in ${this.deps.files.user} for every project`;
-    this.add(root, `${OFFER_PREFIX} the ${helper} reached its step limit of ${limit} twice in this session. ` + `Ask the user with the question tool whether to raise it to ${raised}: set "agents": { "${helper}": { "steps": ${raised} } } ${where}, keeping the file's other settings. ` + `Pro: it can finish larger tasks. Con: each of its runs may take up to ${raised} steps, which can cost more. It takes effect when opencode restarts.`);
+    this.add(root, `${OFFER_PREFIX} the ${helper} reached its step limit of ${limit} twice in this session. ` + `Before you end this turn, ask the user with the question tool whether to raise it to ${raised}: set "agents": { "${helper}": { "steps": ${raised} } } ${where}, keeping the file's other settings. ` + `Pro: it can finish larger tasks. Con: each of its runs may take up to ${raised} steps, which can cost more. It takes effect when opencode restarts.`);
   }
   fallback(inUse) {
     const key = `fallback ${inUse.id} ${inUse.model}`;
@@ -1557,13 +1557,13 @@ ${helper}`;
       return;
     const entry = `{ "model": "${inUse.model}"${inUse.effort === undefined ? "" : `, "effort": "${inUse.effort}"`} }`;
     const ownProvider = inUse.own.split("/")[0];
-    this.anywhere.set(key, `${OFFER_PREFIX} the ${inUse.id} runs on ${inUse.model}, its fallback, because ${inUse.own} is not available. ` + `Ask the user with the question tool whether to keep this for this project: set "agents": { "${inUse.id}": ${entry} } in ${project}, keeping the file's other settings. ` + `Pro: the same model at every start, without the notice. Con: the ${inUse.id} stays on it after ${ownProvider} is set up. It takes effect when opencode restarts. Do not change the user's own settings file.`);
+    this.anywhere.set(key, `${OFFER_PREFIX} the ${inUse.id} runs on ${inUse.model}, its fallback, because ${inUse.own} is not available. ` + `Before you end this turn, ask the user with the question tool whether to keep this for this project: set "agents": { "${inUse.id}": ${entry} } in ${project}, keeping the file's other settings. ` + `Pro: the same model at every start, without the notice. Con: the ${inUse.id} stays on it after ${ownProvider} is set up. It takes effect when opencode restarts. Do not change the user's own settings file.`);
   }
   take(root) {
     const notes = this.session.get(root) ?? [];
-    this.session.delete(root);
     if (this.anywhere.size === 0)
-      return notes;
+      return [...notes];
+    this.session.set(root, notes);
     const made = this.made();
     for (const [key, note] of this.anywhere) {
       notes.push(note);
@@ -1574,7 +1574,10 @@ ${helper}`;
     try {
       this.deps.store?.add(added);
     } catch {}
-    return notes;
+    return [...notes];
+  }
+  settle(root) {
+    this.session.delete(root);
   }
   add(root, note) {
     const notes = this.session.get(root) ?? [];
@@ -3011,6 +3014,7 @@ function stepLimitAsUser(messages) {
 }
 
 // plugin/v2.ts
+var TURN_ENDS = new Set(["session.execution.succeeded", "session.execution.failed", "session.execution.interrupted"]);
 var FALLBACK_MS = 3000;
 function userSettingsFile(environment) {
   const xdg = environment?.env.XDG_CONFIG_HOME;
@@ -3227,6 +3231,8 @@ function createSetup(harness, options = {}) {
         await ctx.tool.hook("execute.before", async (call) => {
           let message;
           try {
+            if (call?.tool === "question" && call.agent === harness.defaultAgent && typeof call.sessionID === "string")
+              offers.settle(call.sessionID);
             message = toolCallBlock(harness, call?.agent, call?.tool) ?? await slots.admit(call);
             if (message === undefined)
               activity.observe(call?.sessionID, call?.tool, call?.input);
@@ -3346,6 +3352,9 @@ ${found.reply}`;
         tracker.observe(event);
         slots.observe(event);
         keepOut(event);
+        const ended = eventFields(event);
+        if (typeof ended?.sessionID === "string" && TURN_ENDS.has(ended.type ?? ""))
+          offers.settle(ended.sessionID);
         if (event?.type === "provider.updated" || event?.type === "model.updated")
           readProviders();
       };
@@ -3438,7 +3447,7 @@ For plan-sized work, load the skill \`ecmwf-multi-agents-plan\` with the skill t
 
 Ask the user through the question tool, never in your reply, when the answer changes what you will do: scope, approach or risk. Offer options with your recommendation first, and give each option's consequences in a few words: its pros and cons. Otherwise make a reasonable assumption and state it. Look up facts instead of asking for them.
 
-A note from the ecmwf-multi-agents plugin may offer a settings change: put it to the user with the question tool, and edit the file only if the user agrees.
+A note from the ecmwf-multi-agents plugin may offer a settings change: put it to the user with the question tool before your turn ends, and edit the file only if the user agrees.
 
 ## Work files
 

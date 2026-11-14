@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Settings changes the plugin offers the user through lead. The plugin notices the situation and
-// words the offer; lead reads it as a note at the end of its next request in the user's session
-// and asks the user with the question tool, changing a settings file only on a yes (lead's
-// prompt, "Asking the user"). The note is not stored in the session: it is in one request only.
+// words the offer; lead reads it as a note at the end of its requests in the user's session and
+// asks the user with the question tool, changing a settings file only on a yes (lead's prompt,
+// "Asking the user"). The note is not stored in the session. It comes in each of lead's requests
+// there until lead uses the question tool in that session or its turn ends (`settle`), since
+// lead may first finish what it was doing.
 //
 // - A helper that reaches its step limit a second time in one session: raise its `steps`, in the
 //   project's file or the user's own. Counted again in each session.
@@ -68,7 +70,7 @@ export class Offers {
     this.add(
       root,
       `${OFFER_PREFIX} the ${helper} reached its step limit of ${limit} twice in this session. ` +
-        `Ask the user with the question tool whether to raise it to ${raised}: set "agents": { "${helper}": { "steps": ${raised} } } ${where}, keeping the file's other settings. ` +
+        `Before you end this turn, ask the user with the question tool whether to raise it to ${raised}: set "agents": { "${helper}": { "steps": ${raised} } } ${where}, keeping the file's other settings. ` +
         `Pro: it can finish larger tasks. Con: each of its runs may take up to ${raised} steps, which can cost more. It takes effect when opencode restarts.`,
     );
   }
@@ -84,16 +86,16 @@ export class Offers {
     this.anywhere.set(
       key,
       `${OFFER_PREFIX} the ${inUse.id} runs on ${inUse.model}, its fallback, because ${inUse.own} is not available. ` +
-        `Ask the user with the question tool whether to keep this for this project: set "agents": { "${inUse.id}": ${entry} } in ${project}, keeping the file's other settings. ` +
+        `Before you end this turn, ask the user with the question tool whether to keep this for this project: set "agents": { "${inUse.id}": ${entry} } in ${project}, keeping the file's other settings. ` +
         `Pro: the same model at every start, without the notice. Con: the ${inUse.id} stays on it after ${ownProvider} is set up. It takes effect when opencode restarts. Do not change the user's own settings file.`,
     );
   }
 
-  /** The notes for lead's request in this session; each is given once. */
+  /** The notes for lead's request in this session, until `settle`. */
   take(root: string): string[] {
     const notes = this.session.get(root) ?? [];
-    this.session.delete(root);
-    if (this.anywhere.size === 0) return notes;
+    if (this.anywhere.size === 0) return [...notes];
+    this.session.set(root, notes);
     const made = this.made();
     for (const [key, note] of this.anywhere) {
       notes.push(note);
@@ -106,7 +108,12 @@ export class Offers {
     } catch {
       // Not kept: the offer may come again after a restart.
     }
-    return notes;
+    return [...notes];
+  }
+
+  /** lead asked the user in this session, or its turn there ended: its notes are done with. */
+  settle(root: string): void {
+    this.session.delete(root);
   }
 
   private add(root: string, note: string): void {

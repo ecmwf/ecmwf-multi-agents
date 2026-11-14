@@ -62,6 +62,9 @@ import { stepLimitAsUser } from "./step-limit.ts";
 import { eventFields, SessionTracker, sessionChildren, v2Tools } from "./tools-v2.ts";
 import type { EmbeddedHarness, Environment, Settings, V2AgentEditor, V2Cleanup, V2CommandEditor, V2Context, V2ContextEvent, V2Event, V2ModelMessage, V2Registration } from "./types.ts";
 
+/** The events that end a session's run (`Execution` in schema/src/session-event.ts). */
+const TURN_ENDS: ReadonlySet<string> = new Set(["session.execution.succeeded", "session.execution.failed", "session.execution.interrupted"]);
+
 /** Registers anyway when no `plugin.updated` arrives, in case the first one came before the subscription. */
 export const FALLBACK_MS = 3000;
 
@@ -302,6 +305,8 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
         await ctx.tool.hook("execute.before", async (call) => {
           let message: string | undefined;
           try {
+            // lead asking the user settles the offers in its session, put to the user or not.
+            if (call?.tool === "question" && call.agent === harness.defaultAgent && typeof call.sessionID === "string") offers.settle(call.sessionID);
             message = toolCallBlock(harness, call?.agent, call?.tool) ?? (await slots.admit(call));
             // A refused call is not a step the helper took.
             if (message === undefined) activity.observe(call?.sessionID, call?.tool, call?.input);
@@ -434,6 +439,9 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
         tracker.observe(event);
         slots.observe(event);
         keepOut(event);
+        // An offer lead left at the end of its turn is not carried into the next one.
+        const ended = eventFields(event);
+        if (typeof ended?.sessionID === "string" && TURN_ENDS.has(ended.type ?? "")) offers.settle(ended.sessionID);
         // Without a payload and sometimes twice: reading again is harmless, a repeat changes nothing.
         if (event?.type === "provider.updated" || event?.type === "model.updated") void readProviders();
       };

@@ -1384,9 +1384,35 @@ describe("v2 settings offers", () => {
     expect(last(lead.messages)).toContain(PROJECT);
     expect(last(lead.messages)).toContain(GLOBAL);
 
+    // lead put the question off: the note comes again in its next request, until it asks.
+    const later = { sessionID: "root", agent: "lead", messages: [user("go on"), said("checking")] };
+    await host.contextHooks[0]!(later);
+    expect(last(later.messages)).toContain("the scout reached its step limit of 30 twice in this session");
+    for (const hook of host.toolHooks) await hook({ tool: "question", sessionID: "root", agent: "lead", input: {} } as V2ToolCall);
     const again = { sessionID: "root", agent: "lead", messages: [user("go on")] };
     await host.contextHooks[0]!(again);
     expect(again.messages).toHaveLength(1);
+  });
+
+  test("an offer lead did not put to the user ends with its turn", async () => {
+    const { host } = await start({});
+    await atLimit(host, "c1");
+    await atLimit(host, "c2");
+    const first = { sessionID: "root", agent: "lead", messages: [user("go on")] };
+    await host.contextHooks[0]!(first);
+    expect(first.messages).toHaveLength(2);
+    // A helper's question or another session's turn changes nothing.
+    for (const hook of host.toolHooks) await hook({ tool: "question", sessionID: "c1", agent: "scout", input: {} } as V2ToolCall);
+    host.emit("session.execution.succeeded", { sessionID: "c2" });
+    await settle();
+    const still = { sessionID: "root", agent: "lead", messages: [user("go on")] };
+    await host.contextHooks[0]!(still);
+    expect(still.messages).toHaveLength(2);
+    host.emit("session.execution.succeeded", { sessionID: "root" });
+    await settle();
+    const next = { sessionID: "root", agent: "lead", messages: [user("next")] };
+    await host.contextHooks[0]!(next);
+    expect(next.messages).toHaveLength(1);
   });
 
   test("the limit in the note is the one the settings give", async () => {

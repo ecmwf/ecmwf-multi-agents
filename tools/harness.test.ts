@@ -221,6 +221,7 @@ describe("lead", () => {
     expect(asking).toContain("A note from the ecmwf-multi-agents plugin");
     expect(asking).toContain("question tool");
     expect(asking).toContain("only if the user agrees");
+    expect(asking).toContain("before your turn ends");
   });
 });
 
