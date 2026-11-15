@@ -1840,9 +1840,10 @@ function rpcDefinition(id) {
     id,
     methods: {
       doctor: { input: {}, output: {} },
-      problems: { input: {}, output: {} }
+      problems: { input: {}, output: {} },
+      notices: { input: {}, output: {} }
     },
-    events: { problem: { schema: { type: "object" } } }
+    events: { problem: { schema: { type: "object" } }, notice: { schema: { type: "object" } } }
   };
 }
 
@@ -1914,6 +1915,92 @@ class RuleOrder {
       });
     }
   }
+}
+
+// plugin/update-notice.ts
+function updateNoticeText(name) {
+  return `A newer ${name} is available: run \`opencode plugin update\`, then restart opencode.`;
+}
+function ownSource(plugins, id) {
+  const list = unwrap(plugins);
+  if (!Array.isArray(list))
+    return;
+  const entry = list.find((item) => item !== null && typeof item === "object" && item.id === id && item.state?.status === "active");
+  const source = entry?.source;
+  return source !== null && typeof source === "object" ? source : undefined;
+}
+function packageSource(plugins, id) {
+  return ownSource(plugins, id)?.type === "package";
+}
+function updateAvailable(plugins, id) {
+  const source = ownSource(plugins, id);
+  return source?.type === "package" && source.outdated === true && source.updating !== true;
+}
+
+class UpdateNotice {
+  name;
+  now;
+  current;
+  updating = false;
+  count = 0;
+  emit;
+  waiters = [];
+  started;
+  constructor(name, now = Date.now) {
+    this.name = name;
+    this.now = now;
+    this.started = now();
+  }
+  observe(plugins) {
+    const source = ownSource(plugins, this.name);
+    if (source === undefined)
+      return;
+    if (source.type !== "package" || source.outdated !== true) {
+      this.current = undefined;
+      this.updating = false;
+      return;
+    }
+    this.updating = source.updating === true;
+    if (this.updating || this.current !== undefined)
+      return;
+    this.current = { notice: updateNoticeText(this.name), id: ++this.count };
+    this.emit?.(this.current);
+    for (const wake of this.waiters.splice(0))
+      wake();
+  }
+  list() {
+    return this.current === undefined || this.updating ? [] : [this.current];
+  }
+  onAdd(emit) {
+    this.emit = emit;
+  }
+  checked(windowMs) {
+    const left = this.started + windowMs - this.now();
+    if (left <= 0 || this.current !== undefined)
+      return Promise.resolve();
+    return new Promise((resolve) => {
+      const timer = setTimeout(done, left);
+      timer.unref?.();
+      const waiters = this.waiters;
+      function done() {
+        clearTimeout(timer);
+        const index = waiters.indexOf(done);
+        if (index !== -1)
+          waiters.splice(index, 1);
+        resolve();
+      }
+      waiters.push(done);
+    });
+  }
+}
+var shared = new Map;
+function processNotice(name) {
+  let notice = shared.get(name);
+  if (notice === undefined) {
+    notice = new UpdateNotice(name);
+    shared.set(name, notice);
+  }
+  return notice;
 }
 
 // plugin/rpc.ts
@@ -2072,9 +2159,16 @@ async function doctorReport(input) {
     return;
   }) ?? [];
   const lead = agents.find((agent) => agent.id === harness.defaultAgent);
-  const plugins = await Promise.resolve(ctx.plugin?.list?.()).then((value) => unwrap(value), () => {
+  const listPlugins = async () => await Promise.resolve(ctx.plugin?.list?.()).then((value) => unwrap(value), () => {
     return;
   }) ?? [];
+  let plugins = await listPlugins();
+  if (input.updateChecked !== undefined && packageSource(plugins, harness.name) && !updateAvailable(plugins, harness.name)) {
+    await input.updateChecked().catch(() => {
+      return;
+    });
+    plugins = await listPlugins();
+  }
   const { settings } = loaded;
   const changed = lead === undefined ? [] : leadChanges(lead, harness, settings, input.environment.home, input.plans?.());
   const helpers = helpersOf(harness);
@@ -2113,6 +2207,7 @@ async function doctorReport(input) {
     helpersStray: helpers.filter((helper) => helper.optional !== true && !on.has(helper.id) && loadedIds.has(helper.id)).map((helper) => helper.id),
     workDirExcluded: workDirExcluded(harness, input.environment, input.directory ?? input.projectRoot),
     problems: input.problems.list(),
+    updateAvailable: updateAvailable(plugins, harness.name),
     plugins: (Array.isArray(plugins) ? plugins : []).filter((plugin) => !plugin.id?.startsWith("opencode.") || plugin.state?.status !== "active").map((plugin) => ({
       id: plugin.id ?? null,
       status: plugin.state?.status ?? null,
@@ -2126,10 +2221,16 @@ async function registerRpc(input) {
     return;
   const registration = await register.call(input.ctx.rpc, rpcDefinition(input.harness.name), {
     doctor: async () => doctorReport(input),
-    problems: async () => ({ problems: input.problems.list() })
+    problems: async () => ({ problems: input.problems.list() }),
+    notices: async () => ({ notices: input.notice?.list() ?? [] })
   });
   input.problems.onAdd((problem) => {
     Promise.resolve(registration.events.emit("problem", { ...problem })).catch(() => {
+      return;
+    });
+  });
+  input.notice?.onAdd((notice) => {
+    Promise.resolve(registration.events.emit("notice", { ...notice })).catch(() => {
       return;
     });
   });
@@ -3016,6 +3117,7 @@ function stepLimitAsUser(messages) {
 // plugin/v2.ts
 var TURN_ENDS = new Set(["session.execution.succeeded", "session.execution.failed", "session.execution.interrupted"]);
 var FALLBACK_MS = 3000;
+var UPDATE_CHECK_MS = 5000;
 function userSettingsFile(environment) {
   const xdg = environment?.env.XDG_CONFIG_HOME;
   const config = xdg ? xdg : path6.join(environment?.home ?? "~", ".config");
@@ -3158,6 +3260,15 @@ function createSetup(harness, options = {}) {
         store: environment !== undefined && projectRoot !== undefined ? fileStore(environment, path6.join(projectRoot, harness.workDir, "offers")) : null,
         limit: (agent) => planned.plans.find((plan) => plan.id === agent)?.steps ?? harness.agents.find((item) => item.id === agent)?.steps
       });
+      const notice = options.updateNotice ?? processNotice(harness.name);
+      const readPlugins = async () => {
+        try {
+          if (typeof ctx.plugin?.list === "function")
+            notice.observe(await ctx.plugin.list());
+        } catch (error) {
+          reporter.internal("reading the plugin list", error);
+        }
+      };
       let late;
       let availabilityRead = false;
       let reading = Promise.resolve();
@@ -3204,7 +3315,9 @@ function createSetup(harness, options = {}) {
               await reading;
               await late.ensure();
             },
-            plans: () => choices.plans()
+            plans: () => choices.plans(),
+            notice,
+            updateChecked: () => notice.checked(options.updateCheckMs ?? UPDATE_CHECK_MS)
           });
         } catch (error) {
           reporter.internal("registering the RPC", error);
@@ -3339,6 +3452,7 @@ ${found.reply}`;
       const agentTransform = late;
       const onActivation = () => {
         ruleOrder.start();
+        readPlugins();
         (async () => {
           if (!availabilityRead)
             readProviders();
@@ -3358,6 +3472,7 @@ ${found.reply}`;
         if (event?.type === "provider.updated" || event?.type === "model.updated")
           readProviders();
       };
+      readPlugins();
       const stopWatching = watchEvents(ctx, onActivation, onEvent, reporter, options.fallbackMs ?? FALLBACK_MS);
       return async () => {
         stopWatching();

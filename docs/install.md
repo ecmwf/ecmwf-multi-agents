@@ -21,6 +21,36 @@ nor a build.
 
 ## Install for yourself
 
+The quickest way is opencode's own plugin command:
+
+```sh
+opencode plugin add @ecmwf.int/multi-agents
+```
+
+opencode installs the npm package and adds it to the `plugins` line of your global opencode
+config (`~/.config/opencode/opencode.json`, or `opencode.jsonc` if only that exists, or the
+folder `OPENCODE_CONFIG_DIR` names). Restart opencode: the harness is then on in every project.
+Nothing else is installed and no settings file is written; create one by hand if you want to
+change the defaults (see the README's Settings).
+
+- Update: `opencode plugin update`, then restart opencode. opencode does not install updates by
+  itself: it checks the package about once a day and when it starts, and marks it outdated.
+  The harness then tells you once, in a toast in the TUI: "A newer ecmwf-multi-agents is
+  available: run `opencode plugin update`, then restart opencode." `doctor` warns about it
+  too. An entry with a version, such as `@ecmwf.int/multi-agents@0.9.1`, stays on it and is
+  never reported; change the version with `opencode plugin add` and remove the old entry.
+- Remove: `opencode plugin remove @ecmwf.int/multi-agents`, with the entry exactly as it is in
+  the config, version included.
+- Check: `npx @ecmwf.int/multi-agents doctor`, or `doctor --project /path/to/repo`.
+- Use either this or `install.sh`, not both. opencode loads installed files before any
+  `plugins` line, so it keeps the files and reports the line's copy as "Duplicate plugin ID";
+  `doctor` warns about it. For the same reason a project's own `plugins` line cannot override
+  the global one: opencode reads the global config first.
+- A local checkout cannot be added this way (opencode accepts only registry and git
+  specifiers); name its path in a project's `plugins` line, or use `install.sh`.
+
+Or install it with the installer, which also writes the settings file:
+
 ```sh
 git clone <repository-url> ~/.local/share/ecmwf-multi-agents
 cd ~/.local/share/ecmwf-multi-agents
@@ -149,7 +179,8 @@ same files as for an install:
 
 To update, change the version in the line and restart opencode; a pinned version never changes
 on its own. With a checkout, `git pull` it. An entry without a version is checked against npm
-once a day and reported as outdated, and updated only by `opencode plugin update`.
+once a day and reported as outdated, and updated only by `opencode plugin update`; the harness
+then says that a newer version is available.
 
 Use either the line or an install in `~/.config/opencode/`, not both: opencode loads the
 installed copy first and ignores the project's as a "Duplicate plugin ID", so the line's
@@ -354,6 +385,9 @@ Each line starts with OK, WARN or FAIL:
 `doctor` exits with an error only on FAIL lines.
 
 ## Removing
+
+Switched on with `opencode plugin add`: `opencode plugin remove @ecmwf.int/multi-agents`.
+Installed with the installer:
 
 ```sh
 ./install.sh uninstall

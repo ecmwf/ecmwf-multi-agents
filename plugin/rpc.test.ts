@@ -9,6 +9,7 @@ import { loadSettings } from "./settings.ts";
 import { TESTER_ROUTING, embeddedFixture, fakeEnvironment } from "./testing.ts";
 import type { V2AgentInfo, V2Context, V2RpcDefinition } from "./types.ts";
 import { createTui, type TuiContext } from "./tui.ts";
+import { UpdateNotice, updateNoticeText } from "./update-notice.ts";
 
 const harness = embeddedFixture();
 const GLOBAL = "/home/user/.config/opencode";
@@ -75,6 +76,7 @@ describe("doctor", () => {
       helpersStray: [],
       workDirExcluded: null,
       problems: [{ problem: "x: something", notify: true }],
+      updateAvailable: false,
       plugins: [
         { id: "opencode.broken", status: "failed", error: "boom" },
         { id: "ecmwf-multi-agents", status: "active" },
@@ -246,6 +248,33 @@ describe("doctor", () => {
     expect(agentConfigFiles("lead", fakeEnvironment({}), undefined, undefined)).toEqual([]);
   });
 
+  test("says whether opencode marks the plugin's own package outdated", async () => {
+    const own = (source: Record<string, unknown>) => [{ id: "ecmwf-multi-agents", source, state: { status: "active" } }];
+    const report = async (plugins: unknown) => (await doctorReport(input({}, [], plugins))).updateAvailable;
+    expect(await report(own({ type: "package", target: "@ecmwf.int/multi-agents", outdated: true }))).toBe(true);
+    expect(await report(own({ type: "package", target: "@ecmwf.int/multi-agents", outdated: true, updating: true }))).toBe(false);
+    expect(await report(own({ type: "local", path: "/x", outdated: true }))).toBe(false);
+    expect(await report([])).toBe(false);
+  });
+
+  test("a package not marked outdated yet: waits for opencode's check, then reads the plugins again", async () => {
+    const plugins = [{ id: "ecmwf-multi-agents", source: { type: "package", target: "@ecmwf.int/multi-agents" } as Record<string, unknown>, state: { status: "active" } }];
+    const doctor = input({}, [], plugins);
+    doctor.ctx.plugin = { list: async () => structuredClone(plugins) };
+    let waits = 0;
+    doctor.updateChecked = async () => {
+      waits++;
+      plugins[0]!.source.outdated = true;
+    };
+    expect(await doctorReport(doctor)).toMatchObject({ updateAvailable: true });
+    expect(waits).toBe(1);
+    // Already outdated, or not a package: nothing to wait for.
+    await doctorReport(doctor);
+    plugins[0]!.source = { type: "local", path: "/x" };
+    await doctorReport(doctor);
+    expect(waits).toBe(1);
+  });
+
   test("lead registered by the plugin: a lead.md opencode ignores is no candidate", async () => {
     const ignored = await doctorReport(input({ [`${GLOBAL}/agents/lead.md`]: "x" }, [loadedLead({})], [], { OPENCODE_CONFIG_DIR: "/site" }));
     expect(ignored).toMatchObject({ leadLoaded: true, leadDefinition: "harness", leadCandidateFiles: [] });
@@ -269,8 +298,8 @@ describe("the RPC", () => {
     await registerRpc(doctor);
     expect(definition).toEqual({
       id: "ecmwf-multi-agents",
-      methods: { doctor: { input: {}, output: {} }, problems: { input: {}, output: {} } },
-      events: { problem: { schema: { type: "object" } } },
+      methods: { doctor: { input: {}, output: {} }, problems: { input: {}, output: {} }, notices: { input: {}, output: {} } },
+      events: { problem: { schema: { type: "object" } }, notice: { schema: { type: "object" } } },
     });
     doctor.problems.add({ message: "after", notify: true });
     doctor.problems.add({ message: "after", notify: true });
@@ -284,16 +313,36 @@ describe("the RPC", () => {
     expect(await handlers.doctor!({})).toMatchObject({ name: "ecmwf-multi-agents", leadLoaded: false });
   });
 
+  test("publishes the update notice apart from the problems", async () => {
+    const doctor = input({}, []);
+    const events: Array<[string, unknown]> = [];
+    let handlers: Record<string, (input: unknown) => Promise<unknown>> = {};
+    doctor.ctx.rpc = {
+      register: async (_definition, given) => {
+        handlers = given;
+        return { dispose: async () => {}, events: { emit: async (name, data) => void events.push([name, data]) } };
+      },
+    };
+    doctor.notice = new UpdateNotice("ecmwf-multi-agents");
+    await registerRpc(doctor);
+    expect(await handlers.notices!({})).toEqual({ notices: [] });
+    doctor.notice.observe([{ id: "ecmwf-multi-agents", source: { type: "package", target: "x", outdated: true }, state: { status: "active" } }]);
+    const view = { notice: updateNoticeText("ecmwf-multi-agents"), id: 1 };
+    expect(events).toEqual([["notice", view]]);
+    expect(await handlers.notices!({})).toEqual({ notices: [view] });
+    expect(await handlers.problems!({})).toEqual({ problems: [] });
+  });
+
   test("an opencode without RPC: nothing registered", async () => {
     expect(await registerRpc(input({}, []))).toBeUndefined();
   });
 });
 
 describe("the TUI entry", () => {
-  function tui(problems: unknown, fail = false) {
+  function tui(problems: unknown, fail = false, notices: unknown = { notices: [] }) {
     const toasts: Array<Record<string, unknown>> = [];
     const calls: unknown[] = [];
-    let handler: ((event: { data?: unknown }) => void) | undefined;
+    const handlers = new Map<string, (event: { data?: unknown }) => void>();
     let off = 0;
     const ctx: TuiContext = {
       location: { directory: "/repo" },
@@ -306,10 +355,15 @@ describe("the TUI entry", () => {
               if (fail) throw { type: "rpc.unavailable", message: "RPC is unavailable" };
               return problems;
             },
+            notices: async (_input, options) => {
+              calls.push(["notices", options]);
+              if (fail) throw { type: "rpc.unavailable", message: "RPC is unavailable" };
+              return notices;
+            },
             events: {
               on: (name, given) => {
                 calls.push(name);
-                handler = given;
+                handlers.set(name, given);
                 return () => void off++;
               },
             },
@@ -318,7 +372,7 @@ describe("the TUI entry", () => {
       },
       ui: { toast: { show: (options) => void toasts.push(options) } },
     };
-    return { ctx, toasts, calls, emit: (data: unknown) => handler?.({ data }), off: () => off };
+    return { ctx, toasts, calls, emit: (data: unknown, name = "problem") => handlers.get(name)?.({ data }), off: () => off };
   }
 
   test("shows each problem worth a toast once, from the start and from events; cleanup stops listening", async () => {
@@ -330,13 +384,28 @@ describe("the TUI entry", () => {
     host.emit({ problem: "b", notify: true });
     host.emit({ problem: "a", notify: true });
     host.emit("nonsense");
-    expect(host.calls).toEqual(["ecmwf-multi-agents", "problem", { location: { directory: "/repo" } }]);
+    expect(host.calls).toEqual(["ecmwf-multi-agents", "problem", "notice", { location: { directory: "/repo" } }, ["notices", { location: { directory: "/repo" } }]]);
     expect(host.toasts).toEqual([
       { title: "ecmwf-multi-agents", message: "a", variant: "warning", duration: 10_000 },
       { title: "ecmwf-multi-agents", message: "b", variant: "warning", duration: 10_000 },
     ]);
     cleanup();
-    expect(host.off()).toBe(1);
+    expect(host.off()).toBe(2);
+  });
+
+  test("shows the update notice as information, once for each notice, from the start and from events", async () => {
+    const text = updateNoticeText("ecmwf-multi-agents");
+    const host = tui({ problems: [] }, false, { notices: [{ notice: text, id: 1 }] });
+    createTui("ecmwf-multi-agents").setup(host.ctx);
+    await Bun.sleep(1);
+    host.emit({ notice: text, id: 1 }, "notice");
+    // A notice is not a problem, and a problem is not a notice.
+    host.emit({ notice: "x", id: 9 }, "problem");
+    host.emit({ problem: "y", notify: true }, "notice");
+    expect(host.toasts).toEqual([{ title: "ecmwf-multi-agents", message: text, variant: "info", duration: 10_000 }]);
+    // Cleared and set again: opencode found a newer one again.
+    host.emit({ notice: text, id: 2 }, "notice");
+    expect(host.toasts).toHaveLength(2);
   });
 
   test("no RPC where the server plugin is not active: no toast, no error", async () => {

@@ -1047,6 +1047,10 @@ each.
   `AGENTS.md` rule, and a `make check` lint that rejects `file.ts:123` citations outside
   `docs/research/` and `evals/results/`
 
+- [ ] `doctor --central`: warn when the global opencode config's `plugins` line also names the
+  harness. By the config load order its copy would win over the central install's plugin, and
+  `doctor_central` does not say so yet (found while adding `opencode plugin add` to the README)
+
 ## Open questions
 
 - Prompt budgets are ceilings raised only to a measured change (see Phase 7, Budgets). The
