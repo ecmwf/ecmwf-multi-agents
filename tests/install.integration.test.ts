@@ -141,4 +141,75 @@ run_("install.sh with real opencode", () => {
     const global = install(box, ["doctor"], box.project);
     expect(global.out).toContain("is not installed here");
   }, TIMEOUT);
+
+  (V2_BIN && NPM_AVAILABLE ? test : test.skip)("opencode plugin add switches the harness on for every project; installed files then win", () => {
+    const box = sandbox(V2_BIN!);
+    const pkg = packedRepository(box);
+    // opencode plugin add takes only registry and Git specs (Npm.isInstallablePackage), not file: ones.
+    const spec = `${NPM}@git+file://${pkg.dir}`;
+    const added = inSandbox(box, ["opencode", "plugin", "add", spec]);
+    const config = path.join(box.config, "opencode.json");
+    expect(added.out + added.err).toContain(`added to ${config}`);
+    expect(added.code).toBe(0);
+    const forProject = install(box, ["doctor", "--project", box.project], box.project);
+    expect(forProject.out).toContain(`OK    switched on by the plugins line in ${config}: ${spec}\n`);
+    expect(forProject.out).toContain(`OK    lead is the harness's, with the plugin ${pkg.version} active`);
+    expect(forProject.code).toBe(0);
+    const global = install(box, ["doctor"], box.project);
+    expect(global.out).toContain(`OK    switched on for every project by the plugins line in ${config}: ${spec}\n`);
+    expect(global.code).toBe(0);
+    // Installed files as well: opencode keeps them and drops the line's copy.
+    expect(install(box).code).toBe(0);
+    const both = install(box, ["doctor", "--project", box.project], box.project);
+    expect(both.out).toContain(`WARN  the files installed in ${box.config} and the plugins line in ${config} (${spec}) both bring the harness; opencode keeps the installed files`);
+    expect(both.out).toContain(`OK    lead is the harness's, with the plugin ${pkg.repoVersion} active`);
+    expect(both.out).not.toContain(pkg.version);
+    expect(install(box, ["uninstall"]).code).toBe(0);
+    expect(inSandbox(box, ["opencode", "plugin", "remove", spec]).code).toBe(0);
+    expect(readFileSync(config, "utf8")).not.toContain(NPM);
+    const off = install(box, ["doctor", "--project", box.project], box.project);
+    expect(off.out).toContain("is not switched on here");
+    expect(off.code).toBe(1);
+  }, TIMEOUT);
 });
+
+const NPM = "@ecmwf.int/multi-agents";
+const NPM_AVAILABLE = Bun.which("npm") !== null && Bun.which("git") !== null;
+if (ENABLED && V2_BIN && !NPM_AVAILABLE) console.warn("skipping the opencode plugin add test: it needs npm and git");
+
+/**
+ * This repository packed as `npm pack` would publish it, in a Git repository that a
+ * `git+file:` spec can name. Two changes tell it apart and let it install: its plugin reports
+ * the version "<version>-line", so a check can see which copy opencode keeps, and it has no
+ * scripts, because npm runs `npm install` and the build of a Git dependency with a build
+ * script, which the packed files cannot do.
+ */
+function packedRepository(box: Sandbox): { dir: string; version: string; repoVersion: string } {
+  const repoVersion = readFileSync(path.join(REPO, "VERSION"), "utf8").trim();
+  const version = `${repoVersion}-line`;
+  const pack = path.join(box.dir, "pack");
+  mkdirSync(pack);
+  const packed = Bun.spawnSync(["npm", "pack", "--json", "--ignore-scripts", "--pack-destination", pack], { cwd: REPO, stdout: "pipe", stderr: "pipe" });
+  if (packed.exitCode !== 0) throw new Error(`npm pack failed: ${packed.stderr.toString().trim()}`);
+  const filename = (JSON.parse(packed.stdout.toString()) as Array<{ filename: string }>)[0]!.filename;
+  const dir = path.join(box.dir, "package");
+  mkdirSync(dir);
+  const untar = Bun.spawnSync(["tar", "-xzf", path.join(pack, filename), "-C", dir, "--strip-components=1"]);
+  if (untar.exitCode !== 0) throw new Error(`tar failed: ${untar.stderr.toString().trim()}`);
+  const manifestFile = path.join(dir, "package.json");
+  const { scripts: _, ...manifest } = JSON.parse(readFileSync(manifestFile, "utf8")) as Record<string, unknown>;
+  writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
+  const entry = path.join(dir, "dist", "opencode-v2", "plugins", NAME, "index.js");
+  const named = `name: "${NAME}", version: "${repoVersion}"`;
+  const source = readFileSync(entry, "utf8");
+  if (!source.includes(named)) throw new Error(`the plugin does not name its version as expected: ${named}`);
+  writeFileSync(entry, source.replace(named, `name: "${NAME}", version: "${version}"`));
+  const git = (args: string[]) => {
+    const result = Bun.spawnSync(["git", "-c", "user.name=test", "-c", "user.email=test@example.invalid", ...args], { cwd: dir, stdout: "pipe", stderr: "pipe" });
+    if (result.exitCode !== 0) throw new Error(`git ${args[0]} failed: ${result.stderr.toString().trim()}`);
+  };
+  git(["init", "-q"]);
+  git(["add", "-A"]);
+  git(["commit", "-qm", "packed"]);
+  return { dir, version, repoVersion };
+}

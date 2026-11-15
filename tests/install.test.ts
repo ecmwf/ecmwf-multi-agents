@@ -911,6 +911,127 @@ describe("doctor --project for a project switched on by a plugins line", () => {
   });
 });
 
+describe("doctor for the harness switched on for every project by opencode plugin add", () => {
+  const COMMAND = { ECMWF_MULTI_AGENTS_COMMAND: "ecmwf-multi-agents" };
+  /** The global opencode config that `opencode plugin add` writes, with a plugins line. */
+  function globalLine(box: Box, plugins: unknown[], file = "opencode.json"): string {
+    const config = path.join(box.config, file);
+    write(config, `${JSON.stringify({ plugins }, null, 2)}\n`);
+    return config;
+  }
+  function project(box: Box, plugins?: unknown[]): string {
+    const dir = path.join(box.dir, "proj");
+    mkdirSync(dir, { recursive: true });
+    if (plugins) write(path.join(dir, "opencode.json"), `${JSON.stringify({ plugins })}\n`);
+    return dir;
+  }
+  const apiLog = (box: Box) => readFileSync(path.join(box.dir, "api.log"), "utf8");
+
+  test("a global line only: doctor and doctor --project report it and ask opencode", () => {
+    const box = makeBox();
+    const config = globalLine(box, ["some-other-plugin@1.0.0", NPM]);
+    const dir = project(box);
+    const global = run(box, ["doctor"], dir, COMMAND);
+    expect(global.code).toBe(0);
+    expect(global.out).toContain(`OK    switched on for every project by the plugins line in ${config}: ${NPM}\n`);
+    expect(global.out).toContain("OK    lead is the harness's, with the plugin 9.9.9 active");
+    expect(global.out).not.toContain("not installed");
+    expect(apiLog(box)).toContain(`${dir} | api --standalone POST /api/rpc/${NAME}/doctor`);
+    const forProject = run(box, ["doctor", "--project", dir], box.dir, COMMAND);
+    expect(forProject.code).toBe(0);
+    expect(forProject.out).toContain(`OK    switched on by the plugins line in ${config}: ${NPM}\n`);
+    expect(forProject.out).toContain("OK    lead is the harness's, with the plugin 9.9.9 active");
+    expect(forProject.out).not.toContain("not switched on");
+    expect(apiLog(box).trim().split("\n").at(-1)).toBe(`${dir} | api --standalone POST /api/rpc/${NAME}/doctor -d {"input":{}} -H x-opencode-directory:${dir}`);
+  });
+
+  test("a global line in opencode.jsonc with comments; a line in a comment does not count", () => {
+    const box = makeBox();
+    const config = path.join(box.config, "opencode.jsonc");
+    write(config, `{\n  // the harness, from opencode plugin add\n  "plugins": [\n    /* pinned */ "${NPM}@0.9.1", // for every project\n  ],\n}\n`);
+    const dir = project(box);
+    const { code, out } = run(box, ["doctor", "--project", dir]);
+    expect(code).toBe(0);
+    expect(out).toContain(`OK    switched on by the plugins line in ${config}: ${NPM}@0.9.1\n`);
+    write(config, `{\n  // "plugins": ["${NPM}"],\n  "plugins": ["some-other-plugin@1.0.0"]\n}\n`);
+    const commented = run(box, ["doctor"], dir);
+    expect(commented.code).toBe(1);
+    expect(commented.out).toContain(`FAIL  ${NAME} is not installed here`);
+  });
+
+  test("the global config folder that OPENCODE_CONFIG_DIR names", () => {
+    const box = makeBox();
+    const folder = path.join(box.dir, "elsewhere");
+    const config = path.join(folder, "opencode.json");
+    write(config, `${JSON.stringify({ plugins: [NPM] })}\n`);
+    const { code, out } = run(box, ["doctor"], project(box), { OPENCODE_CONFIG_DIR: folder });
+    expect(code).toBe(0);
+    expect(out).toContain(`OK    switched on for every project by the plugins line in ${config}: ${NPM}\n`);
+  });
+
+  test("a global line and installed files: a warning that opencode keeps the files", () => {
+    const box = makeBox();
+    run(box, []);
+    const config = globalLine(box, [NPM]);
+    const dir = project(box);
+    answer(box, { output: { ...GOOD_DOCTOR.output, plugins: [{ id: NAME, status: "active" }, { id: NAME, status: "failed", error: `Duplicate plugin ID: ${NAME}` }] } });
+    const warning = `WARN  the files installed in ${box.config} and the plugins line in ${config} (${NPM}) both bring the harness; opencode keeps the installed files, which it finds before any plugins line, and reports the line's copy as "Duplicate plugin ID". Keep one: remove the line with: opencode plugin remove ${NPM}, or the files with: ecmwf-multi-agents uninstall\n`;
+    for (const args of [["doctor"], ["doctor", "--project", dir]]) {
+      const { code, out } = run(box, args, dir, COMMAND);
+      expect(code).toBe(0);
+      expect(out).toContain(warning);
+      expect(out).not.toContain("masks a project's plugins line");
+    }
+    // A line that names a folder: opencode plugin remove does not take it out, so the advice names the file.
+    const folder = globalLine(box, [path.join(box.dist, "opencode-v2", PLUGIN)]);
+    const { out } = run(box, ["doctor"], dir, COMMAND);
+    expect(out).toContain(`Keep one: remove the line from ${folder}, or the files with: ecmwf-multi-agents uninstall\n`);
+    // Files installed in the project, with the global line: the project's files win.
+    rmSync(path.join(box.config, "opencode.json"));
+    run(box, ["uninstall"]);
+    const again = globalLine(box, [NPM]);
+    expect(run(box, ["--project", dir]).code).toBe(0);
+    const projectFiles = run(box, ["doctor", "--project", dir], dir, COMMAND);
+    expect(projectFiles.code).toBe(0);
+    expect(projectFiles.out).toContain(`OK    12 files installed (copy)`);
+    expect(projectFiles.out).toContain(
+      `WARN  the files installed in ${path.join(dir, ".opencode")} and the plugins line in ${again} (${NPM}) both bring the harness; opencode keeps the installed files, which it finds before any plugins line, and reports the line's copy as "Duplicate plugin ID". Keep one: remove the line with: opencode plugin remove ${NPM}, or the files with: ecmwf-multi-agents uninstall --project ${dir}\n`,
+    );
+  });
+
+  test("a global line and a project line naming another version: a warning that opencode keeps the global one", () => {
+    const box = makeBox();
+    const config = globalLine(box, [`${NPM}@0.9.1`]);
+    const dir = project(box, [`${NPM}@0.8.0`]);
+    const projectConfig = path.join(dir, "opencode.json");
+    const warning = `WARN  the plugins line in ${config} (${NPM}@0.9.1) and the one in ${projectConfig} (${NPM}@0.8.0) both bring the harness; opencode keeps ${NPM}@0.9.1, as it reads the global config before the project's, and reports the other as "Duplicate plugin ID". Remove one of them\n`;
+    const forProject = run(box, ["doctor", "--project", dir]);
+    expect(forProject.code).toBe(0);
+    // The project's line still leads the report.
+    expect(forProject.out).toContain(`OK    switched on by the plugins line in ${projectConfig}: ${NPM}@0.8.0\n`);
+    expect(forProject.out).toContain(warning);
+    const global = run(box, ["doctor"], dir);
+    expect(global.code).toBe(0);
+    expect(global.out).toContain(`OK    switched on for every project by the plugins line in ${config}: ${NPM}@0.9.1\n`);
+    expect(global.out).toContain(warning);
+    // The same entry in both: one copy, nothing to warn about.
+    write(projectConfig, `${JSON.stringify({ plugins: [`${NPM}@0.9.1`] })}\n`);
+    expect(run(box, ["doctor", "--project", dir]).out).not.toContain("both bring the harness");
+  });
+
+  test("no line anywhere: not installed, not switched on", () => {
+    const box = makeBox();
+    globalLine(box, ["some-other-plugin@1.0.0"]);
+    const dir = project(box);
+    const global = run(box, ["doctor"], dir);
+    expect(global.code).toBe(1);
+    expect(global.out).toContain(`FAIL  ${NAME} is not installed here`);
+    const forProject = run(box, ["doctor", "--project", dir]);
+    expect(forProject.code).toBe(1);
+    expect(forProject.out).toContain(`FAIL  ${NAME} is not switched on here`);
+  });
+});
+
 
 describe("central install", () => {
   const central = (box: Box) => path.join(box.dir, "shared", "ecmwf");
