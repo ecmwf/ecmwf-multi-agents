@@ -1073,6 +1073,17 @@ describe("doctor for the harness switched on for every project by opencode plugi
     expect(out).toContain(`or the files listed in ${path.join(folder, "ecmwf-multi-agents", "installed.txt")}\n`);
   });
 
+  test("files in the folder OPENCODE_CONFIG_DIR names masking a project line: the advice removes those files", () => {
+    const box = makeBox();
+    const parent = path.join(box.dir, "custom");
+    const folder = path.join(parent, "opencode");
+    expect(run(box, [], box.dir, { XDG_CONFIG_HOME: parent }).code).toBe(0);
+    const dir = project(box, [`${NPM}@0.6.0`]);
+    const { out } = run(box, ["doctor", "--project", dir], dir, { ...COMMAND, OPENCODE_CONFIG_DIR: folder });
+    expect(out).toContain(`WARN  the harness installed in ${folder} masks the one named in`);
+    expect(out).toContain(`or remove the global install with XDG_CONFIG_HOME=${parent} ecmwf-multi-agents uninstall\n`);
+  });
+
   test("plain doctor from a project with files in .opencode and a global line: the project's files win", () => {
     const box = makeBox();
     const config = globalLine(box, [NPM]);

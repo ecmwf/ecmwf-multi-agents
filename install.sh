@@ -1112,6 +1112,19 @@ doctor_central() {
 	export OPENCODE_CONFIG
 }
 
+# How to remove the global install opencode loads, in $GLINE_CONFIG_DIR. The installer removes
+# a global install from $XDG_CONFIG_HOME/opencode, so a folder that OPENCODE_CONFIG_DIR names
+# needs that variable, or, when it is not named opencode, the files its record lists.
+global_uninstall_advice() {
+	if same_dir "$GLINE_CONFIG_DIR" "$GLOBAL_DIR"; then
+		printf '%s' "$PROG uninstall"
+	elif [ "${GLINE_CONFIG_DIR##*/}" = opencode ]; then
+		printf '%s' "XDG_CONFIG_HOME=${GLINE_CONFIG_DIR%/*} $PROG uninstall"
+	else
+		printf '%s' "the files listed in $GLINE_CONFIG_DIR/$NAME/installed.txt"
+	fi
+}
+
 # A global install and a project's plugins line: the global copy's plugin loads first, and
 # opencode drops the project's as "Duplicate plugin ID".
 doctor_masking() {
@@ -1121,7 +1134,7 @@ doctor_masking() {
 	fi
 	if [ -f "$GLINE_CONFIG_DIR/$NAME/installed.txt" ]; then
 		MASKED=1
-		note "the harness installed in $GLINE_CONFIG_DIR masks the one named in $LINE_FILE ($LINE_ENTRY): opencode loads the installed copy and reports the project's as \"Duplicate plugin ID\". Remove the line, or remove the global install with $PROG uninstall"
+		note "the harness installed in $GLINE_CONFIG_DIR masks the one named in $LINE_FILE ($LINE_ENTRY): opencode loads the installed copy and reports the project's as \"Duplicate plugin ID\". Remove the line, or remove the global install with $(global_uninstall_advice)"
 	fi
 }
 
@@ -1296,15 +1309,7 @@ doctor_global_line() {
 	[ -n "$GLINE_KIND" ] || return 0
 	if [ -f "$GLINE_CONFIG_DIR/$NAME/installed.txt" ]; then
 		gline_files=$GLINE_CONFIG_DIR
-		# The installer removes a global install from $XDG_CONFIG_HOME/opencode, so a folder that
-		# OPENCODE_CONFIG_DIR names needs that variable, or, not named opencode, its own record.
-		if same_dir "$GLINE_CONFIG_DIR" "$GLOBAL_DIR"; then
-			gline_uninstall="$PROG uninstall"
-		elif [ "${GLINE_CONFIG_DIR##*/}" = opencode ]; then
-			gline_uninstall="XDG_CONFIG_HOME=${GLINE_CONFIG_DIR%/*} $PROG uninstall"
-		else
-			gline_uninstall="the files listed in $GLINE_CONFIG_DIR/$NAME/installed.txt"
-		fi
+		gline_uninstall=$(global_uninstall_advice)
 	elif [ -f "$LIVE_RECORD" ]; then
 		gline_files=$LIVE_DIR/.opencode
 		gline_uninstall="$PROG uninstall --project $LIVE_DIR"
