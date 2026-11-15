@@ -8,6 +8,7 @@
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import {
   chmodSync,
+  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -1044,6 +1045,32 @@ describe("doctor for the harness switched on for every project by opencode plugi
       expect(out).not.toContain("opencode plugin remove");
       expect(out).toContain(`WARN  the files installed in ${box.config} are not loaded: OPENCODE_CONFIG_DIR names ${folder}, so opencode reads its global config there\n`);
     }
+  });
+
+  test("files and a global line in the folder OPENCODE_CONFIG_DIR names: the uninstall advice removes those files", () => {
+    const box = makeBox();
+    const parent = path.join(box.dir, "custom");
+    const folder = path.join(parent, "opencode");
+    // An install there: the installer's folder is $XDG_CONFIG_HOME/opencode.
+    expect(run(box, [], box.dir, { XDG_CONFIG_HOME: parent }).code).toBe(0);
+    const config = path.join(folder, "opencode.json");
+    write(config, `${JSON.stringify({ plugins: [NPM] })}\n`);
+    const { out } = run(box, ["doctor"], project(box), { ...COMMAND, OPENCODE_CONFIG_DIR: folder });
+    expect(out).toContain(`WARN  the files installed in ${folder} and the plugins line in ${config} (${NPM}) both bring the harness`);
+    expect(out).toContain(`or the files with: XDG_CONFIG_HOME=${parent} ecmwf-multi-agents uninstall\n`);
+  });
+
+  test("files and a global line in an OPENCODE_CONFIG_DIR folder not named opencode: the advice names the record to read", () => {
+    const box = makeBox();
+    const folder = path.join(box.dir, "site-config");
+    // Files recorded there by some other means (an earlier copy, a hand-made folder).
+    const made = path.join(box.dir, "made");
+    expect(run(box, [], box.dir, { XDG_CONFIG_HOME: made }).code).toBe(0);
+    cpSync(path.join(made, "opencode"), folder, { recursive: true });
+    const config = path.join(folder, "opencode.json");
+    write(config, `${JSON.stringify({ plugins: [NPM] })}\n`);
+    const { out } = run(box, ["doctor"], project(box), { ...COMMAND, OPENCODE_CONFIG_DIR: folder });
+    expect(out).toContain(`or the files listed in ${path.join(folder, "ecmwf-multi-agents", "installed.txt")}\n`);
   });
 
   test("plain doctor from a project with files in .opencode and a global line: the project's files win", () => {

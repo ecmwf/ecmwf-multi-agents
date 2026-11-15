@@ -1252,6 +1252,7 @@ find_plugin_line() {
 find_global_line() {
 	gline_dir=${OPENCODE_CONFIG_DIR:-$GLOBAL_DIR}
 	gline_dir=${gline_dir%/}
+	gline_dir=${gline_dir%/}
 	if [ -n "${OPENCODE_CONFIG_DIR-}" ] && { is_central_dir "$gline_dir" || is_earlier_central_dir "$gline_dir"; }; then
 		# doctor_config_dir explains a central install named by OPENCODE_CONFIG_DIR.
 		find_line_in
@@ -1295,7 +1296,15 @@ doctor_global_line() {
 	[ -n "$GLINE_KIND" ] || return 0
 	if [ -f "$GLINE_CONFIG_DIR/$NAME/installed.txt" ]; then
 		gline_files=$GLINE_CONFIG_DIR
-		gline_uninstall="$PROG uninstall"
+		# The installer removes a global install from $XDG_CONFIG_HOME/opencode, so a folder that
+		# OPENCODE_CONFIG_DIR names needs that variable, or, not named opencode, its own record.
+		if same_dir "$GLINE_CONFIG_DIR" "$GLOBAL_DIR"; then
+			gline_uninstall="$PROG uninstall"
+		elif [ "${GLINE_CONFIG_DIR##*/}" = opencode ]; then
+			gline_uninstall="XDG_CONFIG_HOME=${GLINE_CONFIG_DIR%/*} $PROG uninstall"
+		else
+			gline_uninstall="the files listed in $GLINE_CONFIG_DIR/$NAME/installed.txt"
+		fi
 	elif [ -f "$LIVE_RECORD" ]; then
 		gline_files=$LIVE_DIR/.opencode
 		gline_uninstall="$PROG uninstall --project $LIVE_DIR"
@@ -1304,7 +1313,7 @@ doctor_global_line() {
 	fi
 	if [ -n "$gline_files" ]; then
 		MASKED=1
-		note "the files installed in $gline_files and the plugins line in $GLINE_FILE ($GLINE_ENTRY) both bring the harness; opencode keeps the installed files, which it finds before any plugins line, and reports the line's copy as \"Duplicate plugin ID\". Keep one: $(global_line_removal), or the files with: $gline_uninstall"
+		note "the files installed in $gline_files and the plugins line in $GLINE_FILE ($GLINE_ENTRY) both bring the harness; opencode keeps the installed files, which it finds before any plugins line, and reports the line's copy as \"Duplicate plugin ID\". Keep one: $(global_line_removal), or $(case $gline_uninstall in "the files listed"*) printf %s "$gline_uninstall" ;; *) printf "the files with: %s" "$gline_uninstall" ;; esac)"
 	elif [ -n "$LINE_KIND" ] && [ "$LINE_ENTRY" != "$GLINE_ENTRY" ] && { [ -z "$LINE_DIR" ] || [ "$LINE_DIR" != "$GLINE_DIR" ]; }; then
 		MASKED=1
 		note "the plugins line in $GLINE_FILE ($GLINE_ENTRY) and the one in $LINE_FILE ($LINE_ENTRY) both bring the harness; opencode keeps $GLINE_ENTRY, as it reads the global config before the project's, and reports the other as \"Duplicate plugin ID\". Remove one of them"
