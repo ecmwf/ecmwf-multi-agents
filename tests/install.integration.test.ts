@@ -26,6 +26,9 @@ function resolveBin(name: string): string | undefined {
 const V2_BIN = resolveBin(process.env.OPENCODE_V2_BIN ?? "opencode2");
 
 if (ENABLED && !HAVE_DIST) console.warn("dist/ is missing: run bun run build first; skipping the install integration tests");
+const NPM = "@ecmwf.int/multi-agents";
+const NPM_AVAILABLE = Bun.which("npm") !== null && Bun.which("git") !== null;
+if (ENABLED && V2_BIN && !NPM_AVAILABLE) console.warn("skipping the opencode plugin add test: it needs npm and git");
 const run_ = ENABLED && HAVE_DIST ? describe : describe.skip;
 
 const sandboxes: string[] = [];
@@ -172,10 +175,6 @@ run_("install.sh with real opencode", () => {
     expect(off.code).toBe(1);
   }, TIMEOUT);
 });
-
-const NPM = "@ecmwf.int/multi-agents";
-const NPM_AVAILABLE = Bun.which("npm") !== null && Bun.which("git") !== null;
-if (ENABLED && V2_BIN && !NPM_AVAILABLE) console.warn("skipping the opencode plugin add test: it needs npm and git");
 
 /**
  * This repository packed as `npm pack` would publish it, in a Git repository that a
