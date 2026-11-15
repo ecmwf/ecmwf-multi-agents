@@ -61,11 +61,15 @@ export class UpdateNotice {
     this.started = now();
   }
 
-  /** Read `plugin.list`'s answer. */
+  /**
+   * Read `plugin.list`'s answer. Only the plugin's own active entry changes the notice: a list
+   * without it (one opencode cannot give, or one taken while the plugin reloads) leaves it as it
+   * is, so the same update is not announced twice.
+   */
   observe(plugins: unknown): void {
     const source = ownSource(plugins, this.name);
-    if (source === undefined && !Array.isArray(unwrap<unknown>(plugins))) return;
-    if (source?.type !== "package" || source.outdated !== true) {
+    if (source === undefined) return;
+    if (source.type !== "package" || source.outdated !== true) {
       this.current = undefined;
       this.updating = false;
       return;

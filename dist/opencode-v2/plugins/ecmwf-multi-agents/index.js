@@ -1953,9 +1953,9 @@ class UpdateNotice {
   }
   observe(plugins) {
     const source = ownSource(plugins, this.name);
-    if (source === undefined && !Array.isArray(unwrap(plugins)))
+    if (source === undefined)
       return;
-    if (source?.type !== "package" || source.outdated !== true) {
+    if (source.type !== "package" || source.outdated !== true) {
       this.current = undefined;
       this.updating = false;
       return;

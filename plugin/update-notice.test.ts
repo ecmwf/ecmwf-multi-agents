@@ -74,6 +74,17 @@ describe("the update notice", () => {
     expect(notice.list()).toHaveLength(1);
   });
 
+  test("a list without the plugin's active entry, as during a reload, keeps the notice: no second one", () => {
+    const { notice, seen } = watch();
+    notice.observe(listed(OUTDATED));
+    notice.observe({ location: {}, data: [{ id: "opencode.agent", source: { type: "builtin" }, state: { status: "active" } }] });
+    notice.observe(listed(OUTDATED, "activating"));
+    expect(notice.list()).toHaveLength(1);
+    notice.observe(listed(OUTDATED));
+    expect(seen).toHaveLength(1);
+    expect(notice.list()).toEqual([seen[0]!]);
+  });
+
   test("cleared and then set again: a new notice", () => {
     const { notice, seen } = watch();
     notice.observe(listed(OUTDATED));
