@@ -123,7 +123,8 @@ Restart opencode. The harness is then on in every project: `lead` is the default
 its helpers, commands and skills. Update with `opencode plugin update`, remove with
 `opencode plugin remove @ecmwf.int/multi-agents`, and check it with
 `npx @ecmwf.int/multi-agents doctor`. To change models, effort or the review policy, create the
-settings file described under Settings.
+settings file described under Settings. opencode does not install updates by itself; the harness
+tells you when a newer version is available, and `opencode plugin update` installs it.
 
 Use this or the installer below, not both: with both, opencode keeps the installed files and
 ignores the plugin, and `doctor` warns about it.
