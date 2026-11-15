@@ -1019,6 +1019,22 @@ describe("doctor for the harness switched on for every project by opencode plugi
     expect(run(box, ["doctor", "--project", dir]).out).not.toContain("both bring the harness");
   });
 
+  test("files in the default folder while OPENCODE_CONFIG_DIR names another: not loaded, so no duplicate", () => {
+    const box = makeBox();
+    run(box, []);
+    const folder = path.join(box.dir, "elsewhere");
+    const config = path.join(folder, "opencode.json");
+    write(config, `${JSON.stringify({ plugins: [NPM] })}\n`);
+    const dir = project(box);
+    for (const args of [["doctor"], ["doctor", "--project", dir]]) {
+      const { code, out } = run(box, args, dir, { ...COMMAND, OPENCODE_CONFIG_DIR: folder });
+      expect(code).toBe(0);
+      expect(out).not.toContain("both bring the harness");
+      expect(out).not.toContain("opencode plugin remove");
+      expect(out).toContain(`WARN  the files installed in ${box.config} are not loaded: OPENCODE_CONFIG_DIR names ${folder}, so opencode reads its global config there\n`);
+    }
+  });
+
   test("no line anywhere: not installed, not switched on", () => {
     const box = makeBox();
     globalLine(box, ["some-other-plugin@1.0.0"]);

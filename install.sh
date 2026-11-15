@@ -1117,9 +1117,9 @@ doctor_masking() {
 	if [ "$TARGET" = project ] && [ -f "$RECORD" ]; then
 		note "the files installed in $CONFIG_DIR and the plugins line in $LINE_FILE ($LINE_ENTRY) both bring the harness, and the files win; keep one of them"
 	fi
-	if [ -f "$GLOBAL_DIR/$NAME/installed.txt" ]; then
+	if [ -f "$GLINE_CONFIG_DIR/$NAME/installed.txt" ]; then
 		MASKED=1
-		note "the harness installed in $GLOBAL_DIR masks the one named in $LINE_FILE ($LINE_ENTRY): opencode loads the installed copy and reports the project's as \"Duplicate plugin ID\". Remove the line, or remove the global install with $PROG uninstall"
+		note "the harness installed in $GLINE_CONFIG_DIR masks the one named in $LINE_FILE ($LINE_ENTRY): opencode loads the installed copy and reports the project's as \"Duplicate plugin ID\". Remove the line, or remove the global install with $PROG uninstall"
 	fi
 }
 
@@ -1244,8 +1244,9 @@ find_plugin_line() {
 
 # The global opencode config: the folder OPENCODE_CONFIG_DIR names, else ~/.config/opencode;
 # opencode reads opencode.json and opencode.jsonc there, and "opencode plugin add" writes the
-# first of them that exists (opencode.json when neither does). Sets GLINE_KIND, GLINE_ENTRY,
-# GLINE_FILE, GLINE_DIR and GLINE_KEY as find_plugin_line sets LINE_*.
+# first of them that exists (opencode.json when neither does). Sets GLINE_CONFIG_DIR, the
+# folder whose installed files opencode loads, and GLINE_KIND, GLINE_ENTRY, GLINE_FILE,
+# GLINE_DIR and GLINE_KEY as find_plugin_line sets LINE_*.
 find_global_line() {
 	gline_dir=${OPENCODE_CONFIG_DIR:-$GLOBAL_DIR}
 	gline_dir=${gline_dir%/}
@@ -1255,6 +1256,7 @@ find_global_line() {
 	else
 		find_line_in "$gline_dir/opencode.json" "$gline_dir/opencode.jsonc"
 	fi
+	GLINE_CONFIG_DIR=$gline_dir
 	GLINE_KIND=$LINE_KIND
 	GLINE_ENTRY=$LINE_ENTRY
 	GLINE_FILE=$LINE_FILE
@@ -1285,9 +1287,12 @@ global_line_removal() {
 # project's, and keeps the first copy of a plugin ID (core/src/config/plugin/source.ts and
 # core/src/plugin/supervisor.ts in opencode 2.2.6).
 doctor_global_line() {
+	if [ -f "$GLOBAL_DIR/$NAME/installed.txt" ] && ! same_dir "$GLOBAL_DIR" "$GLINE_CONFIG_DIR"; then
+		note "the files installed in $GLOBAL_DIR are not loaded: OPENCODE_CONFIG_DIR names $GLINE_CONFIG_DIR, so opencode reads its global config there"
+	fi
 	[ -n "$GLINE_KIND" ] || return 0
-	if [ -f "$GLOBAL_DIR/$NAME/installed.txt" ]; then
-		gline_files=$GLOBAL_DIR
+	if [ -f "$GLINE_CONFIG_DIR/$NAME/installed.txt" ]; then
+		gline_files=$GLINE_CONFIG_DIR
 		gline_uninstall="$PROG uninstall"
 	elif [ "$TARGET" = project ] && [ -f "$RECORD" ]; then
 		gline_files=$CONFIG_DIR
@@ -1302,6 +1307,13 @@ doctor_global_line() {
 		MASKED=1
 		note "the plugins line in $GLINE_FILE ($GLINE_ENTRY) and the one in $LINE_FILE ($LINE_ENTRY) both bring the harness; opencode keeps $GLINE_ENTRY, as it reads the global config before the project's, and reports the other as \"Duplicate plugin ID\". Remove one of them"
 	fi
+}
+
+# Whether two paths name the same folder.
+same_dir() {
+	[ "$1" = "$2" ] && return 0
+	[ -d "$1" ] && [ -d "$2" ] || return 1
+	[ "$(CDPATH='' cd -- "$1" && pwd -P)" = "$(CDPATH='' cd -- "$2" && pwd -P)" ]
 }
 
 # Finds the first plugins line for the harness in the files given, as find_plugin_line does.
