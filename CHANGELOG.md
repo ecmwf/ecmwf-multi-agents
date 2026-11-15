@@ -13,6 +13,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ### Added
 
+- `opencode plugin add @ecmwf.int/multi-agents` is now the quickest install, in the README and
+  `docs/install.md`: it switches the harness on for every project. `install.sh doctor`
+  recognises a harness switched on this way, and warns when it is also installed as files or
+  named in a project's `plugins` line with another version, saying which copy opencode keeps.
+- The README shows how the agents work together in an animation instead of a flowchart.
+
 - `lead` writes for readers whose first language may not be English: short sentences, the
   active voice, steps as numbered commands, one term for one thing, and code, commands and
   error messages left as they are. The rules are inspired by ASD-STE100, not compliant with it

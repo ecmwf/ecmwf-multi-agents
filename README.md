@@ -24,6 +24,13 @@ unclear, and hands the reading, building and checking to three helpers, and to f
 ones where a project switches them on. Each helper runs on a model and effort suited to its
 job.
 
+<p align="center">
+  <img src="docs/assets/how-it-works.svg" width="920" alt="A conversation with lead: you ask for a --json option; lead asks one question, sends a scout, runs two builders in the background, answers your other question meanwhile, has the change reviewed and reports back.">
+</p>
+
+You talk to `lead`; it plans, hands work to helpers, keeps answering you while they work, and
+has changes reviewed.
+
 ## The agents
 
 | Agent | What it does | Default model and effort |
@@ -36,17 +43,6 @@ job.
 Effort is how hard a model thinks before it answers: more effort is slower and costs more.
 You can change each agent's effort, and its model, in the settings file. The reviewer uses a
 different model family on purpose: it is more likely to catch mistakes the other agents share.
-
-```mermaid
-flowchart LR
-  U((You)) <--> L[lead]
-  L -->|look up| S[scout]
-  L -->|change| B[builder]
-  L -->|check| R[reviewer]
-  S -.->|findings| L
-  B -.->|report| L
-  R -.->|verdict| L
-```
 
 Only `lead` talks to you. Helpers never ask you questions and never hand work on.
 
@@ -117,7 +113,23 @@ session yourself.
 
 ## Install
 
-Clone this repository anywhere, then run the installer:
+The quickest way is opencode's own plugin command:
+
+```sh
+opencode plugin add @ecmwf.int/multi-agents
+```
+
+Restart opencode. The harness is then on in every project: `lead` is the default agent, with
+its helpers, commands and skills. Update with `opencode plugin update`, remove with
+`opencode plugin remove @ecmwf.int/multi-agents`, and check it with
+`npx @ecmwf.int/multi-agents doctor`. To change models, effort or the review policy, create the
+settings file described under Settings.
+
+Use this or the installer below, not both: with both, opencode keeps the installed files and
+ignores the plugin, and `doctor` warns about it.
+
+Or clone this repository anywhere and run the installer, which also writes the settings file
+and can check the setup:
 
 ```sh
 git clone https://github.com/ecmwf/ecmwf-multi-agents.git ~/.local/share/ecmwf-multi-agents
