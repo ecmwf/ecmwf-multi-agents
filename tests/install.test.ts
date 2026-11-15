@@ -56,6 +56,7 @@ const GOOD_DOCTOR = {
     helpersStray: [],
     workDirExcluded: true,
     problems: [],
+    updateAvailable: false,
     plugins: [{ id: NAME, status: "active" }],
   },
 };
@@ -811,6 +812,16 @@ describe("doctor asks opencode through the plugin's RPC", () => {
     );
     answer(box, { output: { ...GOOD_DOCTOR.output, workDirExcluded: null } });
     expect(run(box, ["doctor"]).out).not.toContain("exclude file");
+  });
+
+  test("a newer harness opencode found is a warning; none, nothing is said", () => {
+    const box = makeBox();
+    run(box, []);
+    expect(run(box, ["doctor"]).out).not.toContain("newer version");
+    answer(box, { output: { ...GOOD_DOCTOR.output, updateAvailable: true } });
+    const { code, out } = run(box, ["doctor"]);
+    expect(code).toBe(0);
+    expect(out).toContain("WARN  a newer version is available: run opencode plugin update");
   });
 
   test("a global install masks a project's plugins line: a warning", () => {

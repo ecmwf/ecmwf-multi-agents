@@ -1548,6 +1548,8 @@ doctor_live() {
 	else
 		note "the default agent is ${live_default:-none}, not lead: a default_agent in an opencode config, or \"default_agent\": false in the settings, chooses it"
 	fi
+	# opencode marks a package plugin outdated, and installs the update only when asked.
+	[ "$(json_value updateAvailable)" != true ] || note "a newer version is available: run opencode plugin update"
 	json_values problem <"$DOCTOR_TMP/live" >"$DOCTOR_TMP/problems"
 	while IFS= read -r live_problem; do
 		[ -n "$live_problem" ] || continue

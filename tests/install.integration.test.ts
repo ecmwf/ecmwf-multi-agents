@@ -158,6 +158,12 @@ run_("install.sh with real opencode", () => {
     expect(forProject.out).toContain(`OK    switched on by the plugins line in ${config}: ${spec}\n`);
     expect(forProject.out).toContain(`OK    lead is the harness's, with the plugin ${pkg.version} active`);
     expect(forProject.code).toBe(0);
+    expect(forProject.out).not.toContain("newer version");
+    // A new revision of the package: opencode's check at start marks it outdated, and the plugin says so.
+    pkg.commit();
+    const outdated = install(box, ["doctor", "--project", box.project], box.project);
+    expect(outdated.out).toContain("WARN  a newer version is available: run opencode plugin update");
+    expect(outdated.out).toContain(`OK    lead is the harness's, with the plugin ${pkg.version} active`);
     const global = install(box, ["doctor"], box.project);
     expect(global.out).toContain(`OK    switched on for every project by the plugins line in ${config}: ${spec}\n`);
     expect(global.code).toBe(0);
@@ -181,9 +187,9 @@ run_("install.sh with real opencode", () => {
  * `git+file:` spec can name. Two changes tell it apart and let it install: its plugin reports
  * the version "<version>-line", so a check can see which copy opencode keeps, and it has no
  * scripts, because npm runs `npm install` and the build of a Git dependency with a build
- * script, which the packed files cannot do.
+ * script, which the packed files cannot do. `commit` adds a later revision.
  */
-function packedRepository(box: Sandbox): { dir: string; version: string; repoVersion: string } {
+function packedRepository(box: Sandbox): { dir: string; version: string; repoVersion: string; commit: () => void } {
   const repoVersion = readFileSync(path.join(REPO, "VERSION"), "utf8").trim();
   const version = `${repoVersion}-line`;
   const pack = path.join(box.dir, "pack");
@@ -210,5 +216,10 @@ function packedRepository(box: Sandbox): { dir: string; version: string; repoVer
   git(["init", "-q"]);
   git(["add", "-A"]);
   git(["commit", "-qm", "packed"]);
-  return { dir, version, repoVersion };
+  const commit = () => {
+    writeFileSync(path.join(dir, "NEWER"), "a later revision\n");
+    git(["add", "-A"]);
+    git(["commit", "-qm", "newer"]);
+  };
+  return { dir, version, repoVersion, commit };
 }

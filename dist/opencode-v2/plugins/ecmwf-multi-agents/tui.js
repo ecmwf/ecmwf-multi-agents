@@ -5,9 +5,10 @@ function rpcDefinition(id) {
     id,
     methods: {
       doctor: { input: {}, output: {} },
-      problems: { input: {}, output: {} }
+      problems: { input: {}, output: {} },
+      notices: { input: {}, output: {} }
     },
-    events: { problem: { schema: { type: "object" } } }
+    events: { problem: { schema: { type: "object" } }, notice: { schema: { type: "object" } } }
   };
 }
 
@@ -16,25 +17,40 @@ var DURATION_MS = 1e4;
 function isProblem(value) {
   return value !== null && typeof value === "object" && typeof value.problem === "string";
 }
+function isNotice(value) {
+  return value !== null && typeof value === "object" && typeof value.notice === "string" && typeof value.id === "number";
+}
 function createTui(name) {
   return {
     id: name,
     setup(ctx) {
+      const toast = (message, variant) => {
+        try {
+          ctx.ui.toast.show({ title: name, message, variant, duration: DURATION_MS });
+        } catch {}
+      };
       const shown = new Set;
       const show = (problem) => {
         if (!isProblem(problem) || !problem.notify || shown.has(problem.problem))
           return;
         shown.add(problem.problem);
-        try {
-          ctx.ui.toast.show({ title: name, message: problem.problem, variant: "warning", duration: DURATION_MS });
-        } catch {}
+        toast(problem.problem, "warning");
       };
-      let off = () => {};
+      const noticed = new Set;
+      const notify = (notice) => {
+        if (!isNotice(notice) || noticed.has(notice.id))
+          return;
+        noticed.add(notice.id);
+        toast(notice.notice, "info");
+      };
+      const offs = [];
       try {
         const rpc = ctx.client.rpc(rpcDefinition(name));
-        off = rpc.events.on("problem", (event) => show(event?.data));
+        offs.push(rpc.events.on("problem", (event) => show(event?.data)));
+        offs.push(rpc.events.on("notice", (event) => notify(event?.data)));
         const directory = ctx.location?.directory;
-        rpc.problems({}, directory === undefined ? undefined : { location: { directory } }).then((output) => {
+        const options = directory === undefined ? undefined : { location: { directory } };
+        rpc.problems({}, options).then((output) => {
           const list = output?.problems;
           if (Array.isArray(list))
             for (const problem of list)
@@ -42,8 +58,19 @@ function createTui(name) {
         }).catch(() => {
           return;
         });
+        rpc.notices({}, options).then((output) => {
+          const list = output?.notices;
+          if (Array.isArray(list))
+            for (const notice of list)
+              notify(notice);
+        }).catch(() => {
+          return;
+        });
       } catch {}
-      return () => off();
+      return () => {
+        for (const off of offs)
+          off();
+      };
     }
   };
 }
