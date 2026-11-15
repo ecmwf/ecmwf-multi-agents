@@ -1035,6 +1035,37 @@ describe("doctor for the harness switched on for every project by opencode plugi
     }
   });
 
+  test("plain doctor from a project with files in .opencode and a global line: the project's files win", () => {
+    const box = makeBox();
+    const config = globalLine(box, [NPM]);
+    const dir = project(box);
+    expect(run(box, ["--project", dir]).code).toBe(0);
+    const { code, out } = run(box, ["doctor"], dir, COMMAND);
+    expect(code).toBe(0);
+    expect(out).toContain(
+      `WARN  the files installed in ${path.join(dir, ".opencode")} and the plugins line in ${config} (${NPM}) both bring the harness; opencode keeps the installed files, which it finds before any plugins line, and reports the line's copy as "Duplicate plugin ID". Keep one: remove the line with: opencode plugin remove ${NPM}, or the files with: ecmwf-multi-agents uninstall --project ${dir}\n`,
+    );
+  });
+
+  test("plain doctor from a project whose files and line name another copy: the line is masked by the project's files", () => {
+    const box = makeBox();
+    const dir = project(box);
+    expect(run(box, ["--project", dir]).code).toBe(0);
+    write(path.join(dir, "opencode.json"), `${JSON.stringify({ plugins: [`${NPM}@0.8.0`] })}\n`);
+    run(box, []);
+    const { out } = run(box, ["doctor"], dir);
+    expect(out).toContain(`WARN  the files installed in ${path.join(dir, ".opencode")} and the plugins line in ${path.join(dir, "opencode.json")} (${NPM}@0.8.0) both bring the harness, and the files win; keep one of them`);
+  });
+
+  test("plain doctor from a project whose line names another version: the global line wins", () => {
+    const box = makeBox();
+    const config = globalLine(box, [`${NPM}@0.9.1`]);
+    const dir = project(box, [`${NPM}@0.8.0`]);
+    const { code, out } = run(box, ["doctor"], dir);
+    expect(code).toBe(0);
+    expect(out).toContain(`WARN  the plugins line in ${config} (${NPM}@0.9.1) and the one in ${path.join(dir, "opencode.json")} (${NPM}@0.8.0) both bring the harness; opencode keeps ${NPM}@0.9.1`);
+  });
+
   test("no line anywhere: not installed, not switched on", () => {
     const box = makeBox();
     globalLine(box, ["some-other-plugin@1.0.0"]);

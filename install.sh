@@ -965,6 +965,8 @@ cmd_doctor() {
 	SRC_DIR=$DIST_ROOT/opencode-$PLATFORM
 	# The project whose opencode config is checked for a plugins line, and that opencode is asked about.
 	LIVE_DIR=${PROJECT:-$PWD}
+	# Files installed in that project, which opencode loads there in either mode.
+	LIVE_RECORD=$LIVE_DIR/.opencode/$NAME/installed.txt
 	find_global_line
 	find_plugin_line "$LIVE_DIR"
 	doctor_config_dir
@@ -1114,8 +1116,8 @@ doctor_central() {
 # opencode drops the project's as "Duplicate plugin ID".
 doctor_masking() {
 	[ -n "$LINE_KIND" ] || return 0
-	if [ "$TARGET" = project ] && [ -f "$RECORD" ]; then
-		note "the files installed in $CONFIG_DIR and the plugins line in $LINE_FILE ($LINE_ENTRY) both bring the harness, and the files win; keep one of them"
+	if [ -f "$LIVE_RECORD" ]; then
+		note "the files installed in $LIVE_DIR/.opencode and the plugins line in $LINE_FILE ($LINE_ENTRY) both bring the harness, and the files win; keep one of them"
 	fi
 	if [ -f "$GLINE_CONFIG_DIR/$NAME/installed.txt" ]; then
 		MASKED=1
@@ -1294,9 +1296,9 @@ doctor_global_line() {
 	if [ -f "$GLINE_CONFIG_DIR/$NAME/installed.txt" ]; then
 		gline_files=$GLINE_CONFIG_DIR
 		gline_uninstall="$PROG uninstall"
-	elif [ "$TARGET" = project ] && [ -f "$RECORD" ]; then
-		gline_files=$CONFIG_DIR
-		gline_uninstall="$PROG uninstall --project $PROJECT"
+	elif [ -f "$LIVE_RECORD" ]; then
+		gline_files=$LIVE_DIR/.opencode
+		gline_uninstall="$PROG uninstall --project $LIVE_DIR"
 	else
 		gline_files=
 	fi
