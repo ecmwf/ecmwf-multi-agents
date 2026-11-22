@@ -62,5 +62,5 @@ lines are 1.18.35, the same in 1.19.0):
 - The bundle carries the prompts and templates: 106 KB instead of 76 KB in 0.3.0.
 - A project with both the line and an install loads the plugin twice and uses the installed
   files; the plugin's hooks are idempotent, and `doctor` warns.
-- The npm package planned in `PLAN.md` can use the same plugin unchanged, with
+- The npm package, planned then and published since 0.6.0, can use the same plugin unchanged, with
   `"plugin": ["<package>@<version>"]` pinning a version per project.

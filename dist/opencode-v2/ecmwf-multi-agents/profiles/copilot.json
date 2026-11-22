@@ -33,6 +33,10 @@
     "data-scientist": {
       "model": "github-copilot/claude-sonnet-5.5",
       "effort": "high"
+    },
+    "inspector": {
+      "model": "github-copilot/gpt-6.2-astra",
+      "effort": "xhigh"
     }
   }
 }

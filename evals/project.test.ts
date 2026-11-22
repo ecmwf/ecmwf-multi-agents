@@ -8,7 +8,8 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { CASES, readingsCsv, UNITS_BUG } from "./cases.ts";
+import { CASES, PLANTED, readingsCsv, UNITS_BUG } from "./cases.ts";
+import type { Place } from "./checks.ts";
 import { checkEvalLogin, evalLoginDb, gitWorkTreeOf, importLogin, loginDbProblem, loginEnv, pipeEnv } from "./login.ts";
 import {
   applySetup,
@@ -33,6 +34,7 @@ import {
   sandboxParentProblem,
   sandboxPath,
   setWritingGuidance,
+  skillsDenied,
   snapshot,
 } from "./project.ts";
 import type { Box } from "./project.ts";
@@ -365,6 +367,74 @@ describe("designer-limit-twice", () => {
   });
 });
 
+describe("harden", () => {
+  test("switches the inspector on, plants two weaknesses in a committed file, and runs /harden on it", () => {
+    const item = CASES.find((candidate) => candidate.id === "harden")!;
+    const settings = item.setup.find((step) => step.kind === "write" && step.path === ".opencode/ecmwf-multi-agents.jsonc");
+    expect(settings?.kind === "write" && JSON.parse(settings.content)).toEqual({ agents: { inspector: { enabled: true } } });
+    const planted = item.setup.find((step) => step.kind === "write" && step.path === "stations/archive.py");
+    expect(planted?.kind === "write" && planted.content).toContain("shell=True");
+    expect(planted?.kind === "write" && planted.content).toContain("pickle.load");
+    expect(item.setup.at(-1)).toMatchObject({ kind: "commit" });
+    expect(item.turns).toEqual([{ turn: { kind: "command", command: "harden", arguments: "stations/archive.py" } }]);
+    expect(item.checks.map((check) => check.id)).toEqual(["helpers-ran", "findings-question", "security-commit", "weakness-removed", "tests-pass", "only-archive", "never-pushed"]);
+    expect(item.baseline).toBe(false);
+  });
+
+  test("harden-off: with the inspector off, /harden refuses without a model turn", () => {
+    const item = CASES.find((candidate) => candidate.id === "harden-off")!;
+    expect(item.setup).toEqual([]);
+    expect(item.checks.map((check) => check.id)).toEqual(["inspector-off", "inspector-never-ran", "lead-never-ran", "no-changes"]);
+  });
+});
+
+describe("the security skills' cases", () => {
+  const item = (id: string) => CASES.find((candidate) => candidate.id === id)!;
+  const writes = (id: string) => item(id).setup.flatMap((step) => (step.kind === "write" ? [step.path] : []));
+
+  test("each switches the inspector on, plants weaknesses and decoys in committed files, and runs /harden on them", () => {
+    for (const [id, target, files] of [
+      ["harden-code", "stations/fetch.py tools/keyring.c", ["stations/fetch.py", "tools/keyring.c"]],
+      ["harden-supply", ".github/workflows", [".github/workflows/release.yml", ".github/workflows/ci.yml"]],
+      ["harden-fix", "stations/share.py", ["stations/share.py"]],
+    ] as const) {
+      expect([id, writes(id)]).toEqual([id, [".opencode/ecmwf-multi-agents.jsonc", ...files]]);
+      expect([id, item(id).setup.at(-1)?.kind]).toEqual([id, "commit"]);
+      expect([id, item(id).turns]).toEqual([id, [{ turn: { kind: "command", command: "harden", arguments: target } }]]);
+      expect([id, item(id).baseline]).toEqual([id, false]);
+    }
+  });
+
+  test("each planted place holds its weakness or decoy, so checks that count findings by place point at the right lines", () => {
+    const planted = (file: string) => CASES.flatMap((candidate) => candidate.setup).find((step) => step.kind === "write" && step.path === file);
+    for (const [name, marker] of Object.entries({
+      tar: "bundle.extractall(dest)",
+      mktemp: "tempfile.mktemp",
+      memset: "memset(key, 0, len)",
+      cache: "cache: pip",
+      token: "PYPI_TOKEN",
+      index: "--extra-index-url",
+      unpackChecked: 'filter="data"',
+      packList: '["tar", "czf"',
+      prNumber: "pull_request.number",
+    })) {
+      const place: Place = PLANTED[name as keyof typeof PLANTED];
+      const step = planted(place.file);
+      const lines = step?.kind === "write" ? step.content.split("\n").slice(place.from - 1, place.to ?? place.from) : [];
+      expect([name, lines.some((line) => line.includes(marker))]).toEqual([name, true]);
+    }
+  });
+
+  test("detection and safe fixing decide the result; loading the skill and citing its IDs are recorded only, so both arms count alike", () => {
+    expect(item("harden-code").checks.map((check) => check.id)).toEqual(["found-tar", "found-mktemp", "found-memset", "decoys-not-reported", "inspector-loaded-security-code", "cites-ids", "tests-pass", "never-pushed"]);
+    expect(item("harden-supply").checks.map((check) => check.id)).toEqual(["found-cache", "found-token", "found-index", "decoys-not-reported", "inspector-loaded-security-supply-chain", "cites-ids", "never-pushed"]);
+    expect(item("harden-fix").checks.map((check) => check.id)).toEqual(["security-commit", "weakness-removed", "hidden-tests", "regression-test", "no-suppressions", "builder-loaded-security-fix", "tests-pass", "never-pushed"]);
+    for (const id of ["harden-code", "harden-supply", "harden-fix"]) {
+      for (const check of item(id).checks.filter((check) => check.id.includes("-loaded-") || check.id === "cites-ids")) expect([id, check.id, check.recordOnly]).toEqual([id, check.id, ["harness"]]);
+    }
+  });
+});
+
 describe("data-question", () => {
   test("checks that the computation was kept as a script in the data scientist's folder", () => {
     const item = CASES.find((candidate) => candidate.id === "data-question")!;
@@ -431,5 +501,16 @@ describe("setWritingGuidance", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("skillsDenied", () => {
+  test("per-agent rules that deny the security skills, which come after the agents' own and so win", () => {
+    expect(skillsDenied()).toEqual({
+      agents: {
+        inspector: { permissions: [{ action: "skill", resource: "ecmwf-multi-agents-security-*", effect: "deny" }] },
+        builder: { permissions: [{ action: "skill", resource: "ecmwf-multi-agents-security-*", effect: "deny" }] },
+      },
+    });
   });
 });

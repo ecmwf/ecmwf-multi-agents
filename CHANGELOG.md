@@ -11,6 +11,51 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-22
+
+### Added
+
+- `opencode plugin add @ecmwf.int/multi-agents` is now the quickest install, in the README and
+  `docs/install.md`: it switches the harness on for every project. `install.sh doctor`
+  recognises a harness switched on this way, and warns when it is also installed as files or
+  named in a project's `plugins` line with another version, saying which copy opencode keeps.
+  By Samet Demir (#9).
+- The README shows how the agents work together in an animation instead of a flowchart (#9).
+- The harness tells you when a newer version is available. opencode marks a plugin added with
+  `opencode plugin add` (or named without a version) outdated but never installs the update by
+  itself; the harness then shows a notice in the TUI at each start until you update: "A newer
+  ecmwf-multi-agents is available: run opencode plugin update, then restart opencode."
+  `doctor` warns about it too. A checkout or an install with `install.sh` never gets the
+  notice (#9).
+- `inspector`, an optional helper for security, off by default: it reviews code for security
+  weaknesses and advises, each finding with its pros and cons, for you to decide. It changes
+  no project file. Default model: GPT 6.2 Astra via GitHub Copilot at xhigh, or Claude Opus 5.5
+  at xhigh without Copilot (ADR 0007).
+- `/harden [target]` hardens security with the `inspector` on: it finds weaknesses, you pick the
+  fixes, builder makes each and the reviewer checks it, one `fix(security)` commit per fix on
+  your branch, never pushed; the inspector then rechecks. On GitHub, `lead` can read the
+  repository's security alerts and start a CodeQL scan, each only with your approval. While the
+  inspector is off, `/harden` says how to switch it on.
+- Three security skills of the harness's own for `/harden`: checklists for the `inspector`
+  (Python, C and C++, Fortran and shell code; GitHub Actions, Python dependencies, containers,
+  secrets and scanner hits), each item with an ID its findings cite, and safe-fix rules and
+  recheck verdicts for the builder. Inspired by cybersecurity-skills (MIT), not copied.
+
+### Changed
+
+- The README says how to install and how to update for each way of installing, and names what
+  is new; installing from source, building, testing and releasing move to `CONTRIBUTING.md`,
+  and the design's entry point is `DESIGN.md`. Open work and proposals are GitHub issues.
+- `make release X.Y.Z` also runs on a branch `release/X.Y.Z`, for repositories whose `main`
+  takes only pull requests: it pushes the branch, and after the merge the same command on
+  `main` tags and publishes.
+
+### Fixed
+
+- `install.sh doctor` with `OPENCODE_CONFIG_DIR` set looks for installed files in the folder
+  opencode reads, and warns that files installed in `~/.config/opencode` are then not loaded.
+  It also weighs files installed in the project without `--project` (#9).
+
 ## [0.10.0] - 2026-11-22
 
 ### Added
@@ -301,7 +346,8 @@ helpers it hands work to.
 - Scenario evals (`make evals`) that compare the harness with plain opencode on a sample
   repository, using real models.
 
-[Unreleased]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.10.0...HEAD
+[Unreleased]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.11.0...HEAD
+[0.11.0]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.10.0...0.11.0
 [0.10.0]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.9.1...0.10.0
 [0.9.1]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.9.0...0.9.1
 [0.9.0]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.8.0...0.9.0

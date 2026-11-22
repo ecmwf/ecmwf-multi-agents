@@ -10,6 +10,7 @@
     "researcher": { "model": "github-copilot/claude-opus-5.5", "effort": "xhigh" },
     "tester": { "model": "github-copilot/gpt-6.1-sol", "effort": "high" },
     "designer": { "model": "github-copilot/claude-opus-5.5", "effort": "high" },
-    "data-scientist": { "model": "github-copilot/claude-sonnet-5.5", "effort": "high" }
+    "data-scientist": { "model": "github-copilot/claude-sonnet-5.5", "effort": "high" },
+    "inspector": { "model": "github-copilot/gpt-6.2-astra", "effort": "xhigh" }
   }
 }

@@ -10,6 +10,16 @@ import {
   answerMentions,
   answeredDuringPlan,
   answersInline,
+  citesIds,
+  findingsMention,
+  helpersRan,
+  noSuppressions,
+  notInFindings,
+  regressionTest,
+  skillLoaded,
+  neverPushed,
+  securityCommit,
+  weaknessRemoved,
   askedUser,
   backgroundHandoffs,
   changedOnlyIn,
@@ -36,6 +46,7 @@ import {
   remoteUnchanged,
   reportMentions,
   settingRaised,
+  type Place,
   type Term,
   testsPass,
   verdict,
@@ -150,6 +161,138 @@ const RANGE_TERMS: Term[] = [
 ];
 
 const RANGE_QUESTION = "While that runs: in one sentence, what temperature range does the quality check accept? Do not change any files.";
+
+/** A module with two weaknesses for /harden: a shell command built from its argument, and pickle on a file. */
+export const WEAK_ARCHIVE = `"""Pack a station's data folder for sharing, and read back a cached summary."""
+
+import pickle
+import subprocess
+
+
+def pack(folder):
+    """Write <folder>.tar.gz next to the folder."""
+    subprocess.run(f"tar czf {folder}.tar.gz {folder}", shell=True, check=True)
+
+
+def load_cache(path):
+    """Read a summary cached by an earlier run."""
+    with open(path, "rb") as handle:
+        return pickle.load(handle)
+`;
+
+/** Python with two weaknesses and two decoys for the code skill: the same calls, used safely. */
+const WEAK_FETCH = `"""Unpack station archives that other sites send, and name temporary downloads."""
+
+import subprocess
+import tarfile
+import tempfile
+
+
+def unpack(archive, dest):
+    """Unpack an archive another site sent us."""
+    with tarfile.open(archive) as bundle:
+        bundle.extractall(dest)
+
+
+def unpack_checked(archive, dest):
+    """Unpack an archive from our own build, keeping every file inside dest."""
+    with tarfile.open(archive) as bundle:
+        bundle.extractall(dest, filter="data")
+
+
+def scratch_name():
+    """A name for a temporary download."""
+    return tempfile.mktemp(suffix=".tar.gz")
+
+
+def pack_list(folder, out):
+    """Pack a folder with tar."""
+    subprocess.run(["tar", "czf", out, "-C", folder, "."], check=True)
+`;
+
+/** C that clears a key with memset just before free, which the compiler may remove. */
+const WEAK_KEYRING = `#include <stdlib.h>
+#include <string.h>
+
+/* Forget an API key read from the user's config. */
+void forget_key(char *key, size_t len) {
+    memset(key, 0, len);
+    free(key);
+}
+`;
+
+/** A release workflow that restores a cache and publishes with a long-lived token. */
+const WEAK_RELEASE = `name: release
+on:
+  push:
+    tags: ["*"]
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install build twine
+      - run: python -m build
+      - run: twine upload dist/*
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: \${{ secrets.PYPI_TOKEN }}
+`;
+
+/** CI that installs an internal package from an extra index; the decoy echoes the pull request's number. */
+const WEAK_CI = `name: ci
+on: [pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "Testing pull request \${{ github.event.pull_request.number }}"
+      - run: pip install --extra-index-url https://pypi.internal.example/simple stations-internal-tools
+      - run: python3 -m unittest
+`;
+
+/** One shell helper that two functions share: the fix belongs in the helper. */
+const WEAK_SHARE = `"""Pack station folders for sharing."""
+
+import subprocess
+
+
+def _run(command):
+    subprocess.run(command, shell=True, check=True)
+
+
+def pack(folder):
+    """Write <folder>.tar.gz next to the folder."""
+    _run(f"tar czf {folder}.tar.gz {folder}")
+
+
+def pack_all(folders):
+    """Pack several folders at once."""
+    for folder in folders:
+        _run(f"tar czf {folder}.tar.gz {folder}")
+`;
+
+const INSPECTOR_ON = switches({ inspector: true });
+
+/** Where the security cases' weaknesses and decoys sit in the planted files, for checks that count findings by place. */
+export const PLANTED = {
+  tar: { file: "stations/fetch.py", from: 11 },
+  mktemp: { file: "stations/fetch.py", from: 22 },
+  memset: { file: "tools/keyring.c", from: 6 },
+  unpackChecked: { file: "stations/fetch.py", from: 14, to: 17 },
+  packList: { file: "stations/fetch.py", from: 25, to: 27 },
+  cache: { file: ".github/workflows/release.yml", from: 13 },
+  token: { file: ".github/workflows/release.yml", from: 16, to: 19 },
+  index: { file: ".github/workflows/ci.yml", from: 11 },
+  prNumber: { file: ".github/workflows/ci.yml", from: 10 },
+} satisfies Record<string, Place>;
 
 /** A project settings file with per-agent settings, such as `enabled` and `steps`. */
 export function projectAgents(agents: Record<string, Record<string, unknown>>): SetupStep {
@@ -738,7 +881,7 @@ export const CASES: EvalCase[] = [
       helperContinued("designer"),
       workFiles("spec", "a spec was written", /^\.ecmwf-multi-agents\/design\/[^/]+\/spec\.md$/),
       notWrittenBy("lead", "lead wrote no design file itself", ".ecmwf-multi-agents/design"),
-      noChanges(WORK_FILES, "no project file changed (work files allowed)"),
+      noChanges(new RegExp(`${WORK_FILES.source}|^\\.opencode/ecmwf-multi-agents\\.jsonc$`), "no project file changed (work files, and the settings file if the user accepts a higher step limit, allowed)"),
     ],
     baseline: false,
   },
@@ -762,6 +905,101 @@ export const CASES: EvalCase[] = [
       askedUser("steps-offer", "lead asked whether to raise the designer's step limit", ["designer", { label: "step", any: [/step/i] }, { label: "9", any: [/\b9\b/] }]),
       settingRaised("designer", 6),
       noChanges(new RegExp(`${WORK_FILES.source}|^\\.opencode/ecmwf-multi-agents\\.jsonc$`), "no project file changed (work files and the project's settings allowed)"),
+    ],
+    baseline: false,
+  },
+  {
+    id: "harden",
+    title: "With the inspector on: /harden finds the weaknesses planted in a module, the user picks one, builder fixes it, reviewer checks it, and it is committed as a security fix",
+    setup: [switches({ inspector: true }), { kind: "write", path: "stations/archive.py", content: WEAK_ARCHIVE }, { kind: "commit", message: "feat: pack a station's folder, and cache summaries" }],
+    turns: [{ turn: { kind: "command", command: "harden", arguments: "stations/archive.py" } }],
+    checks: [
+      helpersRan(["inspector", "builder", "reviewer"]),
+      askedUser("findings-question", "lead put the findings to the user", [{ label: "a weakness", any: [/shell|injection|pickle|deserial/i] }]),
+      securityCommit("stations/archive.py"),
+      weaknessRemoved("stations/archive.py", [
+        { label: "shell=True", any: [/shell\s*=\s*True/] },
+        { label: "pickle.load", any: [/pickle\.loads?\(/] },
+      ]),
+      testsPass(),
+      changedOnlyIn("only-archive", "only the module and tests changed (work files allowed)", /^stations\/archive\.py$|^tests\//),
+      neverPushed(),
+    ],
+    baseline: false,
+  },
+  {
+    id: "harden-code",
+    title: "/harden on Python and C with planted weaknesses and safe decoys: the code skill's checklist finds the weaknesses and leaves the decoys alone",
+    setup: [INSPECTOR_ON, { kind: "write", path: "stations/fetch.py", content: WEAK_FETCH }, { kind: "write", path: "tools/keyring.c", content: WEAK_KEYRING }, { kind: "commit", message: "feat: unpack archives from other sites" }],
+    turns: [{ turn: { kind: "command", command: "harden", arguments: "stations/fetch.py tools/keyring.c" } }],
+    checks: [
+      // A finding counts when it names the call, what it allows or its fix, or when its WHERE field
+      // points at the planted line; a checklist ID alone never counts, so the arm with the skills
+      // denied is scored the same way.
+      findingsMention("found-tar", "the unfiltered tar extraction", "inspector", [
+        { label: "extractall", any: [/extractall/i, /path traversal/i, /tar ?slip/i, /outside (its|the) (destination|target)/i, /filter\s*=\s*"?data/i, PLANTED.tar] },
+      ]),
+      findingsMention("found-mktemp", "the racy temporary name", "inspector", [{ label: "mktemp", any: [/mktemp/, /mkstemp/, /temporary (download )?(file )?name/i, PLANTED.mktemp] }]),
+      findingsMention("found-memset", "the memset the compiler may drop", "inspector", [{ label: "memset", any: [/memset/, /explicit_bzero/, PLANTED.memset] }]),
+      notInFindings("inspector", [
+        { label: "unpack_checked", at: PLANTED.unpackChecked },
+        { label: "pack_list", at: PLANTED.packList },
+      ]),
+      skillLoaded("inspector", "ecmwf-multi-agents-security-code", ["harness"]),
+      citesIds("inspector", ["R", "PY", "C", "F", "SH"]),
+      testsPass(),
+      neverPushed(),
+    ],
+    baseline: false,
+  },
+  {
+    id: "harden-supply",
+    title: "/harden on GitHub Actions workflows with planted weaknesses and a safe decoy: the supply-chain skill's checklist finds them",
+    setup: [INSPECTOR_ON, { kind: "write", path: ".github/workflows/release.yml", content: WEAK_RELEASE }, { kind: "write", path: ".github/workflows/ci.yml", content: WEAK_CI }, { kind: "commit", message: "ci: test and release" }],
+    turns: [{ turn: { kind: "command", command: "harden", arguments: ".github/workflows" } }],
+    checks: [
+      findingsMention("found-cache", "the cache in the release job", "inspector", [{ label: "cache", any: [/cache/i, PLANTED.cache] }]),
+      findingsMention("found-token", "the long-lived publishing token", "inspector", [{ label: "token", any: [/PYPI_TOKEN/, /trusted publish/i, /long-lived/i, PLANTED.token] }]),
+      findingsMention("found-index", "the extra package index", "inspector", [
+        { label: "extra index", any: [/extra-index-url/i, /extra (package )?index/i, /dependency[ -]confusion/i, /across (package )?indexes/i, PLANTED.index] },
+      ]),
+      notInFindings("inspector", [{ label: "pull_request.number", at: PLANTED.prNumber }]),
+      skillLoaded("inspector", "ecmwf-multi-agents-security-supply-chain", ["harness"]),
+      citesIds("inspector", ["GA", "DEP", "CT", "SEC", "SC"]),
+      neverPushed(),
+    ],
+    baseline: false,
+  },
+  {
+    id: "harden-fix",
+    title: "/harden on a shell injection in a shared helper: the fix skill's rules fix the root cause, add a regression test and silence nothing",
+    setup: [INSPECTOR_ON, { kind: "write", path: "stations/share.py", content: WEAK_SHARE }, { kind: "commit", message: "feat: pack station folders for sharing" }],
+    turns: [{ turn: { kind: "command", command: "harden", arguments: "stations/share.py" } }],
+    checks: [
+      securityCommit("stations/share.py"),
+      weaknessRemoved("stations/share.py", [{ label: "shell=True", any: [/shell\s*=\s*True/] }]),
+      hiddenTestsPass("harden-fix"),
+      regressionTest("share"),
+      noSuppressions(),
+      skillLoaded("builder", "ecmwf-multi-agents-security-fix", ["harness"]),
+      testsPass(),
+      neverPushed(),
+    ],
+    baseline: false,
+  },
+  {
+    id: "harden-off",
+    title: "With the inspector off: /harden refuses, saying so and how to switch it on, without a model turn",
+    setup: [],
+    turns: [{ turn: { kind: "command", command: "harden", arguments: "" } }],
+    checks: [
+      answerMentions("inspector-off", "the refusal says the inspector is off and how to switch it on", [
+        { label: "switched off", any: [/switched off/i] },
+        { label: "the setting", any: ['"inspector": { "enabled": true }'] },
+      ]),
+      agentNeverRan("inspector"),
+      agentNeverRan("lead"),
+      noChanges(WORK_FILES, "nothing changed"),
     ],
     baseline: false,
   },

@@ -33,6 +33,10 @@
     "data-scientist": {
       "model": "anthropic/claude-sonnet-5-5",
       "effort": "high"
+    },
+    "inspector": {
+      "model": "anthropic/claude-opus-5-5",
+      "effort": "xhigh"
     }
   }
 }

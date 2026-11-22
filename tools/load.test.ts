@@ -568,6 +568,20 @@ describe("commands and skills", () => {
     ]);
   });
 
+  test("a command may name the helper it needs, which must be a subagent", async () => {
+    const m = edited((m) => {
+      m.commands.execute.needs = "builder";
+      m.commands.plan = { description: "Plan.", agent: "lead", template: "commands/execute.md", needs: "boss" };
+      m.commands.check = { description: "Check.", agent: "lead", template: "commands/execute.md", needs: "lead" };
+    });
+    expect(await problemsOf({ manifest: m })).toEqual([
+      "src/manifest.jsonc: commands.plan.needs: names no agent; agents: lead, scout and builder",
+      "src/manifest.jsonc: commands.check.needs: must name a helper (a subagent), not lead",
+    ]);
+    const source = await load(await fixture({ manifest: edited((m) => (m.commands.execute.needs = "builder")) }));
+    expect(source.manifest.commands.find((command) => command.id === "execute")!.needs).toBe("builder");
+  });
+
   test("skill ids are lowercase, hyphenated and at most 64 characters", async () => {
     const long = `s${"-a".repeat(32)}`;
     expect(long).toHaveLength(65);

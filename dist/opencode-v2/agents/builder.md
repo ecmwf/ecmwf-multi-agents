@@ -92,6 +92,9 @@ permissions:
   - action: skill
     resource: "ecmwf-multi-agents-*"
     effect: deny
+  - action: skill
+    resource: ecmwf-multi-agents-security-fix
+    effect: allow
   - action: helpers_status
     resource: "*"
     effect: deny

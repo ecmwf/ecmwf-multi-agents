@@ -4,7 +4,7 @@
 import { describe, expect, test } from "bun:test";
 import { INLINE_USER_AND_REPORTS_WAKE_TEXT, INLINE_USER_WAKE_TEXT, INLINE_WAKE_TEXT, V2_CONTINUE_NOTES, WAKE_TEXT, heldReportsV2, stepsV2 } from "./answer-first.ts";
 import { helperIds } from "./helpers.ts";
-import { BEFORE_BRIEF_FOR_TESTS, HELD_NOTE, INLINE_MARK, Inline, InlineRuns, briefIndex, classifyHelperRequest, inlineCommands, isUserMessage, isolateHelperRequest, reviewerOffText, type InlineRun } from "./inline.ts";
+import { BEFORE_BRIEF_FOR_TESTS, HELD_NOTE, INLINE_MARK, Inline, InlineRuns, briefIndex, classifyHelperRequest, helperOffText, inlineCommands, isUserMessage, isolateHelperRequest, reviewerOffText, type InlineRun } from "./inline.ts";
 import type { Reporter } from "./report.ts";
 import { embeddedFixture } from "./testing.ts";
 import { SessionTracker } from "./tools-v2.ts";
@@ -618,10 +618,23 @@ describe("Inline with a helper switched off", () => {
   test("a helper's command still has its fallback when commands cannot run inline", async () => {
     const sessions = new FakeSessions();
     delete (sessions.ctx.session as { wait?: unknown }).wait;
-    expect(makeOff(["builder", "reviewer"], sessions).inline.commands().map((item) => item.name)).toEqual(["progress"]);
-    expect(makeOff(["scout", "builder", "reviewer"], sessions).inline.commands()).toEqual([]);
-    const review = makeOff(["scout", "builder"], sessions).inline.commands();
+    // tester on, so no command that needs it refuses here.
+    expect(makeOff(["builder", "reviewer", "tester"], sessions).inline.commands().map((item) => item.name)).toEqual(["progress"]);
+    expect(makeOff(["scout", "builder", "reviewer", "tester"], sessions).inline.commands()).toEqual([]);
+    const review = makeOff(["scout", "builder", "tester"], sessions).inline.commands();
     expect(review.map((item) => item.name)).toEqual(["review"]);
     await expect(review[0]!.execute({ sessionID: "s", prompt: { text: "" } })).rejects.toThrow(reviewerOffText(harness));
+  });
+
+  test("a command that needs a helper that is off refuses with how to switch it on, and starts no turn", async () => {
+    const { sessions, inline, command } = makeOff(["scout", "builder", "reviewer"]);
+    expect(inline.commands().map((item) => item.name)).toContain("break");
+    await expect(command("break").execute({ sessionID: "s", prompt: { text: "main" } })).rejects.toThrow(helperOffText(harness, "tester", "break"));
+    expect(sessions.calls).toEqual([]);
+    expect(helperOffText(harness, "tester", "break")).toBe(
+      'The tester is switched off here, so /break cannot run. To switch it on, set "agents": { "tester": { "enabled": true } } in .opencode/ecmwf-multi-agents.jsonc for this project, or in ecmwf-multi-agents.jsonc in your opencode config folder for every project, then restart opencode.',
+    );
+    // With the helper on, the command is the registered one: nothing here replaces it.
+    expect(makeOff(["scout", "builder", "reviewer", "tester"]).inline.commands().map((item) => item.name)).not.toContain("break");
   });
 });

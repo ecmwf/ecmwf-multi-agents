@@ -169,7 +169,7 @@ describe("embedHarness", () => {
     expect(embedHarness(without)).not.toHaveProperty("helperOff");
   });
 
-  test("from src/: lead, three helpers and four optional ones; review and progress answered inline", async () => {
+  test("from src/: lead, three helpers and five optional ones; review and progress answered inline; harden needs the inspector", async () => {
     const data = embedHarness(resolveHarness(await load(root)));
     expect(data.agents.map((agent) => [agent.id, agent.mode, agent.optional ?? false])).toEqual([
       ["lead", "primary", false],
@@ -180,7 +180,9 @@ describe("embedHarness", () => {
       ["tester", "subagent", true],
       ["designer", "subagent", true],
       ["data-scientist", "subagent", true],
+      ["inspector", "subagent", true],
     ]);
+    expect(data.commands.find((command) => command.name === "harden")).toMatchObject({ agent: "lead", needs: "inspector" });
     // The plugin can rewrite the generated lead's helper list for every combination of helpers.
     const lead = data.agents.find((agent) => agent.id === data.defaultAgent)!;
     const helpers = helpersOf(data);
@@ -212,6 +214,7 @@ describe("embedHarness", () => {
       { name: "plan", description: "Plan a piece of work with you", agent: "lead", template: "Plan: $ARGUMENTS" },
       { name: "review", description: "Independent review of your changes", agent: "reviewer", subagent: true, template: "Review $ARGUMENTS" },
       { name: "progress", description: "Show progress on the current plan", agent: "scout", subagent: true, template: "Progress of $ARGUMENTS" },
+      { name: "break", description: "Try to break your changes", agent: "lead", needs: "tester", template: "Break $ARGUMENTS" },
     ]);
     expect(data.skills).toEqual([
       { id: "ecmwf-multi-agents-plan", name: "ecmwf-multi-agents-plan", description: "Plan file format and rules.", autoinvoke: false, content: "\n# Plan\n\nRules.\n" },

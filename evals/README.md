@@ -53,6 +53,7 @@ bun evals/run.ts --case feature --case bug-fix --repeat 3 --jobs 3 --opencode op
 | `--opencode BIN` | `opencode` | The opencode 2 binary: a path, or a name looked up on `PATH` |
 | `--out DIR` | `evals/runs/<UTC timestamp>/` | Output folder (`evals/runs/` is ignored by git) |
 | `--writing W` | the settings' own | The harness's `writing_guidance` for every run, `plain` or `off` (ADR 0006) |
+| `--skills S` | `on` | `off` denies the security skills to the inspector and the builder, to compare (ADR 0007) |
 | `--list` | | List the cases and exit |
 
 Requirements: opencode 2 (tested with 2.2.6; the runner refuses other major versions), Bun,
@@ -158,6 +159,11 @@ new session.
 | `researcher-compare` | `researcher` on: plain versus time-weighted daily means, with an experiment, the package untouched | no |
 | `designer-limit` | `designer` on with a step limit of 12: it reports at the limit with its spec started, and `lead` continues its session rather than designing itself | no |
 | `designer-limit-twice` | `designer` on with a step limit of 6: it reaches the limit twice in one session, `lead` puts the plugin's offer of a higher limit to the user with the question tool, and the project's settings file gets it | no |
+| `harden` | `inspector` on, two weaknesses planted in a committed module: `/harden` puts the findings to the user, builder fixes the picked one, the reviewer checks it, and it is committed as `fix(security)`, never pushed | no |
+| `harden-off` | `inspector` off: `/harden` refuses with the plugin's message and the setting, without a model turn | no |
+| `harden-code` | Python and C with planted weaknesses (an unfiltered `extractall`, `mktemp`, a `memset` before `free`) and safe decoys: found, decoys not reported; loading `ecmwf-multi-agents-security-code` and citing its IDs are recorded | no |
+| `harden-supply` | GitHub Actions workflows with a cache in the release job, a long-lived PyPI token and an extra package index, and a safe decoy: found, decoy not reported; loading `ecmwf-multi-agents-security-supply-chain` is recorded | no |
+| `harden-fix` | A shell injection in a helper two functions share: fixed at the root, a regression test added, nothing silenced, hidden tests pass; loading `ecmwf-multi-agents-security-fix` is recorded | no |
 
 The cases are defined in `evals/cases.ts`; hidden tests are in `evals/hidden/<case>/` (a case
 may name another case's folder) and run from outside the project after the run. In `no-push`, the baseline has no approval rule, so its
@@ -199,6 +205,10 @@ named after the release they measured, with the licence header added (for exampl
 
 Results vary between runs of the same case, so compare with `--repeat 3` or more before drawing
 conclusions.
+
+To see whether the security skills help, run `harden-code`, `harden-supply` and `harden-fix` with
+`--skills on` and `--skills off` into two folders and compare the pass rates: `--skills off`
+denies the three skills to the inspector and the builder through the sandbox's opencode config.
 
 To compare runs with the writing guidance on and off, run the same cases with `--writing plain`
 and `--writing off` into two folders, then `bun evals/readability.ts on=DIR off=DIR` (several

@@ -45,6 +45,7 @@ answers land in `docs/research/` and `docs/adr/`.
 | `tester` | subagent, optional | Tries to break a change: edge cases, adversarial and new tests, never product code; drafts issues | 60 |
 | `designer` | subagent, optional | UI specs, interaction flows and standalone prototypes; a builder implements them | 60 |
 | `data-scientist` | subagent, optional | Answers questions about datasets with scripts it runs, never by reading the data into its context | 60 |
+| `inspector` | subagent, optional | Reviews code for security weaknesses and advises, each finding with its pros and cons; never changes project files (ADR 0007) | 60 |
 
 Steps cap the number of model turns a helper may take. They act as a cost limit. Each agent
 also gets a model and an effort from the active profile (see Profiles), and users can change
@@ -374,6 +375,17 @@ CAVEATS: limits, assumptions and data quality issues.
 NOT CHECKED: what was out of reach or skipped.
 ```
 
+Inspector:
+
+```text
+STATUS: DONE, PARTIAL or BLOCKED.
+REPORT: the path of the report file.
+FINDINGS: most serious first; for each: ID, SEVERITY (critical, high, medium or low), CONFIDENCE (high, medium or low); WHERE: path:line; WEAKNESS: what an attacker can do, and how; ADVICE: the change; PROS: what it removes; CONS: its cost, risk and what may break; ALTERNATIVES: other options, or none.
+RECHECK: for each finding the brief names: CLOSED, OPEN or PARTLY, with the evidence; or none.
+CHECKS: one line per scanner or command: what it found.
+NOT CHECKED: what was not examined.
+```
+
 A background helper's report arrives wrapped by opencode (`<subagent ... state="completed">`
 with the report inside; `state="error"` or `state="cancelled"` when it did not finish). `lead` reads the inside as the
 helper's report.
@@ -506,6 +518,7 @@ All harness files in a project live under `.ecmwf-multi-agents/` at the top of t
 | `issues/<slug>.md` | Issue drafts from `tester`, filed by `lead` only after the user approves |
 | `design/<slug>/` | Specs, prototypes and screenshots from `designer` |
 | `data/<slug>/` | Scripts, results, figures and the data sources from `data-scientist` |
+| `security/<date>-<slug>.md` | Findings and scanner output from `inspector` |
 
 At each start of a user's session in a git repository, the plugin adds `.ecmwf-multi-agents/`
 to the file that `git rev-parse --git-path info/exclude` names, once, finding it as git does
@@ -513,6 +526,34 @@ in a repository, a worktree or a submodule; it is the plugin's only write into a
 folder then never shows up in `git status` or commits, and the file is local to the clone.
 A failure to write it is reported, and `doctor` says whether the line is there. Because search
 tools skip ignored files, prompts refer to work files by exact path.
+
+## Security hardening
+
+`/harden [target]` runs on `lead` and needs `inspector` (ADR 0007); while the inspector is
+off, the plugin's `/harden` refuses with the settings line that switches it on, as `/review`
+does with the reviewer off, and no model turn starts. The loop:
+
+1. With uncommitted changes, `lead` asks whether to commit them first, stop, or leave them out.
+2. For a repository on GitHub, `lead` asks before it reads the open code scanning, Dependabot
+   and secret scanning alerts with `gh api`, and offers to start a CodeQL workflow first;
+   `gh workflow run` always asks.
+3. The inspector reviews the target and runs local scanners, with the checklists of the skills
+   `ecmwf-multi-agents-security-code` and `ecmwf-multi-agents-security-supply-chain`, which the
+   brief names; each finding cites the ID of its checklist item. A scout reads the advisories
+   and CVEs its findings name, since the web is untrusted input the inspector does not read
+   itself.
+4. `lead` puts the findings to the user in one question, several answers allowed, each with its
+   severity and its pros and cons. Nothing changes without a pick.
+5. For each pick, builder fixes with the rules of `ecmwf-multi-agents-security-fix` and reviewer
+   checks, at most two rounds; each passed fix is one commit, `fix(security): ...`, on the
+   current branch. Nothing is pushed.
+6. The inspector rechecks each picked finding against its commit, with the verdicts of the fix
+   skill: CLOSED, OPEN or PARTLY.
+
+Helpers are denied the harness's skills, except these: the inspector may load the three security
+skills and the builder the fix skill. They are the harness's own text, inspired by
+cybersecurity-skills (MIT) and written for Python, C, Fortran, shell, GitHub Actions and
+containers (`docs/research/security-skills.md`).
 
 ## Onboarding summary
 
@@ -736,9 +777,11 @@ The server entry registers an RPC with the id `ecmwf-multi-agents`, reachable at
 
 | Method or event | Answer |
 |---|---|
-| `doctor` | The harness version, the default agent, whether `lead` is loaded and whether it is the harness's own (`leadDefinition`, with the fields that differ in `leadChanged`), the `lead.md` files and opencode configs with a `lead` entry that could change it, `lead`'s `Review policy:` line, helper limit instruction and model, which helpers are on and which off, whether git's exclude file lists the work folder, the effective settings and the file each comes from, the problems found, and the state of the plugins other than opencode's own |
+| `doctor` | The harness version, the default agent, whether `lead` is loaded and whether it is the harness's own (`leadDefinition`, with the fields that differ in `leadChanged`), the `lead.md` files and opencode configs with a `lead` entry that could change it, `lead`'s `Review policy:` line, helper limit instruction and model, which helpers are on and which off, whether git's exclude file lists the work folder, the effective settings and the file each comes from, the problems found, and whether a newer harness is available (`updateAvailable`), and the state of the plugins other than opencode's own |
 | `problems` | The problems found since the plugin loaded, each with `notify` when it deserves a toast |
 | event `problem` | Published for each new problem |
+| `notices` | The notices to show, apart from problems: a newer harness is available, when opencode marks the plugin's own package outdated |
+| event `notice` | Published for each new notice |
 
 opencode does not record where an agent came from, so `doctor` compares the `lead` opencode
 loaded with the harness's own, field by field: the prompt with the review line, helper limit
@@ -752,7 +795,25 @@ are listed as places a change may come from; a file that repeats the harness's o
 changes nothing.
 
 `tui.js` calls `problems` when the TUI starts, listens for `problem` events and shows each
-problem marked `notify` once as a warning toast.
+problem marked `notify` once as a warning toast. It calls `notices` and listens for `notice`
+events the same way, and shows each notice as an information toast, once in each TUI start. The
+model sees neither.
+
+opencode never installs a plugin update by itself. For a package plugin without a pinned
+version it checks npm (or the Git repository) after each activation, at most once a day, and
+marks the plugin outdated in its plugin list (`source.outdated`, and `source.updating` while
+`opencode plugin update` installs it; opencode 2.2.6, PluginSupervisor in
+core/src/plugin/supervisor.ts). When that changes, opencode lists the plugins again and
+publishes `plugin.updated`. The server entry reads the plugin list at setup and on each
+`plugin.updated`, and when its own active entry is an outdated package that is not being
+updated, it publishes one notice for the process: "A newer ecmwf-multi-agents is available: run
+opencode plugin update, then restart opencode." Every location opencode serves gets it, until
+that location is torn down, and a TUI that starts later reads it with `notices`; so the toast
+comes at each start until the update. It publishes another only after opencode cleared the
+mark and set it again. A checkout, a folder plugin or installed files are not a
+package and never get it. The check runs after activation and says nothing when it finds no
+update, so `doctor`, asked of a fresh server, waits up to five seconds from the plugin's start
+before it reads the list again for a package that is not marked yet.
 
 `install.sh doctor` asks the same RPC with `opencode api --standalone`, from the project
 folder: a private server whose RPC route waits for the plugins to activate, which the agent
@@ -766,7 +827,7 @@ load first, and opencode reports the project's copy as "Duplicate plugin ID".
 flowchart LR
   D[install.sh doctor] -->|opencode api --standalone| S[private server]
   S -->|POST /api/rpc/ecmwf-multi-agents/doctor| P[plugin index.js]
-  T[TUI tui.js] -->|problems, problem events| P
+  T[TUI tui.js] -->|problems, notices and their events| P
 ```
 
 ## Central install

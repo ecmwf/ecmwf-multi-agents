@@ -1161,3 +1161,29 @@ on, checked in the `v2.2.5` source and against `v2.2.6`; both versions agree on 
    (`backgroundResult`, or the foreground report) and `metadata` both hold the child's
    `sessionID`; a failed one carries only `error`. Inside Code Mode progress goes nowhere, so the
    plugin keeps a guess for when no word arrives.
+
+## Addendum: `opencode plugin add` and plugin updates (2026-11-22)
+
+What `install.sh doctor`'s global `plugins` line and the update notice rely on, checked in the
+`v2.2.6` source (the same in `v2.2.5` where noted).
+
+1. Where does `opencode plugin add` write? Into the global config folder, which
+   `OPENCODE_CONFIG_DIR` replaces: the first of `opencode.json` and `opencode.jsonc` there that
+   exists, `opencode.json` when neither does (`cli/src/commands/handlers/plugin/add.ts`).
+   `opencode plugin remove` edits only that first file and removes only an entry exactly as
+   written (`plugin/remove.ts`).
+2. Which copy wins? opencode lists the `plugins/` folders of every config folder first, then the
+   global config's `plugins` lines, then `OPENCODE_CONFIG`, then the project's files, and keeps
+   the first copy of a plugin ID; later copies fail as "Duplicate plugin ID"
+   (`core/src/config/plugin/source.ts`, `core/src/plugin/supervisor.ts`; also `v2.2.5`).
+3. When is a plugin outdated? After each activation the supervisor checks every package plugin
+   (npm, or a git spec) whose entry has no exact version, at most once a day per process
+   (`interval` in `core/src/plugin/update.ts`), and marks it in `plugin.list` as
+   `source.outdated`, with `source.updating` while `opencode plugin update` installs it. A change
+   lists the plugins again and publishes `plugin.updated`, without setting the plugins up
+   again. A check that finds nothing says nothing.
+4. What does a TUI toast show? Its text as written: Markdown such as backticks is not rendered
+   (`packages/tui/src/ui/toast.tsx`).
+5. One process, several locations: the background service sets the plugin up once for each
+   location (project folder), each with its own RPC registration, so a notice for the process
+   must go to every registration that is still set up.

@@ -46,7 +46,9 @@
   //   (src/fragments/writing.md, ADR 0006), which the setting writing_guidance "off" removes.
   //   Measured 2004 and 2352.
   // - skill 1850 -> 1900: the users' guide names the setting writing_guidance. Measured 1867.
-  "budgets": { "lead": 2050, "helper": 750, "command": 500, "skill": 1900, "routing": 100, "lead-all": 2400 },
+  // - lead-all 2400 -> 2450, skill 1900 -> 1950: the inspector's line in lead's helper list,
+  //   and the users' guide to the inspector and /harden (ADR 0007). Measured 2430 and 1926.
+  "budgets": { "lead": 2050, "helper": 750, "command": 500, "skill": 1950, "routing": 100, "lead-all": 2450 },
 
   // Named lists of {action, resource}. A permission entry {"use": name, "effect": e}
   // expands to one rule per item, all with effect e.
@@ -70,7 +72,9 @@
       { "action": "shell", "resource": "gh release *" },
       { "action": "shell", "resource": "gh repo delete *" },
       // Filing an issue publishes the tester's draft; lead files one only when the user approves.
-      { "action": "shell", "resource": "gh issue create *" }
+      { "action": "shell", "resource": "gh issue create *" },
+      // Starting a workflow runs CI on GitHub, such as a new CodeQL scan from /harden.
+      { "action": "shell", "resource": "gh workflow run *" }
     ],
     // Git commands that change history, the index, branches, remotes or the working tree
     // state that lead manages. Helpers never run these, not even their read-only forms such
@@ -186,6 +190,8 @@
         { "action": "delegate", "resource": "*", "effect": "deny" },
         { "action": "question", "resource": "*", "effect": "deny" },
         { "action": "skill", "resource": "ecmwf-multi-agents-*", "effect": "deny" },
+        // Allowed: the safe-fix rules /harden names in the brief of each security fix.
+        { "action": "skill", "resource": "ecmwf-multi-agents-security-fix", "effect": "allow" },
         { "use": "helper-tools", "effect": "deny" }
       ]
     },
@@ -303,6 +309,36 @@
         { "action": "skill", "resource": "ecmwf-multi-agents-*", "effect": "deny" },
         { "use": "helper-tools", "effect": "deny" }
       ]
+    },
+    "inspector": {
+      "mode": "subagent",
+      "description": "Reviews code for security weaknesses and advises, each finding with its pros and cons, for people to decide. Never changes the project's code.",
+      "prompt": ["agents/inspector.md"],
+      "budget": "helper",
+      "steps": 60,
+      "optional": true,
+      "routing": "reviews code for security weaknesses and advises: each finding with its pros and cons, in `.ecmwf-multi-agents/security/`; it changes no project file. Hand work to it only when the user asks for a security review or runs /harden, and let the user decide on each finding.",
+      // It reads code and runs local scanners under the user's shell policy, and writes only its
+      // report folder. The web is untrusted input: lead has a scout read advisories and CVEs and
+      // passes them on. GitHub's alerts come through lead, with the user's approval.
+      "permissions": [
+        { "action": "edit", "resource": "*", "effect": "deny" },
+        { "action": "edit", "resource": ".ecmwf-multi-agents/security/*", "effect": "allow" },
+        { "action": "edit", "resource": "*/.ecmwf-multi-agents/security/*", "effect": "allow" },
+        { "use": "git-writes", "effect": "deny" },
+        { "action": "shell", "resource": "gh *", "effect": "deny" },
+        { "action": "webfetch", "resource": "*", "effect": "deny" },
+        { "action": "websearch", "resource": "*", "effect": "deny" },
+        { "action": "delegate", "resource": "*", "effect": "deny" },
+        { "action": "question", "resource": "*", "effect": "deny" },
+        { "action": "skill", "resource": "ecmwf-multi-agents-*", "effect": "deny" },
+        // Allowed: the security checklists /harden names in its brief, and the fix skill's
+        // recheck verdicts (docs/research/security-skills.md).
+        { "action": "skill", "resource": "ecmwf-multi-agents-security-code", "effect": "allow" },
+        { "action": "skill", "resource": "ecmwf-multi-agents-security-supply-chain", "effect": "allow" },
+        { "action": "skill", "resource": "ecmwf-multi-agents-security-fix", "effect": "allow" },
+        { "use": "helper-tools", "effect": "deny" }
+      ]
     }
   },
 
@@ -350,6 +386,12 @@
       "agent": "scout",
       "template": "commands/progress.md"
     },
+    "harden": {
+      "description": "Harden the security of your code: the inspector finds weaknesses, you pick the fixes, builder and reviewer make them, one commit each",
+      "agent": "lead",
+      "template": "commands/harden.md",
+      "needs": "inspector"
+    },
     "guide": {
       "description": "How this harness works, in plain words",
       "agent": "lead",
@@ -361,6 +403,21 @@
     "ecmwf-multi-agents-plan": {
       "description": "Plan file format and rules for ecmwf-multi-agents. Use when writing, updating or carrying out a plan in .ecmwf-multi-agents/plans/.",
       "body": "skills/ecmwf-multi-agents-plan/SKILL.md",
+      "hidden": true
+    },
+    "ecmwf-multi-agents-security-code": {
+      "description": "Checklist for a security review of Python, C, C++, Fortran and shell code: how to rate a finding, and the weaknesses to look for, each with an ID to cite. Load when a security review or /harden names it.",
+      "body": "skills/ecmwf-multi-agents-security-code/SKILL.md",
+      "hidden": true
+    },
+    "ecmwf-multi-agents-security-supply-chain": {
+      "description": "Checklist for a security review of GitHub Actions, Python dependencies, containers, secrets and scanner hits, each item with an ID to cite. Load when a security review or /harden names it.",
+      "body": "skills/ecmwf-multi-agents-security-supply-chain/SKILL.md",
+      "hidden": true
+    },
+    "ecmwf-multi-agents-security-fix": {
+      "description": "Rules and recipes for fixing a security finding safely, and the verdicts for rechecking a fix. Load when /harden names it.",
+      "body": "skills/ecmwf-multi-agents-security-fix/SKILL.md",
       "hidden": true
     },
     "ecmwf-multi-agents-guide": {

@@ -152,6 +152,11 @@
           "effect": "deny"
         },
         {
+          "action": "skill",
+          "resource": "ecmwf-multi-agents-security-fix",
+          "effect": "allow"
+        },
+        {
           "action": "helpers_status",
           "resource": "*",
           "effect": "deny"
@@ -284,6 +289,11 @@
         {
           "action": "shell",
           "resource": "gh issue create *",
+          "effect": "ask"
+        },
+        {
+          "action": "shell",
+          "resource": "gh workflow run *",
           "effect": "ask"
         }
       ],
@@ -621,6 +631,11 @@
       "description": "How this harness works, in plain words",
       "agent": "lead",
       "template": "{file:./prompts/commands/guide.md}"
+    },
+    "harden": {
+      "description": "Harden the security of your code: the inspector finds weaknesses, you pick the fixes, builder and reviewer make them, one commit each",
+      "agent": "lead",
+      "template": "{file:./prompts/commands/harden.md}"
     },
     "onboard": {
       "description": "Survey this repository and keep a short summary for later sessions",

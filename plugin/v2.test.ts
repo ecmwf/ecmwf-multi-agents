@@ -9,6 +9,7 @@ import { createPlugin } from "./plugin.ts";
 import { HELPER_OFF, LEAD_PROMPT, TESTER_ROUTING, embeddedFixture, fakeEnvironment } from "./testing.ts";
 import type { V2AgentEditor, V2AgentInfo, V2CommandDefinition, V2CommandEditor, V2Context, V2ContextEvent, V2Event, V2ModelMessage, V2SessionInfo, V2ToolCall, V2ToolInfo } from "./types.ts";
 import { runsHere } from "./tools-v2.ts";
+import { UpdateNotice, updateNoticeText } from "./update-notice.ts";
 import { v2ProjectRoot } from "./v2.ts";
 
 const harness = embeddedFixture();
@@ -469,6 +470,65 @@ describe("v2 setup", () => {
     host.emit("plugin.updated");
     await settle();
     expect(host.transforms).toHaveLength(2);
+  });
+});
+
+describe("v2 update notice", () => {
+  /** A host whose plugin list shows the harness from `source`, with the RPC's events recorded. */
+  async function noticeRun(source: Record<string, unknown>, updateCheckMs = 0) {
+    const host = new FakeHost();
+    const state = { source };
+    const events: Array<[string, unknown]> = [];
+    let handlers: Record<string, (input: unknown) => Promise<unknown>> = {};
+    host.ctx.plugin = { list: async () => ({ data: [{ id: "ecmwf-multi-agents", source: state.source, features: { server: true }, state: { status: "active" } }] }) };
+    host.ctx.rpc = {
+      register: async (_definition, given) => {
+        handlers = given;
+        return { dispose: async () => {}, events: { emit: async (name, data) => void events.push([name, data]) } };
+      },
+    };
+    host.ctx.agent.list = async () => [...host.build().agents.values()];
+    const notice = new UpdateNotice("ecmwf-multi-agents");
+    const plugin = createPlugin(harness, { environment: () => fakeEnvironment({}), write: () => {}, fallbackMs: 60_000, updateNotice: notice, updateCheckMs });
+    await plugin.setup(host.ctx);
+    return { host, state, events, handlers: () => handlers };
+  }
+  const PACKAGE = { type: "package", target: "@ecmwf.int/multi-agents", version: "1.0.0" };
+  const view = (id: number): [string, unknown] => ["notice", { notice: updateNoticeText("ecmwf-multi-agents"), id }];
+
+  test("published once when opencode marks the package outdated, read at setup and on plugin.updated", async () => {
+    const run = await noticeRun({ ...PACKAGE, outdated: true });
+    await settle();
+    expect(run.events).toEqual([view(1)]);
+    run.host.emit("plugin.updated");
+    await settle();
+    expect(run.events).toEqual([view(1)]);
+    expect(await run.handlers().notices!({})).toEqual({ notices: [view(1)[1]] });
+    // Updated, then outdated again: a new notice.
+    run.state.source = PACKAGE;
+    run.host.emit("plugin.updated");
+    await settle();
+    run.state.source = { ...PACKAGE, outdated: true };
+    run.host.emit("plugin.updated");
+    await settle();
+    expect(run.events).toEqual([view(1), view(2)]);
+  });
+
+  test("a checkout is never outdated: no notice, and doctor does not wait", async () => {
+    const run = await noticeRun({ type: "local", path: "/home/user/ecmwf-multi-agents" }, 60_000);
+    run.host.emit("plugin.updated");
+    await settle();
+    expect(run.events).toEqual([]);
+    expect(await run.handlers().doctor!({})).toMatchObject({ updateAvailable: false });
+  });
+
+  test("doctor waits for opencode's check of a package, and tells what it found", async () => {
+    const run = await noticeRun(PACKAGE, 60_000);
+    const answer = run.handlers().doctor!({});
+    await settle();
+    run.state.source = { ...PACKAGE, outdated: true };
+    run.host.emit("plugin.updated");
+    expect(await answer).toMatchObject({ updateAvailable: true });
   });
 });
 
@@ -1264,7 +1324,7 @@ describe("v2 inline commands", () => {
     // The registration during setup (register.ts): every harness command, the helpers' in a child session.
     expect(host.commandTransforms).toHaveLength(1);
     const early = host.commands();
-    expect([...early.keys()]).toEqual(["plan", "review", "progress"]);
+    expect([...early.keys()]).toEqual(["plan", "review", "progress", "break"]);
     // opencode's loader for command files comes after it.
     const files = (editor: V2CommandEditor) => editor.add({ name: "review", description: "file", execute: async () => {} });
     host.commandTransforms.push(files);
@@ -1277,6 +1337,8 @@ describe("v2 inline commands", () => {
       expect(late.get(name)).not.toBe(early.get(name)!);
       expect(late.get(name)!.description).not.toBe("file");
     }
+    // tester is off: the command that needs it refuses, and no turn starts.
+    await expect(late.get("break")!.execute({ sessionID: "root", prompt: { text: "x" } })).rejects.toThrow("The tester is switched off here, so /break cannot run.");
     // The late review answers inline: it switches the session to the reviewer, never makes a child.
     host.sessions.root = { agent: "lead" };
     await late.get("review")!.execute({ sessionID: "root", prompt: { text: "x" } });
@@ -1346,8 +1408,13 @@ describe("v2 inline commands", () => {
     await start({}, host);
     host.emit("plugin.updated");
     await settle();
-    // Only the registration during setup, which runs the helpers' commands in a child session.
-    expect(host.commandTransforms).toHaveLength(1);
+    // The registration during setup, which runs the helpers' commands in a child session, and a
+    // late one with only the refusal of a command whose helper is off.
+    expect(host.commandTransforms).toHaveLength(2);
+    const seen: string[] = [];
+    host.commandTransforms[1]!({ add: (definition) => void seen.push(definition.name) });
+    expect(seen).toEqual(["break"]);
+    expect(host.commands().get("review")).toBeDefined();
   });
 });
 

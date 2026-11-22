@@ -13,6 +13,8 @@
 //             settings and the file each comes from, the problems found, and the state of every plugin
 //   problems  the problems found since the plugin loaded
 //   problem   an event published for each new problem; the TUI entry shows it (tui.ts)
+//   notices   the update notice, when a newer harness is available (update-notice.ts)
+//   notice    an event published for each new notice; the TUI entry shows it apart from problems
 
 import path from "node:path";
 import { effectiveReview, helperSlotsLine, helpersSwitched, modelRef, planAgents, rewriteHelperSlotsLine, rewriteReviewLine, writingSection, type AgentPlan } from "./apply.ts";
@@ -23,6 +25,7 @@ import { rpcDefinition, type DoctorView, type ProblemView } from "./rpc-definiti
 import { findRun } from "./rule-order.ts";
 import type { LoadedSettings } from "./settings.ts";
 import { applyAgent, unwrap } from "./register.ts";
+import { packageSource, updateAvailable, type UpdateNotice } from "./update-notice.ts";
 import type { EmbeddedHarness, Environment, Problem, Settings, V2AgentInfo, V2Context, V2ModelRef, V2PluginState, V2RpcRegistration } from "./types.ts";
 
 /** Problems seen since the plugin loaded, in order, each once. */
@@ -202,6 +205,10 @@ export interface DoctorInput {
   ready?: () => Promise<void>;
   /** The agents' plans with the models currently chosen (ModelChoices.plans); read after `ready`. */
   plans?: () => readonly AgentPlan[];
+  /** The update notice the RPC passes on to the TUI. */
+  notice?: UpdateNotice;
+  /** Resolves once opencode has probably checked the plugin's package for an update (UpdateNotice.checked). */
+  updateChecked?: () => Promise<void>;
 }
 
 function modelText(agent: V2AgentInfo | undefined): string | null {
@@ -215,7 +222,13 @@ export async function doctorReport(input: DoctorInput): Promise<DoctorView> {
   await input.ready?.().catch(() => undefined);
   const agents = (await Promise.resolve(ctx.agent.list?.()).then((value) => unwrap<V2AgentInfo[]>(value), () => undefined)) ?? [];
   const lead = agents.find((agent) => agent.id === harness.defaultAgent);
-  const plugins = (await Promise.resolve(ctx.plugin?.list?.()).then((value) => unwrap<V2PluginState[]>(value), () => undefined)) ?? [];
+  const listPlugins = async () => (await Promise.resolve(ctx.plugin?.list?.()).then((value) => unwrap<V2PluginState[]>(value), () => undefined)) ?? [];
+  let plugins = await listPlugins();
+  // A fresh opencode, as `install.sh doctor` starts, checks for updates after activation.
+  if (input.updateChecked !== undefined && packageSource(plugins, harness.name) && !updateAvailable(plugins, harness.name)) {
+    await input.updateChecked().catch(() => undefined);
+    plugins = await listPlugins();
+  }
   const { settings } = loaded;
   const changed = lead === undefined ? [] : leadChanges(lead, harness, settings, input.environment.home, input.plans?.());
   const helpers = helpersOf(harness);
@@ -254,6 +267,7 @@ export async function doctorReport(input: DoctorInput): Promise<DoctorView> {
     helpersStray: helpers.filter((helper) => helper.optional !== true && !on.has(helper.id) && loadedIds.has(helper.id)).map((helper) => helper.id),
     workDirExcluded: workDirExcluded(harness, input.environment, input.directory ?? input.projectRoot),
     problems: input.problems.list(),
+    updateAvailable: updateAvailable(plugins, harness.name),
     // opencode's own plugins only when they failed.
     plugins: (Array.isArray(plugins) ? plugins : [])
       .filter((plugin) => !plugin.id?.startsWith("opencode.") || plugin.state?.status !== "active")
@@ -266,15 +280,20 @@ export async function doctorReport(input: DoctorInput): Promise<DoctorView> {
 }
 
 /** Register the RPC; returns the registration, or undefined where this opencode has no RPC. */
-export async function registerRpc(input: DoctorInput): Promise<V2RpcRegistration | undefined> {
+export async function registerRpc(input: DoctorInput): Promise<(V2RpcRegistration & { stopNotices: () => void }) | undefined> {
   const register = input.ctx.rpc?.register;
   if (typeof register !== "function") return undefined;
   const registration = await register.call(input.ctx.rpc, rpcDefinition(input.harness.name), {
     doctor: async () => doctorReport(input),
     problems: async () => ({ problems: input.problems.list() }),
+    notices: async () => ({ notices: input.notice?.list() ?? [] }),
   });
   input.problems.onAdd((problem) => {
     void Promise.resolve(registration.events.emit("problem", { ...problem })).catch(() => undefined);
   });
-  return registration;
+  const stopNotices =
+    input.notice?.onAdd((notice) => {
+      void Promise.resolve(registration.events.emit("notice", { ...notice })).catch(() => undefined);
+    }) ?? (() => {});
+  return Object.assign(registration, { stopNotices });
 }

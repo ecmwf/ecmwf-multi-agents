@@ -113,6 +113,7 @@ export function embedFiles(harness: ResolvedHarness): Pick<EmbeddedHarness, "age
     const model = text(owner, data.model);
     if (model !== undefined) out.model = model;
     if (typeof data.subagent === "boolean") out.subagent = data.subagent;
+    if (command.needs !== undefined) out.needs = command.needs;
     return out;
   });
   const skills = harness.skills.map((skill): EmbeddedSkill => {
