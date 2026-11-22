@@ -713,7 +713,7 @@ describe.skipIf(!v2Available)(`a project's plugins line in opencode ${V2_VERSION
       expect(doctor.data.output).toMatchObject({
         leadDefinition: "harness",
         helpersOn: ["scout", "reviewer", "tester", "designer"],
-        helpersOff: ["builder", "researcher", "data-scientist"],
+        helpersOff: ["builder", "researcher", "data-scientist", "inspector"],
         helpersMissing: [],
         helpersStray: [],
         problems: unusable("reviewer", "tester"),
