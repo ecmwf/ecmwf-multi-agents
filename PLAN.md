@@ -970,7 +970,10 @@ Copilot agents; the two follow-ups below, which Tiago takes. Tests come first in
   default from the results. Done for $37.94 (`evals/results/writing-guidance.md`): 40 of 42
   runs passed on, 39 of 42 off; 5% fewer output tokens, 9.0 against 10.4 words per sentence;
   the step-limit offer now stays until lead asks. Default: `plain`
-- [ ] Tiago: Release 0.10.0
+- [x] Tiago: Release 0.10.0, from local checks while CI is blocked by a security incident
+  (the owner's decision): `make check` (846), `make pack-check`, 75 of 75 integration tests on
+  2.2.6, real-model evals from the writing-guidance comparison. npm publishes from the tag's
+  `release.yml` run once CI is back; a 0.10.x follows if that CI run finds a problem
 
 Exit: `make check` and the integration suites pass on 2.2.6; PR #7 merged; the evals above pass.
 
