@@ -8,7 +8,7 @@
 //
 // Usage: bun evals/run.ts [--case ID]... [--repeat N] [--variant harness|baseline|both]
 //          [--profile NAME] [--jobs N] [--max-cost USD] [--timeout MIN] [--opencode BIN]
-//          [--out DIR] [--writing plain|off] [--list]
+//          [--out DIR] [--writing plain|off] [--skills on|off] [--list]
 
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,7 +16,7 @@ import path from "node:path";
 import { CASES } from "./cases.ts";
 import { checkEvalLogin } from "./login.ts";
 import { killServers, UNAVAILABLE } from "./opencode.ts";
-import { loadProfile, loginPlugins, opencodeVersion, type Profile, REPO, removeLiveBoxes, resolveBinary, sandboxParentProblem } from "./project.ts";
+import { loadProfile, loginPlugins, opencodeVersion, type Profile, REPO, removeLiveBoxes, resolveBinary, sandboxParentProblem, skillsDenied } from "./project.ts";
 import { runCase } from "./runner.ts";
 import { renderSummary } from "./summary.ts";
 import type { EvalCase, RunRecord, Variant } from "./types.ts";
@@ -33,6 +33,8 @@ export interface Options {
   out: string | undefined;
   /** The harness's writing_guidance for every run; the settings' default when left out. */
   writing: "plain" | "off" | undefined;
+  /** "off" denies the security skills to the inspector and the builder (skillsDenied). */
+  skills: "on" | "off";
   list: boolean;
   help: boolean;
 }
@@ -50,6 +52,7 @@ Options:
   --opencode BIN   opencode 2 binary (default "opencode").
   --out DIR        Output folder (default evals/runs/<UTC timestamp>/).
   --writing W      The harness's writing_guidance, plain or off (default: the settings' own).
+  --skills S       off denies the security skills to the inspector and the builder (default on).
   --list           List the cases and exit.
   -h, --help       Show this help.
 
@@ -77,6 +80,7 @@ export function parseArgs(argv: string[]): Options {
     opencode: "opencode",
     out: undefined,
     writing: undefined,
+    skills: "on",
     list: false,
     help: false,
   };
@@ -129,6 +133,12 @@ export function parseArgs(argv: string[]): Options {
         const writing = take();
         if (writing !== "plain" && writing !== "off") throw new Error(`--writing must be plain or off, not ${writing}`);
         options.writing = writing;
+        break;
+      }
+      case "--skills": {
+        const skills = take();
+        if (skills !== "on" && skills !== "off") throw new Error(`--skills must be on or off, not ${skills}`);
+        options.skills = skills;
         break;
       }
       case "--list":
@@ -276,6 +286,7 @@ async function main(argv: string[]): Promise<number> {
         auth: { kind: "login", db: login.path },
         plugins,
         ...(options.writing === undefined ? {} : { writing: options.writing }),
+        ...(options.skills === "off" ? { config: skillsDenied(), skills: "off" as const } : {}),
         log: (line) => console.log(`  [${label}] ${line}`),
       });
       // Every later run would fail the same way.
@@ -300,6 +311,7 @@ async function main(argv: string[]): Promise<number> {
     opencodeVersion: version,
     maxCost: options.maxCost,
     ...(options.writing === undefined ? {} : { writing: options.writing }),
+    ...(options.skills === "off" ? { skills: "off" } : {}),
     skipped: skipped.map((item) => `${item.case.id}.${item.variant}.${item.repeat}`),
     skippedReason: blocked !== undefined ? "the sandbox cannot use the profile's models" : "the total cost reached the limit",
   });

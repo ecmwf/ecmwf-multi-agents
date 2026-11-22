@@ -8,6 +8,12 @@ import {
   answeredDuringPlan,
   answersInline,
   helpersRan,
+  citesIds,
+  findingsMention,
+  noSuppressions,
+  notInFindings,
+  regressionTest,
+  skillLoaded,
   neverPushed,
   securityCommit,
   weaknessRemoved,
@@ -590,6 +596,41 @@ describe("hardening", () => {
     expect(run(check, context({ files: { "stations/archive.py": "run(cmd, shell=True)\nx = 1  # was pickle.load(f)" } }))).toEqual({ pass: true, detail: "gone: pickle" });
     expect(run(check, context({ files: { "stations/archive.py": "run(cmd, shell=True)\npickle.load(f)" } })).pass).toBe(false);
     expect(run(check, context()).pass).toBe(false);
+  });
+});
+
+describe("security skills", () => {
+  const skill = (agent: string, id: string, status = "completed"): ToolCall => ({ sessionID: "s", agent, tool: "skill", status, input: { id } });
+
+  test("skillLoaded: the agent loaded the skill and the call completed", () => {
+    const check = skillLoaded("inspector", "ecmwf-multi-agents-security-code");
+    expect(run(check, context({ calls: [skill("inspector", "ecmwf-multi-agents-security-code")] })).pass).toBe(true);
+    expect(run(check, context({ calls: [skill("inspector", "ecmwf-multi-agents-security-code", "error")] })).detail).toBe("inspector never loaded ecmwf-multi-agents-security-code (1 refused or failed)");
+    expect(run(check, context({ calls: [skill("builder", "ecmwf-multi-agents-security-code")] })).pass).toBe(false);
+  });
+
+  test("notInFindings: no line of the agent's FINDINGS section names a decoy; elsewhere it may", () => {
+    const check = notInFindings("inspector", [{ label: "pack_list", any: ["pack_list"] }]);
+    const report = (text: string) => context({ reports: [{ agent: "inspector", sessionID: "c", text }] });
+    expect(run(check, report("FINDINGS: S1 high: fetch.py extractall without filter.\nNOT CHECKED: pack_list is a fixed list, not a finding.")).pass).toBe(true);
+    expect(run(check, report("FINDINGS: S1 high: pack_list runs tar.\nRECHECK: none")).detail).toBe("a finding names pack_list");
+  });
+
+  test("findingsMention and citesIds read every message of the agent, so a later recheck does not hide its findings", () => {
+    const said = (text: string) => ({ info: { role: "assistant", agent: "inspector" }, parts: [{ type: "text", text }] });
+    const ctx = context({ sessions: [{ id: "c", messages: [said("FINDINGS: S1 [PY5] high: unpack calls extractall without filter.\nCHECKS: none"), said("RECHECK: S1 CLOSED")] }] as never });
+    expect(run(findingsMention("found-tar", "the tar extraction", "inspector", [{ label: "extractall", any: [/extractall/] }]), ctx).pass).toBe(true);
+    expect(run(findingsMention("found-mktemp", "mktemp", "inspector", ["mktemp"]), ctx).detail).toBe('no finding names "mktemp"');
+    expect(run(citesIds("inspector", ["PY", "C"]), ctx)).toEqual({ pass: true, detail: "cites PY5" });
+    expect(run(citesIds("inspector", ["GA"]), ctx).pass).toBe(false);
+  });
+
+  test("regressionTest: a changed test file names the module; noSuppressions: the commits add no nosec or noqa", () => {
+    expect(run(regressionTest("share"), context({ changedFiles: ["stations/share.py", "tests/test_share.py"], files: { "tests/test_share.py": "from stations.share import pack" } })).pass).toBe(true);
+    expect(run(regressionTest("share"), context({ changedFiles: ["stations/share.py"] })).detail).toBe("no changed test names share");
+    const diff = (text: string) => ({ commands: { [`git diff ${HEAD} HEAD`]: { code: 0, output: text } } });
+    expect(run(noSuppressions(), context(diff("+    run(cmd)\n-    run(cmd, shell=True)\n"))).pass).toBe(true);
+    expect(run(noSuppressions(), context(diff("+    run(cmd, shell=True)  # nosec\n"))).detail).toBe("adds: +    run(cmd, shell=True)  # nosec");
   });
 });
 

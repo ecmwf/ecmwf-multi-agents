@@ -322,6 +322,16 @@ export function setWritingGuidance(box: Box, writing: "plain" | "off"): void {
   writeFileSync(file, `{\n  "writing_guidance": "${writing}",\n${text.slice(2)}`);
 }
 
+/**
+ * opencode config rules that deny the harness's security skills to the inspector and the builder,
+ * for runs that compare /harden with and without them. A config's rules for one agent come after
+ * the agent's own, so these deny wins over the allow in the manifest.
+ */
+export function skillsDenied(): Record<string, unknown> {
+  const deny = { permissions: [{ action: "skill", resource: "ecmwf-multi-agents-security-*", effect: "deny" }] };
+  return { agents: { inspector: deny, builder: deny } };
+}
+
 export function installHarness(box: Box, profile: string, review: string, repo = REPO): void {
   const result = inSandbox(box, ["sh", path.join(repo, "install.sh"), "--link", "--profile", profile, "--review", review], { cwd: repo, env: { PATH: sandboxPath(box) } });
   if (result.code !== 0) throw new Error(`install.sh failed (${result.code}):\n${result.output.trim()}`);

@@ -18,9 +18,15 @@ describe("command line", () => {
       opencode: "opencode",
       out: undefined,
       writing: undefined,
+      skills: "on",
       list: false,
       help: false,
     });
+  });
+
+  test("--skills off denies the security skills to the inspector and the builder, for an A/B comparison", () => {
+    expect(parseArgs(["--skills", "off"]).skills).toBe("off");
+    expect(() => parseArgs(["--skills", "maybe"])).toThrow("--skills must be on or off");
   });
 
   test("--writing sets the harness's writing guidance for every run", () => {

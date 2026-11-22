@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { CASES } from "./cases.ts";
 import { Api, startServer } from "./opencode.ts";
-import { baseEnv, exec, opencodeVersion, resolveBinary } from "./project.ts";
+import { baseEnv, exec, opencodeVersion, resolveBinary, skillsDenied } from "./project.ts";
 import { type RunOptions, runCase } from "./runner.ts";
 import { renderSummary } from "./summary.ts";
 import type { EvalCase, RunRecord, Variant } from "./types.ts";
@@ -102,8 +102,19 @@ function script(agent: string, users: string[], results: number, tools: { texts:
   // harden: the inspector reports, the user picks the first finding, builder fixes, reviewer approves, lead commits, the inspector rechecks.
   if (agent === "inspector") {
     if (last.includes("RECHECK")) return { text: "STATUS: DONE\nRECHECK: S1 CLOSED: pack runs tar without a shell." };
-    if (results === 0) return { tool: "write", args: { path: ".ecmwf-multi-agents/security/archive.md", content: "# stations/archive.py\n\nS1 shell injection; S2 pickle.\n" } };
-    return { text: "STATUS: DONE\nREPORT: .ecmwf-multi-agents/security/archive.md\nFINDINGS: S1, high, high; WHERE: stations/archive.py:9; WEAKNESS: shell injection through the folder name; ADVICE: pass a list, no shell; PROS: no injection; CONS: none; ALTERNATIVES: none. S2, medium, high; WHERE: stations/archive.py:15; WEAKNESS: pickle runs code from the cache file; ADVICE: JSON; PROS: no code from data; CONS: old caches unreadable; ALTERNATIVES: none." };
+    // The skill first, as the brief of /harden asks; with the skills denied the call fails and the review goes on.
+    if (results === 0) return { tool: "skill", args: { id: "ecmwf-multi-agents-security-code" } };
+    if (results === 1) return { tool: "write", args: { path: ".ecmwf-multi-agents/security/archive.md", content: "# Findings\n\nS1 shell injection; S2 pickle.\n" } };
+    return {
+      text:
+        "STATUS: DONE\nREPORT: .ecmwf-multi-agents/security/archive.md\n" +
+        "FINDINGS: S1 [PY1], high, high; WHERE: stations/archive.py:9; WEAKNESS: shell injection through the folder name; ADVICE: pass a list, no shell; PROS: no injection; CONS: none; ALTERNATIVES: none.\n" +
+        "S2 [PY2], medium, high; WHERE: stations/archive.py:15; WEAKNESS: pickle runs code from the cache file; ADVICE: JSON; PROS: no code from data; CONS: old caches unreadable; ALTERNATIVES: none.\n" +
+        "S3 [PY5], high, medium; WHERE: stations/fetch.py:11; WEAKNESS: extractall without a filter writes outside dest; ADVICE: filter=data; PROS: no path traversal; CONS: none; ALTERNATIVES: none.\n" +
+        "S4 [PY7], medium, medium; WHERE: stations/fetch.py:23; WEAKNESS: a mktemp name can be taken first; ADVICE: mkstemp; PROS: no race; CONS: none; ALTERNATIVES: none.\n" +
+        "S5 [C6], low, medium; WHERE: tools/keyring.c:6; WEAKNESS: memset before free may be removed; ADVICE: explicit_bzero; PROS: the key is really cleared; CONS: none; ALTERNATIVES: none.\n" +
+        "CHECKS: none\nNOT CHECKED: unpack_checked and pack_list are safe as written.",
+    };
   }
   if (agent === "builder" && all.includes("FIX_SHELL")) {
     if (results === 0) {
@@ -451,6 +462,28 @@ describe.skipIf(!enabled)(`eval runner end to end (${name}, stand-in model)`, ()
     expect(record.questions[0]).toMatchObject({ agent: "lead", answers: [["S1 shell injection in pack (Recommended)"]] });
     expect(record.pass).toBe(true);
   }, 400_000);
+
+  test("harness, harden-code with the security skills allowed and denied: the inspector loads the code skill only where it may, and the run goes on either way", async () => {
+    const allowed = keep(await runCase(byId("harden-code"), options("harness")));
+    expect(allowed.error).toBeUndefined();
+    expect(allowed.checks.map((check) => [check.id, check.pass])).toEqual([
+      ["found-tar", true],
+      ["found-mktemp", true],
+      ["found-memset", true],
+      ["decoys-not-reported", true],
+      ["inspector-loaded-security-code", true],
+      ["cites-ids", true],
+      ["tests-pass", true],
+      ["never-pushed", true],
+    ]);
+    const base = options("harness");
+    const denied = keep(await runCase(byId("harden-code"), { ...base, skills: "off", config: { ...base.config, ...skillsDenied() } }));
+    expect(denied.error).toBeUndefined();
+    expect(denied.skills).toBe("off");
+    expect(denied.checks.find((check) => check.id === "inspector-loaded-security-code")!.pass).toBe(false);
+    // Recorded only: the denied skill does not decide the result.
+    expect(denied.pass).toBe(true);
+  }, 600_000);
 
   test("harness, harden-off: with the inspector off, /harden refuses with the plugin's message and no model turn", async () => {
     const record = keep(await runCase(byId("harden-off"), options("harness")));

@@ -33,6 +33,7 @@ import {
   sandboxParentProblem,
   sandboxPath,
   setWritingGuidance,
+  skillsDenied,
   snapshot,
 } from "./project.ts";
 import type { Box } from "./project.ts";
@@ -386,6 +387,33 @@ describe("harden", () => {
   });
 });
 
+describe("the security skills' cases", () => {
+  const item = (id: string) => CASES.find((candidate) => candidate.id === id)!;
+  const writes = (id: string) => item(id).setup.flatMap((step) => (step.kind === "write" ? [step.path] : []));
+
+  test("each switches the inspector on, plants weaknesses and decoys in committed files, and runs /harden on them", () => {
+    for (const [id, target, files] of [
+      ["harden-code", "stations/fetch.py tools/keyring.c", ["stations/fetch.py", "tools/keyring.c"]],
+      ["harden-supply", ".github/workflows", [".github/workflows/release.yml", ".github/workflows/ci.yml"]],
+      ["harden-fix", "stations/share.py", ["stations/share.py"]],
+    ] as const) {
+      expect([id, writes(id)]).toEqual([id, [".opencode/ecmwf-multi-agents.jsonc", ...files]]);
+      expect([id, item(id).setup.at(-1)?.kind]).toEqual([id, "commit"]);
+      expect([id, item(id).turns]).toEqual([id, [{ turn: { kind: "command", command: "harden", arguments: target } }]]);
+      expect([id, item(id).baseline]).toEqual([id, false]);
+    }
+  });
+
+  test("detection and safe fixing decide the result; loading the skill and citing its IDs are recorded only, so both arms count alike", () => {
+    expect(item("harden-code").checks.map((check) => check.id)).toEqual(["found-tar", "found-mktemp", "found-memset", "decoys-not-reported", "inspector-loaded-security-code", "cites-ids", "tests-pass", "never-pushed"]);
+    expect(item("harden-supply").checks.map((check) => check.id)).toEqual(["found-cache", "found-token", "found-index", "decoys-not-reported", "inspector-loaded-security-supply-chain", "cites-ids", "never-pushed"]);
+    expect(item("harden-fix").checks.map((check) => check.id)).toEqual(["security-commit", "weakness-removed", "hidden-tests", "regression-test", "no-suppressions", "builder-loaded-security-fix", "tests-pass", "never-pushed"]);
+    for (const id of ["harden-code", "harden-supply", "harden-fix"]) {
+      for (const check of item(id).checks.filter((check) => check.id.includes("-loaded-") || check.id === "cites-ids")) expect([id, check.id, check.recordOnly]).toEqual([id, check.id, ["harness"]]);
+    }
+  });
+});
+
 describe("data-question", () => {
   test("checks that the computation was kept as a script in the data scientist's folder", () => {
     const item = CASES.find((candidate) => candidate.id === "data-question")!;
@@ -452,5 +480,16 @@ describe("setWritingGuidance", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("skillsDenied", () => {
+  test("per-agent rules that deny the security skills, which come after the agents' own and so win", () => {
+    expect(skillsDenied()).toEqual({
+      agents: {
+        inspector: { permissions: [{ action: "skill", resource: "ecmwf-multi-agents-security-*", effect: "deny" }] },
+        builder: { permissions: [{ action: "skill", resource: "ecmwf-multi-agents-security-*", effect: "deny" }] },
+      },
+    });
   });
 });

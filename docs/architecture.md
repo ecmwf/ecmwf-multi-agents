@@ -537,13 +537,23 @@ does with the reviewer off, and no model turn starts. The loop:
 2. For a repository on GitHub, `lead` asks before it reads the open code scanning, Dependabot
    and secret scanning alerts with `gh api`, and offers to start a CodeQL workflow first;
    `gh workflow run` always asks.
-3. The inspector reviews the target and runs local scanners. A scout reads the advisories and
-   CVEs its findings name, since the web is untrusted input the inspector does not read itself.
+3. The inspector reviews the target and runs local scanners, with the checklists of the skills
+   `ecmwf-multi-agents-security-code` and `ecmwf-multi-agents-security-supply-chain`, which the
+   brief names; each finding cites the ID of its checklist item. A scout reads the advisories
+   and CVEs its findings name, since the web is untrusted input the inspector does not read
+   itself.
 4. `lead` puts the findings to the user in one question, several answers allowed, each with its
    severity and its pros and cons. Nothing changes without a pick.
-5. For each pick, builder fixes and reviewer checks, at most two rounds; each passed fix is one
-   commit, `fix(security): ...`, on the current branch. Nothing is pushed.
-6. The inspector rechecks each picked finding against its commit: CLOSED, OPEN or PARTLY.
+5. For each pick, builder fixes with the rules of `ecmwf-multi-agents-security-fix` and reviewer
+   checks, at most two rounds; each passed fix is one commit, `fix(security): ...`, on the
+   current branch. Nothing is pushed.
+6. The inspector rechecks each picked finding against its commit, with the verdicts of the fix
+   skill: CLOSED, OPEN or PARTLY.
+
+Helpers are denied the harness's skills, except these: the inspector may load the three security
+skills and the builder the fix skill. They are the harness's own text, inspired by
+cybersecurity-skills (MIT) and written for Python, C, Fortran, shell, GitHub Actions and
+containers (`docs/research/security-skills.md`).
 
 ## Onboarding summary
 

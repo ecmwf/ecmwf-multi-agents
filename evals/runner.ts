@@ -54,6 +54,8 @@ export interface RunOptions {
   env?: Record<string, string>;
   /** Extra opencode plugins (see loginPlugins in project.ts). */
   plugins?: string[];
+  /** "off": the run's config denies the security skills (skillsDenied); recorded in the run. */
+  skills?: "off";
   /** The harness's writing_guidance, written into the sandbox's user settings file. */
   writing?: "plain" | "off";
   /** How long to wait for the profile's providers after the login is copied in. */
@@ -98,6 +100,7 @@ export async function runCase(item: EvalCase, options: RunOptions): Promise<RunR
     repeat: options.repeat,
     profile: options.profile.name,
     ...(options.writing === undefined ? {} : { writing: options.writing }),
+    ...(options.skills === undefined ? {} : { skills: options.skills }),
     review,
     opencode: { bin: options.opencode, version: options.opencodeVersion },
     started: started.toISOString(),

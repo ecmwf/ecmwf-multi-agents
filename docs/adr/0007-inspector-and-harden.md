@@ -36,6 +36,13 @@ optional helper.
   commits, and nothing is pushed. The inspector then rechecks each pick: CLOSED, OPEN or PARTLY.
 - On GitHub, `lead` asks before it reads the open code scanning, Dependabot and secret scanning
   alerts, and offers to start a CodeQL workflow; `gh workflow run` always asks.
+- Three hidden skills of the harness's own, inspired by cybersecurity-skills (MIT) but not
+  copied (`docs/research/security-skills.md`): `ecmwf-multi-agents-security-code` and
+  `ecmwf-multi-agents-security-supply-chain`, checklists for the inspector, and
+  `ecmwf-multi-agents-security-fix`, safe-fix rules for the builder and recheck verdicts for the
+  inspector. Each checklist item has an ID that findings cite. `/harden` names them in its
+  briefs, so they cost nothing in the helpers' prompts; narrow allow rules let only these two
+  helpers load them. Evals run each skill's case with the skills allowed and denied.
 - A command may name the helper it needs (`needs` in the manifest). While that helper is off,
   the plugin's command refuses with the settings line that switches it on, and no model turn
   starts, as `/review` does with the reviewer off.

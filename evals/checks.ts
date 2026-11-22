@@ -941,3 +941,107 @@ export function weaknessRemoved(file: string, weaknesses: Term[]): Check {
     },
   };
 }
+
+/** The agent loaded the skill, and the call completed. */
+export function skillLoaded(agent: string, name: string, recordOnly: Variant[] = []): Check {
+  return {
+    id: `${agent}-loaded-${name.replace(/^ecmwf-multi-agents-/, "")}`,
+    title: `${agent} loaded ${name}`,
+    variants: ["harness"],
+    recordOnly,
+    run(ctx) {
+      // opencode 2.2.6's skill tool takes `id`; other versions have taken `name`.
+      const calls = ctx.metrics.toolCalls.filter((call) => call.agent === agent && call.tool === "skill" && (call.input.id ?? call.input.name) === name);
+      if (calls.some((call) => call.status === "completed")) return ok(`${calls.length} call(s)`);
+      return fail(`${agent} never loaded ${name}${calls.length > 0 ? ` (${calls.length} refused or failed)` : ""}`);
+    },
+  };
+}
+
+/** An agent's own words: the text of its messages in every session, else its final reports. */
+function agentText(ctx: CheckContext, agent: string): string[] {
+  const own = ctx.sessions
+    .flatMap((session) => session.messages)
+    .filter((message) => message.info.role === "assistant" && message.info.agent === agent)
+    .map((message) => message.parts.filter((part) => part.type === "text" && !part.synthetic && typeof part.text === "string").map((part) => part.text!).join("\n"))
+    .filter((text) => text.trim() !== "");
+  return own.length > 0 ? own : ctx.reports.filter((report) => report.agent === agent).map((report) => report.text);
+}
+
+/** The FINDINGS sections of an agent's messages: from "FINDINGS:" to the next report section. */
+function findingsOf(ctx: CheckContext, agent: string): string {
+  return agentText(ctx, agent)
+    .flatMap((text) => {
+      const start = text.search(/^FINDINGS:/m);
+      if (start < 0) return [];
+      const rest = text.slice(start);
+      const end = rest.slice(1).search(/^(RECHECK|CHECKS|NOT CHECKED|REPORT|STATUS):/m);
+      return [end < 0 ? rest : rest.slice(0, end + 1)];
+    })
+    .join("\n");
+}
+
+/** The agent's findings name every term. */
+export function findingsMention(id: string, title: string, agent: string, terms: Term[]): Check {
+  return {
+    id,
+    title: `${agent} found ${title}`,
+    run(ctx) {
+      const findings = findingsOf(ctx, agent);
+      const missing = terms.filter((term) => !mentions(findings, term));
+      return missing.length === 0 ? ok("found") : fail(`no finding names ${missing.map(termLabel).join(", ")}`);
+    },
+  };
+}
+
+/** The agent's findings cite a checklist ID with one of the prefixes, such as PY5. */
+export function citesIds(agent: string, prefixes: string[]): Check {
+  return {
+    id: "cites-ids",
+    title: `${agent} cites the checklist's IDs`,
+    variants: ["harness"],
+    recordOnly: ["harness"],
+    run(ctx) {
+      const found = [...findingsOf(ctx, agent).matchAll(new RegExp(`\\b(?:${prefixes.join("|")})\\d+\\b`, "g"))].map((match) => match[0]);
+      return found.length > 0 ? ok(`cites ${[...new Set(found)].join(", ")}`) : fail("no ID cited");
+    },
+  };
+}
+
+/** No line of the agent's FINDINGS sections names a decoy, a safe pattern that is not a weakness. */
+export function notInFindings(agent: string, decoys: Term[]): Check {
+  return {
+    id: "decoys-not-reported",
+    title: `${agent} reported no decoy as a finding`,
+    run(ctx) {
+      const findings = findingsOf(ctx, agent);
+      const named = decoys.filter((term) => mentions(findings, term));
+      return named.length === 0 ? ok("no decoy") : fail(`a finding names ${named.map(termLabel).join(", ")}`);
+    },
+  };
+}
+
+/** A changed test file names the module: a regression test came with the fix. */
+export function regressionTest(module: string): Check {
+  return {
+    id: "regression-test",
+    title: `a test for ${module} was added or changed`,
+    run(ctx) {
+      const tests = ctx.changedFiles.filter((file) => /(^|\/)tests?\//.test(file) && file.endsWith(".py"));
+      const naming = tests.filter((file) => file.includes(module) || (ctx.readFile(file) ?? "").includes(module));
+      return naming.length > 0 ? ok(naming.join(", ")) : fail(`no changed test names ${module}`);
+    },
+  };
+}
+
+/** The new commits add no `# nosec` or `# noqa` that would silence a scanner. */
+export function noSuppressions(): Check {
+  return {
+    id: "no-suppressions",
+    title: "no # nosec or # noqa was added",
+    run(ctx) {
+      const added = ctx.exec(["git", "diff", ctx.setup.head, "HEAD"]).output.split("\n").filter((line) => line.startsWith("+") && !line.startsWith("+++") && /#\s*(nosec|noqa)\b/i.test(line));
+      return added.length === 0 ? ok("none added") : fail(`adds: ${added.join("; ")}`);
+    },
+  };
+}
