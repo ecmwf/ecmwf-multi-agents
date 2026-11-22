@@ -13,6 +13,11 @@
 //   5. Tag the release commit `X.Y.Z`, push the tag, and publish the GitHub release with the
 //      CHANGELOG section as its notes.
 //
+// Where main takes changes only through pull requests, run it on a branch `release/X.Y.Z` that
+// holds main: steps 1 to 4 make the release commit and push that branch, not main, for a pull
+// request. Once the pull request is merged, the same command on main finds the release commit
+// in main's history and does step 5.
+//
 // Running the same command again picks up where an earlier run stopped: after a rejected push
 // (pull, then run it again: the release commit is rebuilt and checked again on top of what came
 // in), or when the tag or the GitHub release is missing. `--dry-run` (`DRY_RUN=1`) shows what
@@ -81,6 +86,11 @@ export interface ReleaseState {
   published: boolean;
 }
 
+/** The branch a release is prepared on when main takes changes only through pull requests. */
+export function releaseBranch(version: string): string {
+  return `release/${version}`;
+}
+
 export function releaseSubject(version: string): string {
   return `chore: release ${version}`;
 }
@@ -123,7 +133,7 @@ export function readiness(options: Required<Pick<ReleaseOptions, "root" | "versi
   const { root, version, run } = options;
   const problems = consistencyProblems(root);
   const branch = run(["git", "rev-parse", "--abbrev-ref", "HEAD"]).out;
-  if (branch !== "main") problems.push(`releases are made from main, but the current branch is ${branch}`);
+  if (branch !== "main" && branch !== releaseBranch(version)) problems.push(`releases are made from main or ${releaseBranch(version)}, but the current branch is ${branch}`);
   const changed = changedFiles(run);
   if (state.commit === undefined && state.prepared) {
     const other = changed.filter((file) => !isReleasePath(file));
@@ -134,7 +144,9 @@ export function readiness(options: Required<Pick<ReleaseOptions, "root" | "versi
   const head = run(["git", "rev-parse", "HEAD"]).out;
   const remote = run(["git", "rev-parse", "origin/main"]).out;
   if (state.commit === undefined) {
-    if (head !== remote) problems.push("main is not level with origin/main: pull or push first");
+    if (branch === releaseBranch(version)) {
+      if (!run(["git", "merge-base", "--is-ancestor", "origin/main", "HEAD"]).ok) problems.push(`origin/main has commits that are not on ${branch}: merge them first`);
+    } else if (head !== remote) problems.push("main is not level with origin/main: pull or push first");
     if (!state.prepared) {
       // The current version itself may be released once: a new project starts with one that
       // has no CHANGELOG section yet.
@@ -163,7 +175,7 @@ function short(commit: string): string {
 }
 
 /** The steps still to do, in order, for the log and the dry run. */
-export function plan(state: ReleaseState): string[] {
+export function plan(state: ReleaseState, branch = "main"): string[] {
   const steps: string[] = [];
   if (state.commit === undefined) {
     if (!state.prepared) steps.push("run the gate (make check)");
@@ -174,6 +186,10 @@ export function plan(state: ReleaseState): string[] {
     );
   } else if (!state.pushed) {
     steps.push("rebuild dist/ and amend the release commit if that changes it", "run the gate again");
+  }
+  if (!state.pushed && branch !== "main") {
+    steps.push(`push the branch ${branch}`, "then: a pull request into main, and this command again on main once it is merged");
+    return steps;
   }
   if (!state.pushed) steps.push("push main");
   if (!state.tagLocal) steps.push(`tag the release commit ${state.version}`);
@@ -200,7 +216,8 @@ export function release(options: ReleaseOptions): void {
   const problems = readiness(base, state);
   if (problems.length > 0) fail(`not ready to release ${version}:\n${problems.map((problem) => `  - ${problem}`).join("\n")}`);
 
-  const steps = plan(state);
+  const branch = run(["git", "rev-parse", "--abbrev-ref", "HEAD"]).out;
+  const steps = plan(state, branch);
   log(`${options.dryRun ? "Would release" : "Releasing"} ${version}:`);
   for (const [index, step] of steps.entries()) log(`  ${index + 1}. ${step}`);
   if (options.dryRun) {
@@ -257,6 +274,13 @@ export function release(options: ReleaseOptions): void {
     }
     step("make check", check, true);
     state = inspect(base);
+  }
+  if (!state.pushed && branch === releaseBranch(version)) {
+    log(`> push the branch ${branch}`);
+    const pushed = run(["git", "push", "-u", "origin", `HEAD:refs/heads/${branch}`], true);
+    if (!pushed.ok) fail(`the push of ${branch} was rejected: run git pull --rebase origin ${branch}, then make release ${version} again.`);
+    log(`Open a pull request from ${branch} into main; once it is merged, run make release ${version} on main to tag and publish.`);
+    return;
   }
   if (!state.pushed) {
     log("> push main");

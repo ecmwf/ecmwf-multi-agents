@@ -35,6 +35,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
   repository's security alerts and start a CodeQL scan, each only with your approval. While the
   inspector is off, `/harden` says how to switch it on.
 
+- Three security skills of the harness's own for `/harden`: checklists for the `inspector`
+  (Python, C and C++, Fortran and shell code; GitHub Actions, Python dependencies, containers,
+  secrets and scanner hits), each item with an ID its findings cite, and safe-fix rules and
+  recheck verdicts for the builder. Inspired by cybersecurity-skills (MIT), not copied.
+
+### Changed
+
+- The README says how to install and how to update for each way of installing, and names what
+  is new; installing from source, building, testing and releasing move to `CONTRIBUTING.md`,
+  and the design's entry point is `DESIGN.md`. Open work and proposals are GitHub issues.
+- `make release X.Y.Z` also runs on a branch `release/X.Y.Z`, for repositories whose `main`
+  takes only pull requests: it pushes the branch, and after the merge the same command on
+  `main` tags and publishes.
+
 ### Fixed
 
 - `install.sh doctor` with `OPENCODE_CONFIG_DIR` set looks for installed files in the folder

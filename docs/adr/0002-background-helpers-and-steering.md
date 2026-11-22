@@ -10,13 +10,13 @@ gaps and flag no longer apply). Date: 2026-10-12.
 
 ## Context
 
-Every hand-off blocks `lead` today: it calls the delegation tool and waits, sees nothing of
-the helper's work, and can stop nothing. The user who sees a helper go wrong can only wait
-for it to finish. Both platforms now offer what is needed: a background mode on the
-delegation tool, a completion that wakes the parent, a way to send a message to a running
-child that reaches its model at the next step boundary, a cancel, and a way for the user to
-move a blocking hand-off to the background. The evidence is in
-`docs/research/background-helpers.md`; the plan is Phase 7 in `PLAN.md`.
+Every hand-off blocks `lead` today: it calls the delegation tool and waits, sees nothing of the
+helper's work, and can stop nothing. The user who sees a helper go wrong can only wait for it
+to finish. Both platforms now offer what is needed: a background mode on the delegation tool, a
+completion that wakes the parent, a way to send a message to a running child that reaches its
+model at the next step boundary, a cancel, and a way for the user to move a blocking hand-off
+to the background. The evidence is in `docs/research/background-helpers.md`; the plan was Phase
+7 of the former `PLAN.md`, in the git history.
 
 Two platform facts shape the decisions. On opencode 1.x the agent and model of a run come
 from the latest user message, so a message to a running helper that names no agent switches

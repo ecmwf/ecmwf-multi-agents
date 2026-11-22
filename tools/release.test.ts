@@ -144,6 +144,46 @@ describe("release", () => {
     expect(box.logs.at(-1)).toBe("Released 0.2.0.");
   });
 
+  test("on release/X.Y.Z, where main takes only pull requests: the release commit, then the branch pushed; after the merge, the same command on main tags and publishes", () => {
+    const box = makeBox();
+    const before = remoteRef(box, "refs/heads/main");
+    box.git("checkout", "-q", "-b", "release/0.2.0");
+    doRelease(box, "0.2.0");
+    const commit = box.git("rev-parse", "HEAD");
+    expect(box.git("log", "-1", "--format=%s")).toBe("chore: release 0.2.0");
+    expect(read(box, "VERSION")).toBe("0.2.0\n");
+    expect(remoteRef(box, "refs/heads/release/0.2.0")).toBe(commit);
+    // main, the tag and the GitHub release wait for the pull request.
+    expect(remoteRef(box, "refs/heads/main")).toBe(before);
+    expect(remoteRef(box, "refs/tags/0.2.0")).toBe("");
+    expect(ghCalls(box).some((call) => call.startsWith("release create"))).toBe(false);
+    expect(box.logs.join("\n")).toContain("Open a pull request from release/0.2.0 into main; once it is merged, run make release 0.2.0 on main");
+    // GitHub merges the pull request with a merge commit.
+    box.git("checkout", "-q", "main");
+    box.git("merge", "-q", "--no-ff", "-m", "Merge pull request #1", "release/0.2.0");
+    box.git("push", "-q", "origin", "main");
+    box.logs.length = 0;
+    doRelease(box, "0.2.0");
+    expect(remoteRef(box, "refs/tags/0.2.0^{commit}")).toBe(commit);
+    expect(ghCalls(box).some((call) => call.startsWith("release create 0.2.0"))).toBe(true);
+    expect(box.logs.at(-1)).toBe("Released 0.2.0.");
+  });
+
+  test("a release branch must hold main and be named for the version", () => {
+    const box = makeBox();
+    box.git("checkout", "-q", "-b", "release/0.3.0");
+    expect(() => doRelease(box, "0.2.0")).toThrow("releases are made from main or release/0.2.0, but the current branch is release/0.3.0");
+    const behind = makeBox();
+    behind.git("checkout", "-q", "-b", "release/0.2.0");
+    const other = path.join(behind.dir, "other");
+    Bun.spawnSync(["git", "clone", "-q", behind.remote, other], { env: behind.env });
+    writeFileSync(path.join(other, "new.txt"), "new\n");
+    Bun.spawnSync(["git", "add", "-A"], { cwd: other, env: behind.env });
+    Bun.spawnSync(["git", "commit", "-q", "-m", "someone else"], { cwd: other, env: behind.env });
+    Bun.spawnSync(["git", "push", "-q", "origin", "main"], { cwd: other, env: behind.env });
+    expect(() => doRelease(behind, "0.2.0")).toThrow("origin/main has commits that are not on release/0.2.0: merge them first");
+  });
+
   test("a dry run shows the steps and the notes and changes nothing", () => {
     const box = makeBox();
     const head = box.git("rev-parse", "HEAD");
