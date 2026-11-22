@@ -1919,7 +1919,7 @@ class RuleOrder {
 
 // plugin/update-notice.ts
 function updateNoticeText(name) {
-  return `A newer ${name} is available: run \`opencode plugin update\`, then restart opencode.`;
+  return `A newer ${name} is available: run opencode plugin update, then restart opencode.`;
 }
 function ownSource(plugins, id) {
   const list = unwrap(plugins);
@@ -1943,7 +1943,7 @@ class UpdateNotice {
   current;
   updating = false;
   count = 0;
-  emit;
+  emitters = new Set;
   waiters = [];
   started;
   constructor(name, now = Date.now) {
@@ -1964,7 +1964,8 @@ class UpdateNotice {
     if (this.updating || this.current !== undefined)
       return;
     this.current = { notice: updateNoticeText(this.name), id: ++this.count };
-    this.emit?.(this.current);
+    for (const emit of this.emitters)
+      emit(this.current);
     for (const wake of this.waiters.splice(0))
       wake();
   }
@@ -1972,7 +1973,9 @@ class UpdateNotice {
     return this.current === undefined || this.updating ? [] : [this.current];
   }
   onAdd(emit) {
-    this.emit = emit;
+    const own = (notice) => emit(notice);
+    this.emitters.add(own);
+    return () => void this.emitters.delete(own);
   }
   checked(windowMs) {
     const left = this.started + windowMs - this.now();
@@ -2229,12 +2232,12 @@ async function registerRpc(input) {
       return;
     });
   });
-  input.notice?.onAdd((notice) => {
+  const stopNotices = input.notice?.onAdd((notice) => {
     Promise.resolve(registration.events.emit("notice", { ...notice })).catch(() => {
       return;
     });
-  });
-  return registration;
+  }) ?? (() => {});
+  return Object.assign(registration, { stopNotices });
 }
 
 // plugin/settings.ts
@@ -3296,9 +3299,10 @@ function createSetup(harness, options = {}) {
         reporter,
         helpers: enabledHelpers(harness, settings)
       });
+      let stopNotices = () => {};
       if (environment !== undefined) {
         try {
-          await registerRpc({
+          const rpc = await registerRpc({
             harness,
             ctx,
             loaded,
@@ -3319,6 +3323,8 @@ function createSetup(harness, options = {}) {
             notice,
             updateChecked: () => notice.checked(options.updateCheckMs ?? UPDATE_CHECK_MS)
           });
+          if (rpc !== undefined)
+            stopNotices = rpc.stopNotices;
         } catch (error) {
           reporter.internal("registering the RPC", error);
         }
@@ -3476,6 +3482,7 @@ ${found.reply}`;
       const stopWatching = watchEvents(ctx, onActivation, onEvent, reporter, options.fallbackMs ?? FALLBACK_MS);
       return async () => {
         stopWatching();
+        stopNotices();
         agentTransform.stop();
         lateCommands?.stop();
       };

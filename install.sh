@@ -11,6 +11,8 @@ set -eu
 
 NAME=ecmwf-multi-agents
 NPM_NAME=@ecmwf.int/multi-agents
+# The repository on GitHub, as a git spec in a plugins line names it.
+REPO_PATH=ecmwf/ecmwf-multi-agents
 MARKER_MD="# managed by $NAME"
 MARKER_JS="// managed by $NAME"
 V2_PINNED=2.2.6
@@ -1119,7 +1121,7 @@ global_uninstall_advice() {
 	if same_dir "$GLINE_CONFIG_DIR" "$GLOBAL_DIR"; then
 		printf '%s' "$PROG uninstall"
 	elif [ "${GLINE_CONFIG_DIR##*/}" = opencode ]; then
-		printf '%s' "XDG_CONFIG_HOME=${GLINE_CONFIG_DIR%/*} $PROG uninstall"
+		printf '%s' "XDG_CONFIG_HOME=$(shell_word "${GLINE_CONFIG_DIR%/*}") $PROG uninstall"
 	else
 		printf '%s' "the files listed in $GLINE_CONFIG_DIR/$NAME/installed.txt"
 	fi
@@ -1132,7 +1134,7 @@ doctor_masking() {
 	if [ -f "$LIVE_RECORD" ]; then
 		note "the files installed in $LIVE_DIR/.opencode and the plugins line in $LINE_FILE ($LINE_ENTRY) both bring the harness, and the files win; keep one of them"
 	fi
-	if [ -f "$GLINE_CONFIG_DIR/$NAME/installed.txt" ]; then
+	if [ -z "$GLINE_CENTRAL" ] && [ -f "$GLINE_CONFIG_DIR/$NAME/installed.txt" ]; then
 		MASKED=1
 		note "the harness installed in $GLINE_CONFIG_DIR masks the one named in $LINE_FILE ($LINE_ENTRY): opencode loads the installed copy and reports the project's as \"Duplicate plugin ID\". Remove the line, or remove the global install with $(global_uninstall_advice)"
 	fi
@@ -1266,8 +1268,11 @@ find_global_line() {
 	gline_dir=${OPENCODE_CONFIG_DIR:-$GLOBAL_DIR}
 	gline_dir=${gline_dir%/}
 	gline_dir=${gline_dir%/}
+	GLINE_CENTRAL=
 	if [ -n "${OPENCODE_CONFIG_DIR-}" ] && { is_central_dir "$gline_dir" || is_earlier_central_dir "$gline_dir"; }; then
-		# doctor_config_dir explains a central install named by OPENCODE_CONFIG_DIR.
+		# doctor_config_dir explains a central install named by OPENCODE_CONFIG_DIR; its files
+		# are the site's, so no advice here names them.
+		GLINE_CENTRAL=1
 		find_line_in
 	else
 		find_line_in "$gline_dir/opencode.json" "$gline_dir/opencode.jsonc"
@@ -1292,7 +1297,7 @@ find_global_line() {
 # file and removes only an entry exactly as written.
 global_line_removal() {
 	if [ -n "$GLINE_REMOVE" ]; then
-		say "remove the line with: opencode plugin remove $GLINE_ENTRY"
+		say "remove the line with: opencode plugin remove $(shell_word "$GLINE_ENTRY")"
 	else
 		say "remove the line from $GLINE_FILE"
 	fi
@@ -1307,12 +1312,12 @@ doctor_global_line() {
 		note "the files installed in $GLOBAL_DIR are not loaded: OPENCODE_CONFIG_DIR names $GLINE_CONFIG_DIR, so opencode reads its global config there"
 	fi
 	[ -n "$GLINE_KIND" ] || return 0
-	if [ -f "$GLINE_CONFIG_DIR/$NAME/installed.txt" ]; then
+	if [ -z "$GLINE_CENTRAL" ] && [ -f "$GLINE_CONFIG_DIR/$NAME/installed.txt" ]; then
 		gline_files=$GLINE_CONFIG_DIR
 		gline_uninstall=$(global_uninstall_advice)
 	elif [ -f "$LIVE_RECORD" ]; then
 		gline_files=$LIVE_DIR/.opencode
-		gline_uninstall="$PROG uninstall --project $LIVE_DIR"
+		gline_uninstall="$PROG uninstall --project $(shell_word "$LIVE_DIR")"
 	else
 		gline_files=
 	fi
@@ -1323,6 +1328,15 @@ doctor_global_line() {
 		MASKED=1
 		note "the plugins line in $GLINE_FILE ($GLINE_ENTRY) and the one in $LINE_FILE ($LINE_ENTRY) both bring the harness; opencode keeps $GLINE_ENTRY, as it reads the global config before the project's, and reports the other as \"Duplicate plugin ID\". Remove one of them"
 	fi
+}
+
+# A word as a shell reads it back: quoted when it holds anything but letters, digits and
+# -_./:@=+,%.
+shell_word() {
+	case $1 in
+	'' | *[!A-Za-z0-9_./:@=+,%-]*) printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")" ;;
+	*) printf '%s' "$1" ;;
+	esac
 }
 
 # Whether two paths name the same folder.
@@ -1347,7 +1361,11 @@ find_line_in() {
 		done >"$DOCTOR_TMP/entries" || continue
 		while IFS="$(printf '\t')" read -r line_key line_entry; do
 			case $line_entry in
-			"$NPM_NAME" | "$NPM_NAME"@*)
+			"$NPM_NAME" | "$NPM_NAME"@* | *@npm:"$NPM_NAME" | *@npm:"$NPM_NAME"@*)
+				LINE_KIND=npm
+				;;
+			# opencode installs a git spec of this repository as it installs the package.
+			github:"$REPO_PATH" | github:"$REPO_PATH"#* | git+https://github.com/"$REPO_PATH" | git+https://github.com/"$REPO_PATH".git | git+https://github.com/"$REPO_PATH"#* | git+https://github.com/"$REPO_PATH".git#* | https://github.com/"$REPO_PATH" | https://github.com/"$REPO_PATH".git | https://github.com/"$REPO_PATH"#* | https://github.com/"$REPO_PATH".git#*)
 				LINE_KIND=npm
 				;;
 			*)
@@ -1562,8 +1580,9 @@ doctor_live() {
 	else
 		note "the default agent is ${live_default:-none}, not lead: a default_agent in an opencode config, or \"default_agent\": false in the settings, chooses it"
 	fi
-	# opencode marks a package plugin outdated, and installs the update only when asked.
-	[ "$(json_value updateAvailable)" != true ] || note "a newer version is available: run opencode plugin update"
+	# opencode marks a package plugin outdated, and installs the update only when asked; it finds
+	# a project's plugins line only when run from that project.
+	[ "$(json_value updateAvailable)" != true ] || note "a newer version is available: run opencode plugin update from $LIVE_DIR, then restart opencode"
 	json_values problem <"$DOCTOR_TMP/live" >"$DOCTOR_TMP/problems"
 	while IFS= read -r live_problem; do
 		[ -n "$live_problem" ] || continue

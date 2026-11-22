@@ -333,6 +333,26 @@ describe("the RPC", () => {
     expect(await handlers.problems!({})).toEqual({ problems: [] });
   });
 
+  test("the update notice reaches the RPC of every location, until a location stops", async () => {
+    const notice = new UpdateNotice("ecmwf-multi-agents");
+    const events: string[] = [];
+    const location = async (name: string) => {
+      const doctor = input({}, []);
+      doctor.ctx.rpc = { register: async () => ({ dispose: async () => {}, events: { emit: async (event) => void events.push(`${name}:${event}`) } }) };
+      doctor.notice = notice;
+      return (await registerRpc(doctor))!;
+    };
+    const first = await location("a");
+    await location("b");
+    const outdated = (yes: boolean) => [{ id: "ecmwf-multi-agents", source: { type: "package", target: "x", ...(yes ? { outdated: true } : {}) }, state: { status: "active" } }];
+    notice.observe(outdated(true));
+    expect(events).toEqual(["a:notice", "b:notice"]);
+    first.stopNotices();
+    notice.observe(outdated(false));
+    notice.observe(outdated(true));
+    expect(events).toEqual(["a:notice", "b:notice", "b:notice"]);
+  });
+
   test("an opencode without RPC: nothing registered", async () => {
     expect(await registerRpc(input({}, []))).toBeUndefined();
   });

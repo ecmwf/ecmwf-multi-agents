@@ -30,7 +30,8 @@ function watch(): { notice: UpdateNotice; seen: NoticeView[] } {
 
 describe("the update notice", () => {
   test("says what to run", () => {
-    expect(updateNoticeText(NAME)).toBe("A newer ecmwf-multi-agents is available: run `opencode plugin update`, then restart opencode.");
+    // Plain text: opencode's toast shows backticks as they are.
+    expect(updateNoticeText(NAME)).toBe("A newer ecmwf-multi-agents is available: run opencode plugin update, then restart opencode.");
   });
 
   test("a package plugin opencode marks outdated: one notice, however often the list is read", () => {
@@ -129,5 +130,21 @@ describe("the update notice", () => {
     const waiting = notice.checked(10_000);
     notice.observe(listed(OUTDATED));
     await waiting;
+  });
+
+  test("every location's listener gets the notice; one that stops gets no more", () => {
+    const notice = new UpdateNotice(NAME);
+    const first: NoticeView[] = [];
+    const second: NoticeView[] = [];
+    const stopFirst = notice.onAdd((view) => first.push(view));
+    notice.onAdd((view) => second.push(view));
+    notice.observe(listed(OUTDATED));
+    expect(first).toHaveLength(1);
+    expect(second).toHaveLength(1);
+    stopFirst();
+    notice.observe(listed(CURRENT));
+    notice.observe(listed(OUTDATED));
+    expect(first).toHaveLength(1);
+    expect(second).toHaveLength(2);
   });
 });

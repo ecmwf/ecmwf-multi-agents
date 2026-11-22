@@ -16,7 +16,8 @@ import type { NoticeView } from "./rpc-definition.ts";
 export type { NoticeView };
 
 export function updateNoticeText(name: string): string {
-  return `A newer ${name} is available: run \`opencode plugin update\`, then restart opencode.`;
+  // Plain text: opencode's toast shows Markdown as it is.
+  return `A newer ${name} is available: run opencode plugin update, then restart opencode.`;
 }
 
 interface Source {
@@ -50,7 +51,8 @@ export class UpdateNotice {
   private current: NoticeView | undefined;
   private updating = false;
   private count = 0;
-  private emit: ((notice: NoticeView) => void) | undefined;
+  /** One listener for each location's RPC: one opencode serves several locations. */
+  private readonly emitters = new Set<(notice: NoticeView) => void>();
   private waiters: Array<() => void> = [];
   private readonly started: number;
 
@@ -77,7 +79,7 @@ export class UpdateNotice {
     this.updating = source.updating === true;
     if (this.updating || this.current !== undefined) return;
     this.current = { notice: updateNoticeText(this.name), id: ++this.count };
-    this.emit?.(this.current);
+    for (const emit of this.emitters) emit(this.current);
     for (const wake of this.waiters.splice(0)) wake();
   }
 
@@ -85,9 +87,11 @@ export class UpdateNotice {
     return this.current === undefined || this.updating ? [] : [this.current];
   }
 
-  /** Publish each new notice from now on. */
-  onAdd(emit: (notice: NoticeView) => void): void {
-    this.emit = emit;
+  /** Publish each new notice from now on, until the returned function is called. */
+  onAdd(emit: (notice: NoticeView) => void): () => void {
+    const own = (notice: NoticeView) => emit(notice);
+    this.emitters.add(own);
+    return () => void this.emitters.delete(own);
   }
 
   /**

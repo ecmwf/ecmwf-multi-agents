@@ -280,7 +280,7 @@ export async function doctorReport(input: DoctorInput): Promise<DoctorView> {
 }
 
 /** Register the RPC; returns the registration, or undefined where this opencode has no RPC. */
-export async function registerRpc(input: DoctorInput): Promise<V2RpcRegistration | undefined> {
+export async function registerRpc(input: DoctorInput): Promise<(V2RpcRegistration & { stopNotices: () => void }) | undefined> {
   const register = input.ctx.rpc?.register;
   if (typeof register !== "function") return undefined;
   const registration = await register.call(input.ctx.rpc, rpcDefinition(input.harness.name), {
@@ -291,8 +291,9 @@ export async function registerRpc(input: DoctorInput): Promise<V2RpcRegistration
   input.problems.onAdd((problem) => {
     void Promise.resolve(registration.events.emit("problem", { ...problem })).catch(() => undefined);
   });
-  input.notice?.onAdd((notice) => {
-    void Promise.resolve(registration.events.emit("notice", { ...notice })).catch(() => undefined);
-  });
-  return registration;
+  const stopNotices =
+    input.notice?.onAdd((notice) => {
+      void Promise.resolve(registration.events.emit("notice", { ...notice })).catch(() => undefined);
+    }) ?? (() => {});
+  return Object.assign(registration, { stopNotices });
 }

@@ -755,8 +755,8 @@ changes nothing.
 
 `tui.js` calls `problems` when the TUI starts, listens for `problem` events and shows each
 problem marked `notify` once as a warning toast. It calls `notices` and listens for `notice`
-events the same way, and shows each notice once as an information toast. The model sees
-neither.
+events the same way, and shows each notice as an information toast, once in each TUI start. The
+model sees neither.
 
 opencode never installs a plugin update by itself. For a package plugin without a pinned
 version it checks npm (or the Git repository) after each activation, at most once a day, and
@@ -766,8 +766,10 @@ core/src/plugin/supervisor.ts). When that changes, opencode lists the plugins ag
 publishes `plugin.updated`. The server entry reads the plugin list at setup and on each
 `plugin.updated`, and when its own active entry is an outdated package that is not being
 updated, it publishes one notice for the process: "A newer ecmwf-multi-agents is available: run
-`opencode plugin update`, then restart opencode." It publishes another only after opencode
-cleared the mark and set it again. A checkout, a folder plugin or installed files are not a
+opencode plugin update, then restart opencode." Every location opencode serves gets it, until
+that location is torn down, and a TUI that starts later reads it with `notices`; so the toast
+comes at each start until the update. It publishes another only after opencode cleared the
+mark and set it again. A checkout, a folder plugin or installed files are not a
 package and never get it. The check runs after activation and says nothing when it finds no
 update, so `doctor`, asked of a fresh server, waits up to five seconds from the plugin's start
 before it reads the list again for a package that is not marked yet.

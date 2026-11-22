@@ -822,7 +822,8 @@ describe("doctor asks opencode through the plugin's RPC", () => {
     answer(box, { output: { ...GOOD_DOCTOR.output, updateAvailable: true } });
     const { code, out } = run(box, ["doctor"]);
     expect(code).toBe(0);
-    expect(out).toContain("WARN  a newer version is available: run opencode plugin update");
+    // From the project doctor looked at: opencode finds a project's plugins line only there.
+    expect(out).toMatch(/WARN  a newer version is available: run opencode plugin update from \S+, then restart opencode\n/);
   });
 
   test("a global install masks a project's plugins line: a warning", () => {
@@ -1113,6 +1114,63 @@ describe("doctor for the harness switched on for every project by opencode plugi
     const { code, out } = run(box, ["doctor"], dir);
     expect(code).toBe(0);
     expect(out).toContain(`WARN  the plugins line in ${config} (${NPM}@0.9.1) and the one in ${path.join(dir, "opencode.json")} (${NPM}@0.8.0) both bring the harness; opencode keeps ${NPM}@0.9.1`);
+  });
+
+  test("a central install that OPENCODE_CONFIG_DIR names, with a project line: no advice to remove the central install", () => {
+    for (const name of ["ecmwf", "opencode"]) {
+      const box = makeBox();
+      const central = path.join(box.dir, "shared", name);
+      expect(run(box, ["--central", central]).code).toBe(0);
+      const dir = project(box, [`${NPM}@0.6.0`]);
+      for (const args of [["doctor", "--project", dir], ["doctor"]]) {
+        const { out } = run(box, args, dir, { ...COMMAND, OPENCODE_CONFIG_DIR: central });
+        // The site's install is not the user's to remove: doctor_config_dir explains the variable.
+        expect([name, args.length, out]).not.toContain("remove the global install");
+        expect(out).not.toContain(`masks the one named in`);
+        expect(out).not.toContain("uninstall");
+        expect(out).not.toContain(`${central}/${NAME}/installed.txt`);
+      }
+    }
+  });
+
+  test("opencode.json and opencode.jsonc both there, the line in the second: the advice names the file, as plugin remove edits only the first", () => {
+    const box = makeBox();
+    run(box, []);
+    write(path.join(box.config, "opencode.json"), "{}\n");
+    const config = path.join(box.config, "opencode.jsonc");
+    write(config, `${JSON.stringify({ plugins: [NPM] })}\n`);
+    const { out } = run(box, ["doctor"], project(box), COMMAND);
+    expect(out).toContain(`Keep one: remove the line from ${config}, or the files with: ecmwf-multi-agents uninstall\n`);
+  });
+
+  test("an entry or a folder that a shell would split is quoted in the advice", () => {
+    const box = makeBox();
+    run(box, []);
+    const range = `${NPM}@>=0.9 <1`;
+    globalLine(box, [range]);
+    const { out } = run(box, ["doctor"], project(box), COMMAND);
+    expect(out).toContain(`remove the line with: opencode plugin remove '${range}'`);
+    const spaced = makeBox();
+    const parent = path.join(spaced.dir, "my config");
+    const folder = path.join(parent, "opencode");
+    expect(run(spaced, [], spaced.dir, { XDG_CONFIG_HOME: parent }).code).toBe(0);
+    write(path.join(folder, "opencode.json"), `${JSON.stringify({ plugins: [NPM] })}\n`);
+    const quoted = run(spaced, ["doctor"], project(spaced), { ...COMMAND, OPENCODE_CONFIG_DIR: folder });
+    expect(quoted.out).toContain(`or the files with: XDG_CONFIG_HOME='${parent}' ecmwf-multi-agents uninstall\n`);
+  });
+
+  test("an npm alias and a git spec of this repository count as the harness's package", () => {
+    for (const entry of [`harness@npm:${NPM}`, `harness@npm:${NPM}@0.10.0`, "github:ecmwf/ecmwf-multi-agents", "github:ecmwf/ecmwf-multi-agents#0.10.0", "git+https://github.com/ecmwf/ecmwf-multi-agents.git", "https://github.com/ecmwf/ecmwf-multi-agents"]) {
+      const box = makeBox();
+      const config = globalLine(box, [entry]);
+      const { code, out } = run(box, ["doctor"], project(box));
+      expect([entry, code]).toEqual([entry, 0]);
+      expect(out).toContain(`OK    switched on for every project by the plugins line in ${config}: ${entry}\n`);
+    }
+    // Another package or repository is not the harness.
+    const other = makeBox();
+    globalLine(other, ["github:someone/ecmwf-multi-agents-fork", `x@npm:${NPM}-extra`]);
+    expect(run(other, ["doctor"], project(other)).code).toBe(1);
   });
 
   test("no line anywhere: not installed, not switched on", () => {

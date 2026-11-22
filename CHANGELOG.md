@@ -11,20 +11,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ## [Unreleased]
 
-## [0.10.0] - 2026-11-22
-
 ### Added
 
 - `opencode plugin add @ecmwf.int/multi-agents` is now the quickest install, in the README and
   `docs/install.md`: it switches the harness on for every project. `install.sh doctor`
   recognises a harness switched on this way, and warns when it is also installed as files or
   named in a project's `plugins` line with another version, saying which copy opencode keeps.
-- The README shows how the agents work together in an animation instead of a flowchart.
+  By Samet Demir (#9).
+- The README shows how the agents work together in an animation instead of a flowchart (#9).
 - The harness tells you when a newer version is available. opencode marks a plugin added with
   `opencode plugin add` (or named without a version) outdated but never installs the update by
-  itself; the harness then shows a toast in the TUI once: "A newer ecmwf-multi-agents is
-  available: run `opencode plugin update`, then restart opencode." `doctor` warns about it too.
-  A checkout or an install with `install.sh` never gets the notice.
+  itself; the harness then shows a notice in the TUI at each start until you update: "A newer
+  ecmwf-multi-agents is available: run opencode plugin update, then restart opencode."
+  `doctor` warns about it too. A checkout or an install with `install.sh` never gets the
+  notice (#9).
+
+### Fixed
+
+- `install.sh doctor` with `OPENCODE_CONFIG_DIR` set looks for installed files in the folder
+  opencode reads, and warns that files installed in `~/.config/opencode` are then not loaded.
+  It also weighs files installed in the project without `--project` (#9).
+
+## [0.10.0] - 2026-11-22
+
+### Added
 
 - `lead` writes for readers whose first language may not be English: short sentences, the
   active voice, steps as numbered commands, one term for one thing, and code, commands and

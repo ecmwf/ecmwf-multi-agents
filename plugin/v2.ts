@@ -281,9 +281,10 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
         reporter,
         helpers: enabledHelpers(harness, settings),
       });
+      let stopNotices = () => {};
       if (environment !== undefined) {
         try {
-          await registerRpc({
+          const rpc = await registerRpc({
             harness,
             ctx,
             loaded,
@@ -303,6 +304,7 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
             notice,
             updateChecked: () => notice.checked(options.updateCheckMs ?? UPDATE_CHECK_MS),
           });
+          if (rpc !== undefined) stopNotices = rpc.stopNotices;
         } catch (error) {
           reporter.internal("registering the RPC", error);
         }
@@ -474,6 +476,7 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
       const stopWatching = watchEvents(ctx, onActivation, onEvent, reporter, options.fallbackMs ?? FALLBACK_MS);
       return async () => {
         stopWatching();
+        stopNotices();
         agentTransform.stop();
         lateCommands?.stop();
       };
