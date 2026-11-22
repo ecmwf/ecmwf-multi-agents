@@ -11,6 +11,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-22
+
 ### Added
 
 - `lead` writes for readers whose first language may not be English: short sentences, the
@@ -26,12 +28,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
   in a session, and to keep a fallback model for the project when an agent starts running on
   one. It asks with the question tool and changes a settings file only if you agree.
 
-### Fixed
-
-- On opencode 2.2.6, a message you type while `/review` or `/progress` runs inline is held for
-  `lead` again instead of reaching the helper: 2.2.6 no longer passes message metadata to
-  plugins, so the plugin now asks opencode which messages are yours.
-
 ### Changed
 
 - Tested with opencode 2.2.6 (was 2.2.5); other 2.x versions still install with a warning.
@@ -41,6 +37,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ### Fixed
 
+- On opencode 2.2.6, a message you type while `/review` or `/progress` runs inline is held for
+  `lead` again instead of reaching the helper: 2.2.6 no longer passes message metadata to
+  plugins, so the plugin now asks opencode which messages are yours.
 - `max_helper_slots` is enforced: the plugin refuses a hand-off beyond the limit. While that
   many of `lead`'s helpers run, or have been handed work and are starting, a new hand-off
   fails with a message that names the limit and the helpers. Continuing an idle helper counts
@@ -48,7 +47,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 - `helpers_status`, `helpers_steer` and `helpers_cancel` also find helpers started before
   opencode or the plugin restarted: the plugin asks opencode for the session's helpers. A
   helper whose run a stop of opencode cut off, and that opencode did not resume, shows as
-  stopped.
+  stopped. Both by Samet Demir (#8).
 
 ## [0.9.1] - 2026-11-08
 
@@ -302,7 +301,8 @@ helpers it hands work to.
 - Scenario evals (`make evals`) that compare the harness with plain opencode on a sample
   repository, using real models.
 
-[Unreleased]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.9.1...HEAD
+[Unreleased]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.10.0...HEAD
+[0.10.0]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.9.1...0.10.0
 [0.9.1]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.9.0...0.9.1
 [0.9.0]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.8.0...0.9.0
 [0.8.0]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.7.1...0.8.0
