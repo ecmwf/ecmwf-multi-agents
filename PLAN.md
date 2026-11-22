@@ -1000,6 +1000,23 @@ security. Tests first in every task.
   scan. With the inspector off, `/harden` refuses and says how to switch it on
 - [~] Tiago: Checks: `make check`, integration on 2.2.6, stand-in evals with a new `harden`
   case, every case once on real models (at most $40)
+- [~] Tiago: Security skills for `/harden`: a scout reads
+  https://github.com/briiirussell/cybersecurity-skills in depth; nothing is copied, but 2 or 3
+  condensed skills of our own, inspired by it, for the inspector or the builder to load under
+  `/harden`, settled with the owner first; evals that trigger each skill. Settled: three skills,
+  `ecmwf-multi-agents-security-code` and `-security-supply-chain` (inspector) and
+  `-security-fix` (builder), named in `/harden`'s briefs, an ID per checklist item cited in each
+  finding; evals per skill with the skill allowed and denied, 3 runs per arm, at most $40
+  (`docs/research/security-skills.md`)
+- [~] Tiago: The open items of `TODO.md` and of this file become GitHub issues, labelled
+  `proposal`, `task` or `question` with a topic label; Samet's are assigned to him. Then
+  `TODO.md` goes
+- [~] Tiago: `PLAN.md` goes: work is tracked in GitHub issues, and claiming a task is assigning
+  yourself to its issue (`AGENTS.md`, Working together). The goal, principles and decisions
+  move to a short root `DESIGN.md`, which links `docs/architecture.md` and `docs/adr/`;
+  `AGENTS.md` and `README.md` link it instead of repeating it
+- [~] Tiago: README: the top of it says what 0.11.0 brings; how to install and how to update;
+  installing from source moves to a `CONTRIBUTING.md`, linked from a "Contributing" section
 - [ ] Tiago: Release 0.11.0
 
 ## Follow-ups
