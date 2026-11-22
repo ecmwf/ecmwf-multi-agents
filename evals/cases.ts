@@ -867,7 +867,7 @@ export const CASES: EvalCase[] = [
       helperContinued("designer"),
       workFiles("spec", "a spec was written", /^\.ecmwf-multi-agents\/design\/[^/]+\/spec\.md$/),
       notWrittenBy("lead", "lead wrote no design file itself", ".ecmwf-multi-agents/design"),
-      noChanges(WORK_FILES, "no project file changed (work files allowed)"),
+      noChanges(new RegExp(`${WORK_FILES.source}|^\\.opencode/ecmwf-multi-agents\\.jsonc$`), "no project file changed (work files, and the settings file if the user accepts a higher step limit, allowed)"),
     ],
     baseline: false,
   },
@@ -919,8 +919,12 @@ export const CASES: EvalCase[] = [
     setup: [INSPECTOR_ON, { kind: "write", path: "stations/fetch.py", content: WEAK_FETCH }, { kind: "write", path: "tools/keyring.c", content: WEAK_KEYRING }, { kind: "commit", message: "feat: unpack archives from other sites" }],
     turns: [{ turn: { kind: "command", command: "harden", arguments: "stations/fetch.py tools/keyring.c" } }],
     checks: [
-      findingsMention("found-tar", "the unfiltered tar extraction", "inspector", [{ label: "extractall", any: [/extractall/i, /path traversal/i, /tar ?slip/i] }]),
-      findingsMention("found-mktemp", "the racy temporary name", "inspector", [{ label: "mktemp", any: [/mktemp/] }]),
+      // A finding may name the call, what it allows or its fix; a checklist ID alone never counts,
+      // so the arm with the skills denied is scored the same way.
+      findingsMention("found-tar", "the unfiltered tar extraction", "inspector", [
+        { label: "extractall", any: [/extractall/i, /path traversal/i, /tar ?slip/i, /outside (its|the) (destination|target)/i, /filter\s*=\s*"?data/i] },
+      ]),
+      findingsMention("found-mktemp", "the racy temporary name", "inspector", [{ label: "mktemp", any: [/mktemp/, /mkstemp/, /temporary (download )?(file )?name/i] }]),
       findingsMention("found-memset", "the memset the compiler may drop", "inspector", [{ label: "memset", any: [/memset/, /explicit_bzero/] }]),
       notInFindings("inspector", [{ label: "unpack_checked", any: ["unpack_checked"] }, { label: "pack_list", any: ["pack_list"] }]),
       skillLoaded("inspector", "ecmwf-multi-agents-security-code", ["harness"]),
@@ -938,7 +942,9 @@ export const CASES: EvalCase[] = [
     checks: [
       findingsMention("found-cache", "the cache in the release job", "inspector", [{ label: "cache", any: [/cache/i] }]),
       findingsMention("found-token", "the long-lived publishing token", "inspector", [{ label: "token", any: [/PYPI_TOKEN/, /trusted publish/i, /long-lived/i] }]),
-      findingsMention("found-index", "the extra package index", "inspector", [{ label: "extra index", any: [/extra-index-url/i, /dependency confusion/i] }]),
+      findingsMention("found-index", "the extra package index", "inspector", [
+        { label: "extra index", any: [/extra-index-url/i, /extra (package )?index/i, /dependency[ -]confusion/i, /across (package )?indexes/i] },
+      ]),
       notInFindings("inspector", [{ label: "pull_request.number", any: ["pull_request.number"] }]),
       skillLoaded("inspector", "ecmwf-multi-agents-security-supply-chain", ["harness"]),
       citesIds("inspector", ["GA", "DEP", "CT", "SEC", "SC"]),
