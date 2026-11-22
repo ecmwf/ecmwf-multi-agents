@@ -34,7 +34,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
   your branch, never pushed; the inspector then rechecks. On GitHub, `lead` can read the
   repository's security alerts and start a CodeQL scan, each only with your approval. While the
   inspector is off, `/harden` says how to switch it on.
-
 - Three security skills of the harness's own for `/harden`: checklists for the `inspector`
   (Python, C and C++, Fortran and shell code; GitHub Actions, Python dependencies, containers,
   secrets and scanner hits), each item with an ID its findings cite, and safe-fix rules and
