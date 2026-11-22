@@ -69,3 +69,8 @@ IDs cited only in the report file. The checks now count a weakness as found when
 names it or its place covers the planted line, a decoy only when a finding points at its lines,
 and IDs in the findings or the report files under `.ecmwf-multi-agents/security/`. Re-run over
 the saved runs, they agree with a reading by hand in all 18.
+
+## Decision
+
+All three skills ship in 0.11.0, for the traceability of the findings and the rules that settle
+judgement calls. Issue #26 measures the code skill on weaknesses a model is more likely to miss.
