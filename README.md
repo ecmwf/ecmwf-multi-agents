@@ -160,9 +160,9 @@ tells you in a notice at each start, and `doctor` says so too. Then:
 | How you installed it | To update |
 |---|---|
 | `opencode plugin add` | `opencode plugin update` |
-| `npm install -g` and `ecmwf-multi-agents` | Run both commands again |
-| A project's `plugins` line with a version, such as `@ecmwf.int/multi-agents@0.11.0` | Change the version in the line |
-| A project's `plugins` line without a version, or with `@latest` | `opencode plugin update`, run from that project |
+| `npm install -g ecmwf-multi-agents` | Run both commands again |
+| Project `plugins` line with version, `@ecmwf.int/multi-agents@0.11.0` | Change the version in the line |
+| Project `plugins` line no version or `@latest` | `opencode plugin update`, run from that project |
 
 Restart opencode afterwards. `doctor` shows the version in use.
 
@@ -173,7 +173,7 @@ names the npm package, and opencode fetches it.
 
 ```json
 {
-  "plugins": ["@ecmwf.int/multi-agents@0.11.0"]
+  "plugins": ["@ecmwf.int/multi-agents"]
 }
 ```
 
