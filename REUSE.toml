@@ -21,6 +21,8 @@ path = [
     "CLAUDE.md",
     "VERSION",
     "docs/assets/**",
+    # Kept by the organisation's CODEOWNERS script, which writes the whole block.
+    ".github/CODEOWNERS",
 ]
 precedence = "closest"
 SPDX-FileCopyrightText = "2026 European Centre for Medium-Range Weather Forecasts (ECMWF)"
