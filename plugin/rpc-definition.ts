@@ -12,8 +12,9 @@ export function rpcDefinition(id: string): V2RpcDefinition {
     methods: {
       doctor: { input: {}, output: {} },
       problems: { input: {}, output: {} },
+      notices: { input: {}, output: {} },
     },
-    events: { problem: { schema: { type: "object" } } },
+    events: { problem: { schema: { type: "object" } }, notice: { schema: { type: "object" } } },
   };
 }
 
@@ -21,6 +22,12 @@ export function rpcDefinition(id: string): V2RpcDefinition {
 export interface ProblemView {
   problem: string;
   notify: boolean;
+}
+
+/** A notice as the RPC returns it, such as a newer harness being available; `id` tells one the TUI has shown from a new one. */
+export interface NoticeView {
+  notice: string;
+  id: number;
 }
 
 /** What `doctor` answers; `install.sh doctor` reads it without a JSON tool, so keep it flat. */
@@ -59,5 +66,7 @@ export interface DoctorView {
   /** Whether git's exclude file lists the work folder; null outside git. */
   workDirExcluded: boolean | null;
   problems: ProblemView[];
+  /** Whether opencode marks the plugin's own package outdated: `opencode plugin update` installs the newer one. */
+  updateAvailable: boolean;
   plugins: Array<{ id: string | null; status: string | null; error?: string }>;
 }

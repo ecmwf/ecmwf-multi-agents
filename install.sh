@@ -965,6 +965,9 @@ cmd_doctor() {
 	SRC_DIR=$DIST_ROOT/opencode-$PLATFORM
 	# The project whose opencode config is checked for a plugins line, and that opencode is asked about.
 	LIVE_DIR=${PROJECT:-$PWD}
+	# Files installed in that project, which opencode loads there in either mode.
+	LIVE_RECORD=$LIVE_DIR/.opencode/$NAME/installed.txt
+	find_global_line
 	find_plugin_line "$LIVE_DIR"
 	doctor_config_dir
 	find_central
@@ -977,10 +980,24 @@ cmd_doctor() {
 	if [ ! -f "$RECORD" ]; then
 		# The advice for OPENCODE_CONFIG_DIR replaces the advice to install.
 		[ "$TARGET" != global ] || [ "$CONFIG_DIR_CENTRAL" = 0 ] || doctor_summary
+		PROFILES_DIR=$SRC_DIR/$NAME/profiles
 		if [ "$TARGET" = project ] && [ -n "$LINE_KIND" ]; then
-			check_plugin_line
+			check_plugin_line "switched on by" "$LINE_FILE" "$LINE_ENTRY" "$LINE_KIND" "$LINE_DIR" "$LINE_KEY"
 			doctor_masking
-			PROFILES_DIR=$SRC_DIR/$NAME/profiles
+			doctor_global_line
+			doctor_settings_and_models
+			doctor_live
+			doctor_summary
+		fi
+		# "opencode plugin add" switches the harness on for every project with a line in the
+		# global opencode config.
+		if [ -n "$GLINE_KIND" ]; then
+			if [ "$TARGET" = project ]; then
+				check_plugin_line "switched on by" "$GLINE_FILE" "$GLINE_ENTRY" "$GLINE_KIND" "$GLINE_DIR" "$GLINE_KEY"
+			else
+				check_plugin_line "switched on for every project by" "$GLINE_FILE" "$GLINE_ENTRY" "$GLINE_KIND" "$GLINE_DIR" "$GLINE_KEY"
+			fi
+			doctor_global_line
 			doctor_settings_and_models
 			doctor_live
 			doctor_summary
@@ -1002,6 +1019,7 @@ cmd_doctor() {
 
 	check_installed_files
 	doctor_masking
+	doctor_global_line
 	doctor_settings_and_models
 	doctor_live
 	doctor_summary
@@ -1094,16 +1112,29 @@ doctor_central() {
 	export OPENCODE_CONFIG
 }
 
+# How to remove the global install opencode loads, in $GLINE_CONFIG_DIR. The installer removes
+# a global install from $XDG_CONFIG_HOME/opencode, so a folder that OPENCODE_CONFIG_DIR names
+# needs that variable, or, when it is not named opencode, the files its record lists.
+global_uninstall_advice() {
+	if same_dir "$GLINE_CONFIG_DIR" "$GLOBAL_DIR"; then
+		printf '%s' "$PROG uninstall"
+	elif [ "${GLINE_CONFIG_DIR##*/}" = opencode ]; then
+		printf '%s' "XDG_CONFIG_HOME=${GLINE_CONFIG_DIR%/*} $PROG uninstall"
+	else
+		printf '%s' "the files listed in $GLINE_CONFIG_DIR/$NAME/installed.txt"
+	fi
+}
+
 # A global install and a project's plugins line: the global copy's plugin loads first, and
 # opencode drops the project's as "Duplicate plugin ID".
 doctor_masking() {
 	[ -n "$LINE_KIND" ] || return 0
-	if [ "$TARGET" = project ] && [ -f "$RECORD" ]; then
-		note "the files installed in $CONFIG_DIR and the plugins line in $LINE_FILE ($LINE_ENTRY) both bring the harness, and the files win; keep one of them"
+	if [ -f "$LIVE_RECORD" ]; then
+		note "the files installed in $LIVE_DIR/.opencode and the plugins line in $LINE_FILE ($LINE_ENTRY) both bring the harness, and the files win; keep one of them"
 	fi
-	if [ -f "$GLOBAL_DIR/$NAME/installed.txt" ]; then
+	if [ -f "$GLINE_CONFIG_DIR/$NAME/installed.txt" ]; then
 		MASKED=1
-		note "the harness installed in $GLOBAL_DIR masks the one named in $LINE_FILE ($LINE_ENTRY): opencode loads the installed copy and reports the project's as \"Duplicate plugin ID\". Remove the line, or remove the global install with $PROG uninstall"
+		note "the harness installed in $GLINE_CONFIG_DIR masks the one named in $LINE_FILE ($LINE_ENTRY): opencode loads the installed copy and reports the project's as \"Duplicate plugin ID\". Remove the line, or remove the global install with $(global_uninstall_advice)"
 	fi
 }
 
@@ -1218,12 +1249,97 @@ entry_folder() {
 # Finds a plugins line for the harness in the project at $1. Sets LINE_KIND (npm, checkout or
 # folder; empty when there is none), LINE_ENTRY, LINE_FILE and LINE_DIR.
 find_plugin_line() {
+	find_line_in "$1/opencode.json" "$1/opencode.jsonc" "$1/.opencode/opencode.json" "$1/.opencode/opencode.jsonc"
+	# opencode never reads its global config folder as a project's.
+	if [ -n "$LINE_FILE" ] && [ "$LINE_FILE" = "$GLINE_FILE" ]; then
+		LINE_KIND=
+		LINE_FILE=
+	fi
+}
+
+# The global opencode config: the folder OPENCODE_CONFIG_DIR names, else ~/.config/opencode;
+# opencode reads opencode.json and opencode.jsonc there, and "opencode plugin add" writes the
+# first of them that exists (opencode.json when neither does). Sets GLINE_CONFIG_DIR, the
+# folder whose installed files opencode loads, and GLINE_KIND, GLINE_ENTRY, GLINE_FILE,
+# GLINE_DIR and GLINE_KEY as find_plugin_line sets LINE_*.
+find_global_line() {
+	gline_dir=${OPENCODE_CONFIG_DIR:-$GLOBAL_DIR}
+	gline_dir=${gline_dir%/}
+	gline_dir=${gline_dir%/}
+	if [ -n "${OPENCODE_CONFIG_DIR-}" ] && { is_central_dir "$gline_dir" || is_earlier_central_dir "$gline_dir"; }; then
+		# doctor_config_dir explains a central install named by OPENCODE_CONFIG_DIR.
+		find_line_in
+	else
+		find_line_in "$gline_dir/opencode.json" "$gline_dir/opencode.jsonc"
+	fi
+	GLINE_CONFIG_DIR=$gline_dir
+	GLINE_KIND=$LINE_KIND
+	GLINE_ENTRY=$LINE_ENTRY
+	GLINE_FILE=$LINE_FILE
+	GLINE_DIR=$LINE_DIR
+	GLINE_KEY=$LINE_KEY
+	GLINE_REMOVE=
+	if [ "$GLINE_KIND" = npm ]; then
+		for gline_first in "$gline_dir/opencode.json" "$gline_dir/opencode.jsonc"; do
+			[ -f "$gline_first" ] || continue
+			[ "$gline_first" != "$GLINE_FILE" ] || GLINE_REMOVE=1
+			break
+		done
+	fi
+}
+
+# How to take the global line out: "opencode plugin remove" edits only the first global config
+# file and removes only an entry exactly as written.
+global_line_removal() {
+	if [ -n "$GLINE_REMOVE" ]; then
+		say "remove the line with: opencode plugin remove $GLINE_ENTRY"
+	else
+		say "remove the line from $GLINE_FILE"
+	fi
+}
+
+# The global line beside other copies of the harness. opencode lists the plugins/ folders of
+# every config folder before any plugins line, and the global config's lines before a
+# project's, and keeps the first copy of a plugin ID (core/src/config/plugin/source.ts and
+# core/src/plugin/supervisor.ts in opencode 2.2.6).
+doctor_global_line() {
+	if [ -f "$GLOBAL_DIR/$NAME/installed.txt" ] && ! same_dir "$GLOBAL_DIR" "$GLINE_CONFIG_DIR"; then
+		note "the files installed in $GLOBAL_DIR are not loaded: OPENCODE_CONFIG_DIR names $GLINE_CONFIG_DIR, so opencode reads its global config there"
+	fi
+	[ -n "$GLINE_KIND" ] || return 0
+	if [ -f "$GLINE_CONFIG_DIR/$NAME/installed.txt" ]; then
+		gline_files=$GLINE_CONFIG_DIR
+		gline_uninstall=$(global_uninstall_advice)
+	elif [ -f "$LIVE_RECORD" ]; then
+		gline_files=$LIVE_DIR/.opencode
+		gline_uninstall="$PROG uninstall --project $LIVE_DIR"
+	else
+		gline_files=
+	fi
+	if [ -n "$gline_files" ]; then
+		MASKED=1
+		note "the files installed in $gline_files and the plugins line in $GLINE_FILE ($GLINE_ENTRY) both bring the harness; opencode keeps the installed files, which it finds before any plugins line, and reports the line's copy as \"Duplicate plugin ID\". Keep one: $(global_line_removal), or $(case $gline_uninstall in "the files listed"*) printf %s "$gline_uninstall" ;; *) printf "the files with: %s" "$gline_uninstall" ;; esac)"
+	elif [ -n "$LINE_KIND" ] && [ "$LINE_ENTRY" != "$GLINE_ENTRY" ] && { [ -z "$LINE_DIR" ] || [ "$LINE_DIR" != "$GLINE_DIR" ]; }; then
+		MASKED=1
+		note "the plugins line in $GLINE_FILE ($GLINE_ENTRY) and the one in $LINE_FILE ($LINE_ENTRY) both bring the harness; opencode keeps $GLINE_ENTRY, as it reads the global config before the project's, and reports the other as \"Duplicate plugin ID\". Remove one of them"
+	fi
+}
+
+# Whether two paths name the same folder.
+same_dir() {
+	[ "$1" = "$2" ] && return 0
+	[ -d "$1" ] && [ -d "$2" ] || return 1
+	[ "$(CDPATH='' cd -- "$1" && pwd -P)" = "$(CDPATH='' cd -- "$2" && pwd -P)" ]
+}
+
+# Finds the first plugins line for the harness in the files given, as find_plugin_line does.
+find_line_in() {
 	LINE_KIND=
 	LINE_ENTRY=
 	LINE_FILE=
 	LINE_DIR=
 	LINE_KEY=
-	for line_file in "$1/opencode.json" "$1/opencode.jsonc" "$1/.opencode/opencode.json" "$1/.opencode/opencode.jsonc"; do
+	for line_file in "$@"; do
 		[ -f "$line_file" ] || continue
 		# opencode 2 still reads opencode 1's "plugin" key as "plugins".
 		for line_key in plugins plugin; do
@@ -1259,26 +1375,28 @@ find_plugin_line() {
 	done
 }
 
+# Reports a plugins line: $1 how it switches the harness on, then its file, entry, kind, folder
+# and key.
 check_plugin_line() {
-	ok "switched on by the plugins line in $LINE_FILE: $LINE_ENTRY"
-	if [ "$LINE_KEY" = plugin ]; then
-		note "$LINE_FILE names the harness under \"plugin\", as opencode 1 did; opencode 2 still reads that key, but rename it to \"plugins\""
+	ok "$1 the plugins line in $2: $3"
+	if [ "$6" = plugin ]; then
+		note "$2 names the harness under \"plugin\", as opencode 1 did; opencode 2 still reads that key, but rename it to \"plugins\""
 	fi
-	case $LINE_KIND in
+	case $4 in
 	npm)
-		ok "opencode installs the package $LINE_ENTRY itself; the check below shows whether it loaded"
+		ok "opencode installs the package $3 itself; the check below shows whether it loaded"
 		;;
 	checkout)
-		if [ ! -f "$LINE_DIR/package.json" ] || [ ! -f "$LINE_DIR/server.js" ]; then
-			fail "$LINE_DIR is not a checkout of $NAME (package.json or server.js is missing); clone it there, or fix the line"
-		elif [ ! -f "$LINE_DIR/dist/opencode-v2/$PLUGIN_REL/index.js" ] || [ ! -f "$LINE_DIR/dist/opencode-v2/$PLUGIN_REL/tui.js" ]; then
-			fail "the checkout $LINE_DIR has no plugin folder (dist/opencode-v2/$PLUGIN_REL); run git pull there"
+		if [ ! -f "$5/package.json" ] || [ ! -f "$5/server.js" ]; then
+			fail "$5 is not a checkout of $NAME (package.json or server.js is missing); clone it there, or fix the line"
+		elif [ ! -f "$5/dist/opencode-v2/$PLUGIN_REL/index.js" ] || [ ! -f "$5/dist/opencode-v2/$PLUGIN_REL/tui.js" ]; then
+			fail "the checkout $5 has no plugin folder (dist/opencode-v2/$PLUGIN_REL); run git pull there"
 		else
-			ok "the checkout $LINE_DIR has the plugin folder"
+			ok "the checkout $5 has the plugin folder"
 		fi
 		;;
 	folder)
-		ok "the plugin folder $LINE_DIR is there"
+		ok "the plugin folder $5 is there"
 		;;
 	esac
 }
@@ -1444,6 +1562,8 @@ doctor_live() {
 	else
 		note "the default agent is ${live_default:-none}, not lead: a default_agent in an opencode config, or \"default_agent\": false in the settings, chooses it"
 	fi
+	# opencode marks a package plugin outdated, and installs the update only when asked.
+	[ "$(json_value updateAvailable)" != true ] || note "a newer version is available: run opencode plugin update"
 	json_values problem <"$DOCTOR_TMP/live" >"$DOCTOR_TMP/problems"
 	while IFS= read -r live_problem; do
 		[ -n "$live_problem" ] || continue

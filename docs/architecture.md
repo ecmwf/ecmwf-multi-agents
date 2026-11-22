@@ -736,9 +736,11 @@ The server entry registers an RPC with the id `ecmwf-multi-agents`, reachable at
 
 | Method or event | Answer |
 |---|---|
-| `doctor` | The harness version, the default agent, whether `lead` is loaded and whether it is the harness's own (`leadDefinition`, with the fields that differ in `leadChanged`), the `lead.md` files and opencode configs with a `lead` entry that could change it, `lead`'s `Review policy:` line, helper limit instruction and model, which helpers are on and which off, whether git's exclude file lists the work folder, the effective settings and the file each comes from, the problems found, and the state of the plugins other than opencode's own |
+| `doctor` | The harness version, the default agent, whether `lead` is loaded and whether it is the harness's own (`leadDefinition`, with the fields that differ in `leadChanged`), the `lead.md` files and opencode configs with a `lead` entry that could change it, `lead`'s `Review policy:` line, helper limit instruction and model, which helpers are on and which off, whether git's exclude file lists the work folder, the effective settings and the file each comes from, the problems found, and whether a newer harness is available (`updateAvailable`), and the state of the plugins other than opencode's own |
 | `problems` | The problems found since the plugin loaded, each with `notify` when it deserves a toast |
 | event `problem` | Published for each new problem |
+| `notices` | The notices to show, apart from problems: a newer harness is available, when opencode marks the plugin's own package outdated |
+| event `notice` | Published for each new notice |
 
 opencode does not record where an agent came from, so `doctor` compares the `lead` opencode
 loaded with the harness's own, field by field: the prompt with the review line, helper limit
@@ -752,7 +754,23 @@ are listed as places a change may come from; a file that repeats the harness's o
 changes nothing.
 
 `tui.js` calls `problems` when the TUI starts, listens for `problem` events and shows each
-problem marked `notify` once as a warning toast.
+problem marked `notify` once as a warning toast. It calls `notices` and listens for `notice`
+events the same way, and shows each notice once as an information toast. The model sees
+neither.
+
+opencode never installs a plugin update by itself. For a package plugin without a pinned
+version it checks npm (or the Git repository) after each activation, at most once a day, and
+marks the plugin outdated in its plugin list (`source.outdated`, and `source.updating` while
+`opencode plugin update` installs it; opencode 2.2.6, PluginSupervisor in
+core/src/plugin/supervisor.ts). When that changes, opencode lists the plugins again and
+publishes `plugin.updated`. The server entry reads the plugin list at setup and on each
+`plugin.updated`, and when its own active entry is an outdated package that is not being
+updated, it publishes one notice for the process: "A newer ecmwf-multi-agents is available: run
+`opencode plugin update`, then restart opencode." It publishes another only after opencode
+cleared the mark and set it again. A checkout, a folder plugin or installed files are not a
+package and never get it. The check runs after activation and says nothing when it finds no
+update, so `doctor`, asked of a fresh server, waits up to five seconds from the plugin's start
+before it reads the list again for a package that is not marked yet.
 
 `install.sh doctor` asks the same RPC with `opencode api --standalone`, from the project
 folder: a private server whose RPC route waits for the plugins to activate, which the agent
@@ -766,7 +784,7 @@ load first, and opencode reports the project's copy as "Duplicate plugin ID".
 flowchart LR
   D[install.sh doctor] -->|opencode api --standalone| S[private server]
   S -->|POST /api/rpc/ecmwf-multi-agents/doctor| P[plugin index.js]
-  T[TUI tui.js] -->|problems, problem events| P
+  T[TUI tui.js] -->|problems, notices and their events| P
 ```
 
 ## Central install

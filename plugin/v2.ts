@@ -36,6 +36,10 @@
 // replying to the user out of lead's requests until the reply has ended, and a message queued for
 // after the turn wakes lead to act on it; see answer-first.ts.
 //
+// At setup and on every `plugin.updated` the plugin reads opencode's plugin list: when opencode
+// marks the plugin's own package outdated, the RPC tells the TUI that a newer harness is available
+// (update-notice.ts).
+//
 // `/review` and `/progress` are registered again, late in the same way, by a command transform:
 // their helper answers in the user's own session (inline.ts). The same `context` hook keeps that
 // helper to its brief; it sees a helper's requests there and lead's, never both at once. While
@@ -58,6 +62,7 @@ import { ProblemLog, registerRpc } from "./rpc.ts";
 import { RuleOrder } from "./rule-order.ts";
 import { SETTINGS_FILE, loadSettings, mergeSettings, type LoadedSettings } from "./settings.ts";
 import { HelperSlots } from "./slots.ts";
+import { processNotice, type UpdateNotice } from "./update-notice.ts";
 import { stepLimitAsUser } from "./step-limit.ts";
 import { eventFields, SessionTracker, sessionChildren, v2Tools } from "./tools-v2.ts";
 import type { EmbeddedHarness, Environment, Settings, V2AgentEditor, V2Cleanup, V2CommandEditor, V2Context, V2ContextEvent, V2Event, V2ModelMessage, V2Registration } from "./types.ts";
@@ -68,12 +73,21 @@ const TURN_ENDS: ReadonlySet<string> = new Set(["session.execution.succeeded", "
 /** Registers anyway when no `plugin.updated` arrives, in case the first one came before the subscription. */
 export const FALLBACK_MS = 3000;
 
+/**
+ * How long after the plugin starts doctor waits for opencode's update check of a package plugin,
+ * which runs after activation and says nothing when it finds no update.
+ */
+export const UPDATE_CHECK_MS = 5000;
+
 export interface V2Options {
   environment?: () => Environment;
   write?: (line: string) => void;
   fallbackMs?: number;
   /** The folder of the plugin's entry file; skills are registered at their files next to it. */
   pluginDir?: string;
+  /** The update notice; by default the one of this process. */
+  updateNotice?: UpdateNotice;
+  updateCheckMs?: number;
 }
 
 /** The user's own settings file, the one for every project. */
@@ -228,6 +242,14 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
         store: environment !== undefined && projectRoot !== undefined ? fileStore(environment, path.join(projectRoot, harness.workDir, "offers")) : null,
         limit: (agent) => planned.plans.find((plan) => plan.id === agent)?.steps ?? harness.agents.find((item) => item.id === agent)?.steps,
       });
+      const notice = options.updateNotice ?? processNotice(harness.name);
+      const readPlugins = async (): Promise<void> => {
+        try {
+          if (typeof ctx.plugin?.list === "function") notice.observe(await ctx.plugin.list());
+        } catch (error) {
+          reporter.internal("reading the plugin list", error);
+        }
+      };
       // The RPC can be asked before the late transform is registered; it registers it first.
       let late: LateTransform<V2AgentEditor> | undefined;
       // opencode's provider list is incomplete while plugins start (config providers arrive after),
@@ -278,6 +300,8 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
               await late.ensure();
             },
             plans: () => choices.plans(),
+            notice,
+            updateChecked: () => notice.checked(options.updateCheckMs ?? UPDATE_CHECK_MS),
           });
         } catch (error) {
           reporter.internal("registering the RPC", error);
@@ -425,6 +449,7 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
       const agentTransform = late;
       const onActivation = () => {
         ruleOrder.start();
+        void readPlugins();
         void (async () => {
           // The first read, or the one a `provider.updated` started, comes before the
           // registration, so the agents never show a model that is not usable.
@@ -445,6 +470,7 @@ export function createSetup(harness: EmbeddedHarness, options: V2Options = {}) {
         // Without a payload and sometimes twice: reading again is harmless, a repeat changes nothing.
         if (event?.type === "provider.updated" || event?.type === "model.updated") void readProviders();
       };
+      void readPlugins();
       const stopWatching = watchEvents(ctx, onActivation, onEvent, reporter, options.fallbackMs ?? FALLBACK_MS);
       return async () => {
         stopWatching();
