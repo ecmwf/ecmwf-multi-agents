@@ -46,9 +46,9 @@
   //   (src/fragments/writing.md, ADR 0006), which the setting writing_guidance "off" removes.
   //   Measured 2004 and 2352.
   // - skill 1850 -> 1900: the users' guide names the setting writing_guidance. Measured 1867.
-  // - lead-all 2400 -> 2450: the inspector's line in lead's helper list (ADR 0007).
-  //   Measured 2430.
-  "budgets": { "lead": 2050, "helper": 750, "command": 500, "skill": 1900, "routing": 100, "lead-all": 2450 },
+  // - lead-all 2400 -> 2450, skill 1900 -> 1950: the inspector's line in lead's helper list,
+  //   and the users' guide to the inspector and /harden (ADR 0007). Measured 2430 and 1926.
+  "budgets": { "lead": 2050, "helper": 750, "command": 500, "skill": 1950, "routing": 100, "lead-all": 2450 },
 
   // Named lists of {action, resource}. A permission entry {"use": name, "effect": e}
   // expands to one rule per item, all with effect e.

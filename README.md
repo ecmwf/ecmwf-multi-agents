@@ -48,7 +48,7 @@ Only `lead` talks to you. Helpers never ask you questions and never hand work on
 
 ### Optional helpers
 
-Four more helpers are off until a settings file switches them on, for you or for one project:
+Five more helpers are off until a settings file switches them on, for you or for one project:
 
 | Agent | What it does | Default model and effort |
 |---|---|---|
@@ -56,6 +56,7 @@ Four more helpers are off until a settings file switches them on, for you or for
 | `tester` | Tries to break code with edge cases and new tests, never fixes product code, drafts issues that `lead` files only when you approve | GPT 6.1 Sol via GH Copilot, high |
 | `designer` | Interface specs, interaction flows and prototypes you open in a browser; a builder implements the agreed design | Claude Opus 5.5, high |
 | `data-scientist` | Answers questions about datasets with scripts it runs, without reading the data into its context | Claude Sonnet 5.5, high |
+| `inspector` | Reviews code for security weaknesses and advises, each finding with its pros and cons, for you to decide; never changes the code. Used only when you ask, or with `/harden` | GPT 6.2 Astra via GH Copilot, xhigh |
 
 ```jsonc
 // .opencode/ecmwf-multi-agents.jsonc in a project
@@ -82,6 +83,7 @@ which helpers are on.
 | `/execute [plan]` | Carries out an approved plan: briefs a helper for each task, runs ready tasks in the background, checks every result, and stops when it needs you |
 | `/review [target]` | Independent review of your uncommitted changes, a branch, a commit, a pull request or a plan |
 | `/progress [plan]` | Shows progress on the current plan |
+| `/harden [target]` | Hardens security, with the `inspector` on: it finds weaknesses, you pick the fixes, builder makes each and the reviewer checks it, one commit per fix on your branch, never pushed |
 | `/guide [question]` | Explains how the harness works, in plain words |
 
 `/review` replaces opencode's own review command with one that uses the independent reviewer.
@@ -272,9 +274,9 @@ settings.
 
 - Agents commit only when you ask. Pushing, opening a pull request, merging and filing an
   issue always ask for your approval first. Answer such prompts with "Allow once".
-- Helpers cannot commit, push or rewrite git history. The researcher, designer and data
-  scientist write only their own folders in `.ecmwf-multi-agents/`; the tester changes only
-  tests, and `lead` checks what each of them changed.
+- Helpers cannot commit, push or rewrite git history. The researcher, designer, data
+  scientist and inspector write only their own folders in `.ecmwf-multi-agents/`; the tester
+  changes only tests, and `lead` checks what each of them changed.
 - The harness never asks for, prints or stores credentials.
 
 ## Development

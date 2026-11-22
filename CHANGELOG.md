@@ -25,6 +25,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
   ecmwf-multi-agents is available: run opencode plugin update, then restart opencode."
   `doctor` warns about it too. A checkout or an install with `install.sh` never gets the
   notice (#9).
+- `inspector`, an optional helper for security, off by default: it reviews code for security
+  weaknesses and advises, each finding with its pros and cons, for you to decide. It changes
+  no project file. Default model: GPT 6.2 Astra via GitHub Copilot at xhigh, or Claude Opus 5.5
+  at xhigh without Copilot (ADR 0007).
+- `/harden [target]` hardens security with the `inspector` on: it finds weaknesses, you pick the
+  fixes, builder makes each and the reviewer checks it, one `fix(security)` commit per fix on
+  your branch, never pushed; the inspector then rechecks. On GitHub, `lead` can read the
+  repository's security alerts and start a CodeQL scan, each only with your approval. While the
+  inspector is off, `/harden` says how to switch it on.
 
 ### Fixed
 
