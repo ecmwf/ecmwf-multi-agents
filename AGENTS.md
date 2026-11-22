@@ -92,3 +92,6 @@ GitHub issues record who does what: an issue's assignee owns it.
   (`gh run list --workflow release.yml`, then `gh run watch <id> --exit-status`) and confirm
   with `npm view @ecmwf.int/multi-agents version`. npm's trusted publisher names `release.yml`,
   so keep that file name.
+- When the release is complete (the GitHub release is published and npm shows the version),
+  delete the release branch locally and on GitHub: `git branch -d release/X.Y.Z` and
+  `git push origin --delete release/X.Y.Z`. Asking for the release is the approval for this too.

@@ -81,6 +81,9 @@ requests, a release goes in two steps:
 2. Once it is merged, run `make release X.Y.Z` on `main`. It tags the release commit and
    publishes the GitHub release; the tag publishes the npm package through
    `.github/workflows/release.yml`.
+3. Once `npm view @ecmwf.int/multi-agents version` shows the new version, delete the release
+   branch locally and on GitHub: `git branch -d release/X.Y.Z` and
+   `git push origin --delete release/X.Y.Z`.
 
 `DRY_RUN=1` previews either step. After a failure, fix the cause and run the same command again:
 it continues where it stopped.
