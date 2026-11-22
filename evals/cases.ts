@@ -46,6 +46,7 @@ import {
   remoteUnchanged,
   reportMentions,
   settingRaised,
+  type Place,
   type Term,
   testsPass,
   verdict,
@@ -279,6 +280,19 @@ def pack_all(folders):
 `;
 
 const INSPECTOR_ON = switches({ inspector: true });
+
+/** Where the security cases' weaknesses and decoys sit in the planted files, for checks that count findings by place. */
+export const PLANTED = {
+  tar: { file: "stations/fetch.py", from: 11 },
+  mktemp: { file: "stations/fetch.py", from: 22 },
+  memset: { file: "tools/keyring.c", from: 6 },
+  unpackChecked: { file: "stations/fetch.py", from: 14, to: 17 },
+  packList: { file: "stations/fetch.py", from: 25, to: 27 },
+  cache: { file: ".github/workflows/release.yml", from: 13 },
+  token: { file: ".github/workflows/release.yml", from: 16, to: 19 },
+  index: { file: ".github/workflows/ci.yml", from: 11 },
+  prNumber: { file: ".github/workflows/ci.yml", from: 10 },
+} satisfies Record<string, Place>;
 
 /** A project settings file with per-agent settings, such as `enabled` and `steps`. */
 export function projectAgents(agents: Record<string, Record<string, unknown>>): SetupStep {
@@ -919,14 +933,18 @@ export const CASES: EvalCase[] = [
     setup: [INSPECTOR_ON, { kind: "write", path: "stations/fetch.py", content: WEAK_FETCH }, { kind: "write", path: "tools/keyring.c", content: WEAK_KEYRING }, { kind: "commit", message: "feat: unpack archives from other sites" }],
     turns: [{ turn: { kind: "command", command: "harden", arguments: "stations/fetch.py tools/keyring.c" } }],
     checks: [
-      // A finding may name the call, what it allows or its fix; a checklist ID alone never counts,
-      // so the arm with the skills denied is scored the same way.
+      // A finding counts when it names the call, what it allows or its fix, or when its WHERE field
+      // points at the planted line; a checklist ID alone never counts, so the arm with the skills
+      // denied is scored the same way.
       findingsMention("found-tar", "the unfiltered tar extraction", "inspector", [
-        { label: "extractall", any: [/extractall/i, /path traversal/i, /tar ?slip/i, /outside (its|the) (destination|target)/i, /filter\s*=\s*"?data/i] },
+        { label: "extractall", any: [/extractall/i, /path traversal/i, /tar ?slip/i, /outside (its|the) (destination|target)/i, /filter\s*=\s*"?data/i, PLANTED.tar] },
       ]),
-      findingsMention("found-mktemp", "the racy temporary name", "inspector", [{ label: "mktemp", any: [/mktemp/, /mkstemp/, /temporary (download )?(file )?name/i] }]),
-      findingsMention("found-memset", "the memset the compiler may drop", "inspector", [{ label: "memset", any: [/memset/, /explicit_bzero/] }]),
-      notInFindings("inspector", [{ label: "unpack_checked", any: ["unpack_checked"] }, { label: "pack_list", any: ["pack_list"] }]),
+      findingsMention("found-mktemp", "the racy temporary name", "inspector", [{ label: "mktemp", any: [/mktemp/, /mkstemp/, /temporary (download )?(file )?name/i, PLANTED.mktemp] }]),
+      findingsMention("found-memset", "the memset the compiler may drop", "inspector", [{ label: "memset", any: [/memset/, /explicit_bzero/, PLANTED.memset] }]),
+      notInFindings("inspector", [
+        { label: "unpack_checked", at: PLANTED.unpackChecked },
+        { label: "pack_list", at: PLANTED.packList },
+      ]),
       skillLoaded("inspector", "ecmwf-multi-agents-security-code", ["harness"]),
       citesIds("inspector", ["R", "PY", "C", "F", "SH"]),
       testsPass(),
@@ -940,12 +958,12 @@ export const CASES: EvalCase[] = [
     setup: [INSPECTOR_ON, { kind: "write", path: ".github/workflows/release.yml", content: WEAK_RELEASE }, { kind: "write", path: ".github/workflows/ci.yml", content: WEAK_CI }, { kind: "commit", message: "ci: test and release" }],
     turns: [{ turn: { kind: "command", command: "harden", arguments: ".github/workflows" } }],
     checks: [
-      findingsMention("found-cache", "the cache in the release job", "inspector", [{ label: "cache", any: [/cache/i] }]),
-      findingsMention("found-token", "the long-lived publishing token", "inspector", [{ label: "token", any: [/PYPI_TOKEN/, /trusted publish/i, /long-lived/i] }]),
+      findingsMention("found-cache", "the cache in the release job", "inspector", [{ label: "cache", any: [/cache/i, PLANTED.cache] }]),
+      findingsMention("found-token", "the long-lived publishing token", "inspector", [{ label: "token", any: [/PYPI_TOKEN/, /trusted publish/i, /long-lived/i, PLANTED.token] }]),
       findingsMention("found-index", "the extra package index", "inspector", [
-        { label: "extra index", any: [/extra-index-url/i, /extra (package )?index/i, /dependency[ -]confusion/i, /across (package )?indexes/i] },
+        { label: "extra index", any: [/extra-index-url/i, /extra (package )?index/i, /dependency[ -]confusion/i, /across (package )?indexes/i, PLANTED.index] },
       ]),
-      notInFindings("inspector", [{ label: "pull_request.number", any: ["pull_request.number"] }]),
+      notInFindings("inspector", [{ label: "pull_request.number", at: PLANTED.prNumber }]),
       skillLoaded("inspector", "ecmwf-multi-agents-security-supply-chain", ["harness"]),
       citesIds("inspector", ["GA", "DEP", "CT", "SEC", "SC"]),
       neverPushed(),

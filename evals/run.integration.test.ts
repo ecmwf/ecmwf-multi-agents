@@ -111,7 +111,7 @@ function script(agent: string, users: string[], results: number, tools: { texts:
         "FINDINGS: S1 [PY1], high, high; WHERE: stations/archive.py:9; WEAKNESS: shell injection through the folder name; ADVICE: pass a list, no shell; PROS: no injection; CONS: none; ALTERNATIVES: none.\n" +
         "S2 [PY2], medium, high; WHERE: stations/archive.py:15; WEAKNESS: pickle runs code from the cache file; ADVICE: JSON; PROS: no code from data; CONS: old caches unreadable; ALTERNATIVES: none.\n" +
         "S3 [PY5], high, medium; WHERE: stations/fetch.py:11; WEAKNESS: extractall without a filter writes outside dest; ADVICE: filter=data; PROS: no path traversal; CONS: none; ALTERNATIVES: none.\n" +
-        "S4 [PY7], medium, medium; WHERE: stations/fetch.py:23; WEAKNESS: a mktemp name can be taken first; ADVICE: mkstemp; PROS: no race; CONS: none; ALTERNATIVES: none.\n" +
+        "S4 [PY7], medium, medium; WHERE: stations/fetch.py:22; WEAKNESS: a mktemp name can be taken first; ADVICE: mkstemp; PROS: no race; CONS: none; ALTERNATIVES: none.\n" +
         "S5 [C6], low, medium; WHERE: tools/keyring.c:6; WEAKNESS: memset before free may be removed; ADVICE: explicit_bzero; PROS: the key is really cleared; CONS: none; ALTERNATIVES: none.\n" +
         "CHECKS: none\nNOT CHECKED: unpack_checked and pack_list are safe as written.",
     };

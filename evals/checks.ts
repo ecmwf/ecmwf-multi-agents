@@ -15,10 +15,53 @@ export const WORK_FILES = /^\.ecmwf-multi-agents\//;
 export const NOTES = /^\.ecmwf-multi-agents\/notes\//;
 
 /** A fact an answer must state: text (case-insensitive) or a pattern, or any of several. */
-export type Term = string | RegExp | { label: string; any: Array<string | RegExp> };
+/** Lines of a file, such as a planted weakness or a decoy; `to` defaults to `from`. */
+export interface Place {
+  file: string;
+  from: number;
+  to?: number;
+}
 
-function matchOne(text: string, term: string | RegExp): boolean {
-  return typeof term === "string" ? text.toLowerCase().includes(term.toLowerCase()) : term.test(text);
+/** A place in a term's list matches when a `WHERE:` field of the text covers it (`pointsAt`). */
+export type Term = string | RegExp | { label: string; any: Array<string | RegExp | Place> };
+
+function matchOne(text: string, term: string | RegExp | Place): boolean {
+  if (typeof term === "string") return text.toLowerCase().includes(term.toLowerCase());
+  if (term instanceof RegExp) return term.test(text);
+  return pointsAt(text, term, "covers");
+}
+
+const PLACE = /([\w./-]*\w\.[A-Za-z]{1,5}):(\d+)(?:\s*[-\u2013]\s*(\d+))?/g;
+
+/**
+ * The values of a text's `WHERE:` fields, each up to the next field, a semicolon or the line's end.
+ * In findings written as a table, a row's first cell that holds a `path:line` stands for its field.
+ */
+function whereFields(text: string): string[] {
+  const fields = [...text.matchAll(/WHERE\**\s*:\**\s*(.*?)(?=\b(?:WEAKNESS|ADVICE|PROS|CONS|ALTERNATIVES?|SEVERITY|CONFIDENCE)\b|;|$)/gm)].map((match) => match[1]!);
+  const cells = text
+    .split("\n")
+    .filter((line) => line.trimStart().startsWith("|"))
+    .flatMap((row) => row.split("|").find((cell) => new RegExp(PLACE.source).test(cell)) ?? []);
+  return [...fields, ...cells];
+}
+
+/**
+ * A `WHERE:` field of the text names the place's file and lines (`path:line` or `path:from-to`,
+ * the path whole or its end). "covers": a range of fewer than 10 lines that overlaps the place, so
+ * a whole file does not count; "inside": a range within the place.
+ */
+function pointsAt(text: string, place: Place, how: "covers" | "inside"): boolean {
+  const to = place.to ?? place.from;
+  return whereFields(text).some((field) =>
+    [...field.matchAll(PLACE)].some((match) => {
+      const named = match[1]!.replace(/^\.\//, "");
+      const from = Number(match[2]);
+      const end = Number(match[3] ?? match[2]);
+      if (named !== place.file && !place.file.endsWith(`/${named}`) && !named.endsWith(`/${place.file}`)) return false;
+      return how === "inside" ? from >= place.from && end <= to : from <= to && end >= place.from && end - from < 10;
+    }),
+  );
 }
 
 export function termLabel(term: Term): string {
@@ -994,7 +1037,11 @@ export function findingsMention(id: string, title: string, agent: string, terms:
   };
 }
 
-/** The agent's findings cite a checklist ID with one of the prefixes, such as PY5. */
+/**
+ * The agent's findings, or the reports under `.ecmwf-multi-agents/security/`, cite a checklist ID
+ * with one of the prefixes, such as PY5. A one-letter prefix counts only in brackets, as `[C6]`, so
+ * finding numbers such as F1 are not taken for IDs.
+ */
 export function citesIds(agent: string, prefixes: string[]): Check {
   return {
     id: "cites-ids",
@@ -1002,21 +1049,38 @@ export function citesIds(agent: string, prefixes: string[]): Check {
     variants: ["harness"],
     recordOnly: ["harness"],
     run(ctx) {
-      const found = [...findingsOf(ctx, agent).matchAll(new RegExp(`\\b(?:${prefixes.join("|")})\\d+\\b`, "g"))].map((match) => match[0]);
+      const reports = ctx
+        .listFiles(".ecmwf-multi-agents/security")
+        .filter((file) => file.endsWith(".md"))
+        .map((file) => ctx.readFile(file) ?? "");
+      const long = prefixes.filter((prefix) => prefix.length > 1);
+      const short = prefixes.filter((prefix) => prefix.length === 1);
+      const id = new RegExp([...(long.length > 0 ? [`\\b(?:${long.join("|")})\\d+\\b`] : []), ...(short.length > 0 ? [`(?<=\\[)(?:${short.join("|")})\\d+(?=\\])`] : [])].join("|"), "g");
+      const found = [findingsOf(ctx, agent), ...reports].flatMap((text) => [...text.matchAll(id)].map((match) => match[0]));
       return found.length > 0 ? ok(`cites ${[...new Set(found)].join(", ")}`) : fail("no ID cited");
     },
   };
 }
 
-/** No line of the agent's FINDINGS sections names a decoy, a safe pattern that is not a weakness. */
-export function notInFindings(agent: string, decoys: Term[]): Check {
+/** A safe pattern that is not a weakness: its name, and where it is. */
+export interface Decoy {
+  label: string;
+  at: Place;
+}
+
+/**
+ * No finding points at a decoy's lines or names it in its `WHERE:` field. Advice that names it,
+ * such as "reuse unpack_checked", is not a finding about it.
+ */
+export function notInFindings(agent: string, decoys: Decoy[]): Check {
   return {
     id: "decoys-not-reported",
     title: `${agent} reported no decoy as a finding`,
     run(ctx) {
       const findings = findingsOf(ctx, agent);
-      const named = decoys.filter((term) => mentions(findings, term));
-      return named.length === 0 ? ok("no decoy") : fail(`a finding names ${named.map(termLabel).join(", ")}`);
+      const where = whereFields(findings).join("\n");
+      const named = decoys.filter((decoy) => where.includes(decoy.label) || pointsAt(findings, decoy.at, "inside"));
+      return named.length === 0 ? ok("no decoy") : fail(`a finding points at ${named.map((decoy) => decoy.label).join(", ")}`);
     },
   };
 }

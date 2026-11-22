@@ -8,7 +8,8 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { CASES, readingsCsv, UNITS_BUG } from "./cases.ts";
+import { CASES, PLANTED, readingsCsv, UNITS_BUG } from "./cases.ts";
+import type { Place } from "./checks.ts";
 import { checkEvalLogin, evalLoginDb, gitWorkTreeOf, importLogin, loginDbProblem, loginEnv, pipeEnv } from "./login.ts";
 import {
   applySetup,
@@ -401,6 +402,26 @@ describe("the security skills' cases", () => {
       expect([id, item(id).setup.at(-1)?.kind]).toEqual([id, "commit"]);
       expect([id, item(id).turns]).toEqual([id, [{ turn: { kind: "command", command: "harden", arguments: target } }]]);
       expect([id, item(id).baseline]).toEqual([id, false]);
+    }
+  });
+
+  test("each planted place holds its weakness or decoy, so checks that count findings by place point at the right lines", () => {
+    const planted = (file: string) => CASES.flatMap((candidate) => candidate.setup).find((step) => step.kind === "write" && step.path === file);
+    for (const [name, marker] of Object.entries({
+      tar: "bundle.extractall(dest)",
+      mktemp: "tempfile.mktemp",
+      memset: "memset(key, 0, len)",
+      cache: "cache: pip",
+      token: "PYPI_TOKEN",
+      index: "--extra-index-url",
+      unpackChecked: 'filter="data"',
+      packList: '["tar", "czf"',
+      prNumber: "pull_request.number",
+    })) {
+      const place: Place = PLANTED[name as keyof typeof PLANTED];
+      const step = planted(place.file);
+      const lines = step?.kind === "write" ? step.content.split("\n").slice(place.from - 1, place.to ?? place.from) : [];
+      expect([name, lines.some((line) => line.includes(marker))]).toEqual([name, true]);
     }
   });
 

@@ -609,11 +609,24 @@ describe("security skills", () => {
     expect(run(check, context({ calls: [skill("builder", "ecmwf-multi-agents-security-code")] })).pass).toBe(false);
   });
 
-  test("notInFindings: no line of the agent's FINDINGS section names a decoy; elsewhere it may", () => {
-    const check = notInFindings("inspector", [{ label: "pack_list", any: ["pack_list"] }]);
-    const report = (text: string) => context({ reports: [{ agent: "inspector", sessionID: "c", text }] });
-    expect(run(check, report("FINDINGS: S1 high: fetch.py extractall without filter.\nNOT CHECKED: pack_list is a fixed list, not a finding.")).pass).toBe(true);
-    expect(run(check, report("FINDINGS: S1 high: pack_list runs tar.\nRECHECK: none")).detail).toBe("a finding names pack_list");
+  test("notInFindings: no finding points at a decoy's lines or names it in its WHERE field; advice to reuse it is no finding about it", () => {
+    const decoys = [
+      { label: "unpack_checked", at: { file: "stations/fetch.py", from: 14, to: 17 } },
+      { label: "pull_request.number", at: { file: ".github/workflows/ci.yml", from: 10 } },
+    ];
+    const check = notInFindings("inspector", decoys);
+    const said = (text: string) => context({ reports: [{ agent: "inspector", sessionID: "c", text }] });
+    // Both phrasings come from real runs: the finding is about unpack, and the advice names the safe twin.
+    expect(run(check, said("FINDINGS:\n- **A01 — Archive writes outside the destination.** SEVERITY: high; CONFIDENCE: high; WHERE: `stations/fetch.py:11`; WEAKNESS: a site controls paths. ADVICE: reuse `unpack_checked()` with `filter=\"data\"`. PROS: one policy.")).pass).toBe(true);
+    expect(run(check, said("FINDINGS:\n- **F-01 — SEVERITY: high. WHERE: `stations/fetch.py:11`. Unsafe archive extraction.** WEAKNESS: files outside the destination.\n  **ADVICE: Recommended.** Reuse `unpack_checked` and fail closed.")).pass).toBe(true);
+    expect(run(check, said("FINDINGS: S1 [PY5] medium; WHERE: stations/fetch.py:17; WEAKNESS: the data filter is missing on old Pythons.")).detail).toBe("a finding points at unpack_checked");
+    expect(run(check, said("FINDINGS: S2 low; WHERE: `ci.yml:10`; WEAKNESS: event text in run.")).detail).toBe("a finding points at pull_request.number");
+    expect(run(check, said("FINDINGS: S3 low; WHERE: `unpack_checked` in stations/fetch.py; WEAKNESS: trusts the filter.")).detail).toBe("a finding points at unpack_checked");
+    expect(run(check, said("FINDINGS: S4 high; WHERE: ci.yml:9-12; WEAKNESS: the job mixes indexes.\nNOT CHECKED: `pull_request.number` at ci.yml:10 is safe.")).pass).toBe(true);
+    expect(run(check, said("FINDINGS:\n| F-01 | high | `stations/fetch.py:11` | Unsafe extraction. | Reuse `unpack_checked` (fetch.py:14-17). |")).pass).toBe(true);
+    expect(run(check, said("FINDINGS:\n| F-02 | low | `stations/fetch.py:17` | The data filter is missing on old Pythons. | Pin Python. |")).detail).toBe("a finding points at unpack_checked");
+    expect(run(check, said("FINDINGS: S1 high; WHERE: fetch.py:11; WEAKNESS: extractall without filter.\nNOT CHECKED: unpack_checked at fetch.py:17 is safe, not a finding.")).pass).toBe(true);
+    expect(run(check, said("FINDINGS: S1 high; WHERE: fetch.py:16-17; WEAKNESS: no filter on old Pythons.\nRECHECK: none")).detail).toBe("a finding points at unpack_checked");
   });
 
   test("findingsMention and citesIds read every message of the agent, so a later recheck does not hide its findings", () => {
@@ -623,6 +636,31 @@ describe("security skills", () => {
     expect(run(findingsMention("found-mktemp", "mktemp", "inspector", ["mktemp"]), ctx).detail).toBe('no finding names "mktemp"');
     expect(run(citesIds("inspector", ["PY", "C"]), ctx)).toEqual({ pass: true, detail: "cites PY5" });
     expect(run(citesIds("inspector", ["GA"]), ctx).pass).toBe(false);
+  });
+
+  test("findingsMention: a WHERE field that covers a planted line counts, as do the words; a far place or a whole file does not", () => {
+    const index = findingsMention("found-index", "the extra index", "inspector", [{ label: "extra index", any: [/extra-index-url/i, { file: ".github/workflows/ci.yml", from: 11 }] }]);
+    const said = (text: string) => context({ reports: [{ agent: "inspector", sessionID: "c", text }] });
+    // A real run's words, which name neither the option nor dependency confusion.
+    expect(run(index, said("FINDINGS: CI-1 high; WHERE: `ci.yml:11–12`; WEAKNESS: pip gives the internal index no priority over PyPI.")).pass).toBe(true);
+    expect(run(index, said("FINDINGS: CI-1 high; WHERE: `.github/workflows/ci.yml:11`; WEAKNESS: a package can be swapped.")).pass).toBe(true);
+    expect(run(index, said("FINDINGS: R-1 high; WHERE: `release.yml:11`; WEAKNESS: a cache.")).pass).toBe(false);
+    expect(run(index, said("FINDINGS: CI-2 low; WHERE: ci.yml:1-40; WEAKNESS: no timeout.")).pass).toBe(false);
+    expect(run(index, said("FINDINGS: CI-2 low; WHERE: ci.yml:3; WEAKNESS: see ci.yml:11 too.")).pass).toBe(false);
+    // Findings as a table, from real runs: the cell that holds the place stands for the WHERE field.
+    expect(run(index, said("FINDINGS:\n| CI-1 | high | medium | `ci.yml:11-12` \u2014 pip gives the internal index no priority. | Remove the install. | Removes the path. |")).pass).toBe(true);
+    const mktemp = findingsMention("found-mktemp", "mktemp", "inspector", [{ label: "mktemp", any: [/mktemp/, { file: "stations/fetch.py", from: 22 }] }]);
+    expect(run(mktemp, said("FINDINGS:\n| **F-04 \u00b7 low \u00b7 high** | `stations/fetch.py:22` | **Unreserved scratch name.** A local actor could substitute a file. |")).pass).toBe(true);
+    expect(run(mktemp, said("FINDINGS:\n| **F-01** | `stations/fetch.py:11` | Unsafe extraction. | Same fix as fetch.py:22. |")).pass).toBe(false);
+  });
+
+  test("citesIds also reads the report files, and takes a one-letter ID only in brackets, so finding numbers are not IDs", () => {
+    const said = (text: string, files: Record<string, string> = {}) => context({ reports: [{ agent: "inspector", sessionID: "c", text }], files });
+    const code = citesIds("inspector", ["R", "PY", "C", "F", "SH"]);
+    expect(run(code, said("FINDINGS: F1 high; WHERE: fetch.py:11. F2 low; WHERE: keyring.c:6, see C11.")).detail).toBe("no ID cited");
+    expect(run(code, said("FINDINGS: F1 low; WHERE: keyring.c:6 [C6] [R2].")).detail).toBe("cites C6, R2");
+    const report = { ".ecmwf-multi-agents/security/2026-11-22-actions-review.md": "## CI-1 [DEP1]\n## R-1 [GA6] [GA8]\n", ".ecmwf-multi-agents/security/scan.txt": "GA1" };
+    expect(run(citesIds("inspector", ["GA", "DEP"]), said("FINDINGS: CI-1 high; WHERE: ci.yml:11.", report)).detail).toBe("cites DEP1, GA6, GA8");
   });
 
   test("regressionTest: a changed test file names the module; noSuppressions: the commits add no nosec or noqa", () => {
