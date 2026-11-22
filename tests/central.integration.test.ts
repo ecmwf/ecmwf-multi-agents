@@ -334,7 +334,7 @@ describe.skipIf(!v2Available)(`a central install in opencode ${V2_VERSION}`, () 
     const ours = commands.filter((command) => COMMANDS.includes(command.name)).sort((a, b) => a.name.localeCompare(b.name));
     expect(ours.map((command) => [command.name, command.description])).toEqual(COMMANDS.map((name) => [name, fromConfig.commands[name]!.description]));
     const skills = (await get<Array<{ id: string; path?: string }>>("/api/skill", projects.plain)).filter((skill) => skill.id.startsWith(NAME));
-    expect(skills.map((skill) => skill.id).sort()).toEqual([`${NAME}-guide`, `${NAME}-plan`]);
+    expect(skills.map((skill) => skill.id).sort()).toEqual([`${NAME}-guide`, `${NAME}-plan`, `${NAME}-security-code`, `${NAME}-security-fix`, `${NAME}-security-supply-chain`]);
     for (const skill of skills) expect(skill.path).toBe(path.join(central, "skills", skill.id, "SKILL.md"));
     const plugins = await get<Array<{ id?: string; state?: { status?: string } }>>("/api/plugin", projects.plain);
     expect(plugins.filter((plugin) => plugin.id === NAME).map((plugin) => plugin.state?.status)).toEqual(["active"]);

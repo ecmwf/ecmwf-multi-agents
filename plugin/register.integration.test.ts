@@ -457,9 +457,9 @@ describe.skipIf(!v2Available)(`a project's plugins line in opencode ${V2_VERSION
     }
 
     const commands = async (project: string) => (await get<Array<{ name: string; description?: string }>>("/api/command", project)).filter((command) => !command.name.includes(":"));
-    const ours = (list: Array<{ name: string; description?: string }>) => list.filter((command) => ["plan", "execute", "review", "progress", "onboard", "guide"].includes(command.name)).sort((a, b) => a.name.localeCompare(b.name));
+    const ours = (list: Array<{ name: string; description?: string }>) => list.filter((command) => ["plan", "execute", "review", "progress", "onboard", "guide", "harden"].includes(command.name)).sort((a, b) => a.name.localeCompare(b.name));
     const pluginCommands = ours(await commands(projects.line));
-    expect(pluginCommands.map((command) => command.name)).toEqual(["execute", "guide", "onboard", "plan", "progress", "review"]);
+    expect(pluginCommands.map((command) => command.name)).toEqual(["execute", "guide", "harden", "onboard", "plan", "progress", "review"]);
     expect(pluginCommands.map((command) => [command.name, command.description])).toEqual(ours(await commands(projects.files)).map((command) => [command.name, command.description]));
 
     type Skill = { id: string; name?: string; description?: string; autoinvoke?: boolean; content?: string; path?: string };
@@ -467,7 +467,7 @@ describe.skipIf(!v2Available)(`a project's plugins line in opencode ${V2_VERSION
       (await get<Skill[]>("/api/skill", project)).filter((skill) => skill.id.startsWith(NAME)).sort((a, b) => a.id.localeCompare(b.id));
     const fileSkills = await skills(projects.files);
     const pluginSkills = await skills(projects.line);
-    expect(fileSkills.map((skill) => skill.id)).toEqual([`${NAME}-guide`, `${NAME}-plan`]);
+    expect(fileSkills.map((skill) => skill.id)).toEqual([`${NAME}-guide`, `${NAME}-plan`, `${NAME}-security-code`, `${NAME}-security-fix`, `${NAME}-security-supply-chain`]);
     const strip = ({ path: _path, ...rest }: Skill) => rest;
     expect(pluginSkills.map(strip)).toEqual(fileSkills.map(strip));
     for (const skill of pluginSkills) expect(skill.path).toBe(path.join(box, "home", ".local", "share", NAME, "dist", "opencode-v2", "skills", skill.id, "SKILL.md"));
@@ -612,7 +612,7 @@ describe.skipIf(!v2Available)(`a project's plugins line in opencode ${V2_VERSION
 
     type Skill = { id: string; path?: string };
     const skills = (await get<Skill[]>("/api/skill", projects.packed)).filter((skill) => skill.id.startsWith(NAME)).sort((a, b) => a.id.localeCompare(b.id));
-    expect(skills.map((skill) => skill.id)).toEqual([`${NAME}-guide`, `${NAME}-plan`]);
+    expect(skills.map((skill) => skill.id)).toEqual([`${NAME}-guide`, `${NAME}-plan`, `${NAME}-security-code`, `${NAME}-security-fix`, `${NAME}-security-supply-chain`]);
     for (const skill of skills) expect(skill.path).toBe(path.join(copy, "dist", "opencode-v2", "skills", skill.id, "SKILL.md"));
 
     const doctor = await call<{ output?: Record<string, unknown> }>("POST", `/api/rpc/${NAME}/doctor`, projects.packed, { input: {} });
