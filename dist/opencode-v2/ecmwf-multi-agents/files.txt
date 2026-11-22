@@ -19,3 +19,6 @@ plugins/ecmwf-multi-agents/index.js
 plugins/ecmwf-multi-agents/tui.js
 skills/ecmwf-multi-agents-guide/SKILL.md
 skills/ecmwf-multi-agents-plan/SKILL.md
+skills/ecmwf-multi-agents-security-code/SKILL.md
+skills/ecmwf-multi-agents-security-fix/SKILL.md
+skills/ecmwf-multi-agents-security-supply-chain/SKILL.md

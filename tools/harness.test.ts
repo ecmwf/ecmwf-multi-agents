@@ -204,6 +204,45 @@ describe("the inspector and /harden", () => {
     }
   });
 
+  const CODE = "ecmwf-multi-agents-security-code";
+  const SUPPLY = "ecmwf-multi-agents-security-supply-chain";
+  const FIX = "ecmwf-multi-agents-security-fix";
+  const skill = (id: string) => harness.skills.find((item) => item.id === id)!;
+
+  test("three hidden security skills, each a checklist whose items carry an ID to cite", () => {
+    for (const [id, prefixes] of [
+      [CODE, ["R", "PY", "C", "F", "SH"]],
+      [SUPPLY, ["GA", "DEP", "CT", "SEC", "SC"]],
+      [FIX, ["FX", "RC", "RV"]],
+    ] as const) {
+      expect([id, skill(id)?.hidden]).toEqual([id, true]);
+      const body = skill(id).body;
+      for (const prefix of prefixes) expect([id, prefix, new RegExp(`^- ${prefix}1 `, "m").test(body)]).toEqual([id, prefix, true]);
+      expect(body).not.toMatch(/\u2014/);
+    }
+    expect(skill(CODE).body).toContain("Cite the ID");
+    expect(skill(SUPPLY).body).toContain("Never print a secret");
+    expect(skill(SUPPLY).body).toContain("Never use a found secret");
+    for (const text of ["regression test", "Never add `# nosec`", "Never rewrite history"]) expect([text, skill(FIX).body.includes(text)]).toEqual([text, true]);
+  });
+
+  test("only the inspector loads the review skills, the builder and the inspector the fix skill; other harness skills stay denied", () => {
+    const loads = (id: string, name: string) => decide(agent(id).permissions, "skill", name);
+    for (const name of [CODE, SUPPLY, FIX]) expect(["inspector", name, loads("inspector", name)]).toEqual(["inspector", name, "allow"]);
+    expect(loads("builder", FIX)).toBe("allow");
+    for (const name of [CODE, SUPPLY]) expect(["builder", name, loads("builder", name)]).toEqual(["builder", name, "deny"]);
+    for (const id of ["scout", "reviewer", "tester", "researcher", "designer", "data-scientist"]) {
+      for (const name of [CODE, SUPPLY, FIX]) expect([id, name, loads(id, name)]).toEqual([id, name, "deny"]);
+    }
+    for (const id of ["inspector", "builder"]) expect([id, loads(id, "ecmwf-multi-agents-plan")]).toEqual([id, "deny"]);
+  });
+
+  test("/harden names the skills in the briefs: the review skills for the inspector, the fix skill for the builder and the recheck", () => {
+    const template = harden().template;
+    for (const name of [CODE, SUPPLY, FIX]) expect([name, template.includes(name)]).toEqual([name, true]);
+    expect(template).toContain("cite");
+  });
+
   test("lead asks before it starts a workflow on GitHub", () => {
     expect(decide(agent("lead").permissions, "shell", "gh workflow run codeql.yml")).toBe("ask");
   });

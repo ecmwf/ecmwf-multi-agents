@@ -190,6 +190,8 @@
         { "action": "delegate", "resource": "*", "effect": "deny" },
         { "action": "question", "resource": "*", "effect": "deny" },
         { "action": "skill", "resource": "ecmwf-multi-agents-*", "effect": "deny" },
+        // Allowed: the safe-fix rules /harden names in the brief of each security fix.
+        { "action": "skill", "resource": "ecmwf-multi-agents-security-fix", "effect": "allow" },
         { "use": "helper-tools", "effect": "deny" }
       ]
     },
@@ -330,6 +332,11 @@
         { "action": "delegate", "resource": "*", "effect": "deny" },
         { "action": "question", "resource": "*", "effect": "deny" },
         { "action": "skill", "resource": "ecmwf-multi-agents-*", "effect": "deny" },
+        // Allowed: the security checklists /harden names in its brief, and the fix skill's
+        // recheck verdicts (docs/research/security-skills.md).
+        { "action": "skill", "resource": "ecmwf-multi-agents-security-code", "effect": "allow" },
+        { "action": "skill", "resource": "ecmwf-multi-agents-security-supply-chain", "effect": "allow" },
+        { "action": "skill", "resource": "ecmwf-multi-agents-security-fix", "effect": "allow" },
         { "use": "helper-tools", "effect": "deny" }
       ]
     }
@@ -396,6 +403,21 @@
     "ecmwf-multi-agents-plan": {
       "description": "Plan file format and rules for ecmwf-multi-agents. Use when writing, updating or carrying out a plan in .ecmwf-multi-agents/plans/.",
       "body": "skills/ecmwf-multi-agents-plan/SKILL.md",
+      "hidden": true
+    },
+    "ecmwf-multi-agents-security-code": {
+      "description": "Checklist for a security review of Python, C, C++, Fortran and shell code: how to rate a finding, and the weaknesses to look for, each with an ID to cite. Load when a security review or /harden names it.",
+      "body": "skills/ecmwf-multi-agents-security-code/SKILL.md",
+      "hidden": true
+    },
+    "ecmwf-multi-agents-security-supply-chain": {
+      "description": "Checklist for a security review of GitHub Actions, Python dependencies, containers, secrets and scanner hits, each item with an ID to cite. Load when a security review or /harden names it.",
+      "body": "skills/ecmwf-multi-agents-security-supply-chain/SKILL.md",
+      "hidden": true
+    },
+    "ecmwf-multi-agents-security-fix": {
+      "description": "Rules and recipes for fixing a security finding safely, and the verdicts for rechecking a fix. Load when /harden names it.",
+      "body": "skills/ecmwf-multi-agents-security-fix/SKILL.md",
       "hidden": true
     },
     "ecmwf-multi-agents-guide": {
