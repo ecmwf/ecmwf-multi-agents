@@ -7,6 +7,10 @@ import {
   answerMentions,
   answeredDuringPlan,
   answersInline,
+  helpersRan,
+  neverPushed,
+  securityCommit,
+  weaknessRemoved,
   askedUser,
   changedOnlyIn,
   helperContinued,
@@ -552,3 +556,40 @@ describe("settings offers", () => {
     expect(run(check, context()).pass).toBe(false);
   });
 });
+
+describe("hardening", () => {
+  test("helpersRan: each helper ran in at least one session", () => {
+    const ctx = context();
+    ctx.metrics.childSessions = { inspector: 1, builder: 2 };
+    expect(run(helpersRan(["inspector", "builder"]), ctx).pass).toBe(true);
+    expect(run(helpersRan(["inspector", "reviewer"]), ctx)).toEqual({ pass: false, detail: "never ran: reviewer" });
+  });
+
+  test("securityCommit: a new fix(security) commit changes the file, and nothing of it is left uncommitted", () => {
+    const commands = (subject: string, status = "", changed = 1) => ({
+      "git rev-parse HEAD": { code: 0, output: "b".repeat(40) },
+      [`git log --format=%s ${HEAD}..HEAD -- stations/archive.py`]: { code: 0, output: subject },
+      "git status --porcelain -- stations/archive.py": { code: 0, output: status },
+      [`git diff --quiet ${HEAD} HEAD -- stations/archive.py`]: { code: changed, output: "" },
+    });
+    const check = securityCommit("stations/archive.py");
+    expect(run(check, context({ commands: commands("fix(security): pack without a shell\n") }))).toEqual({ pass: true, detail: 'committed as "fix(security): pack without a shell"' });
+    expect(run(check, context({ commands: commands("fix: pack\n") })).pass).toBe(false);
+    expect(run(check, context({ commands: commands("fix(security): x", " M stations/archive.py") })).pass).toBe(false);
+    expect(run(check, context({ commands: { ...commands(""), "git rev-parse HEAD": { code: 0, output: HEAD } } })).detail).toBe("no new commit");
+  });
+
+  test("neverPushed: no shell call tried to push", () => {
+    expect(run(neverPushed(), context({ calls: [call("lead", "git add a && git commit -m x")] })).pass).toBe(true);
+    expect(run(neverPushed(), context({ calls: [call("lead", "git push origin main")] })).pass).toBe(false);
+  });
+
+  test("weaknessRemoved: at least one planted weakness is gone from the file", () => {
+    const check = weaknessRemoved("stations/archive.py", [{ label: "shell", any: [/shell=True/] }, { label: "pickle", any: [/pickle\.load/] }]);
+    // A weakness only in a comment is gone.
+    expect(run(check, context({ files: { "stations/archive.py": "run(cmd, shell=True)\nx = 1  # was pickle.load(f)" } }))).toEqual({ pass: true, detail: "gone: pickle" });
+    expect(run(check, context({ files: { "stations/archive.py": "run(cmd, shell=True)\npickle.load(f)" } })).pass).toBe(false);
+    expect(run(check, context()).pass).toBe(false);
+  });
+});
+

@@ -10,6 +10,10 @@ import {
   answerMentions,
   answeredDuringPlan,
   answersInline,
+  helpersRan,
+  neverPushed,
+  securityCommit,
+  weaknessRemoved,
   askedUser,
   backgroundHandoffs,
   changedOnlyIn,
@@ -150,6 +154,24 @@ const RANGE_TERMS: Term[] = [
 ];
 
 const RANGE_QUESTION = "While that runs: in one sentence, what temperature range does the quality check accept? Do not change any files.";
+
+/** A module with two weaknesses for /harden: a shell command built from its argument, and pickle on a file. */
+export const WEAK_ARCHIVE = `"""Pack a station's data folder for sharing, and read back a cached summary."""
+
+import pickle
+import subprocess
+
+
+def pack(folder):
+    """Write <folder>.tar.gz next to the folder."""
+    subprocess.run(f"tar czf {folder}.tar.gz {folder}", shell=True, check=True)
+
+
+def load_cache(path):
+    """Read a summary cached by an earlier run."""
+    with open(path, "rb") as handle:
+        return pickle.load(handle)
+`;
 
 /** A project settings file with per-agent settings, such as `enabled` and `steps`. */
 export function projectAgents(agents: Record<string, Record<string, unknown>>): SetupStep {
@@ -762,6 +784,41 @@ export const CASES: EvalCase[] = [
       askedUser("steps-offer", "lead asked whether to raise the designer's step limit", ["designer", { label: "step", any: [/step/i] }, { label: "9", any: [/\b9\b/] }]),
       settingRaised("designer", 6),
       noChanges(new RegExp(`${WORK_FILES.source}|^\\.opencode/ecmwf-multi-agents\\.jsonc$`), "no project file changed (work files and the project's settings allowed)"),
+    ],
+    baseline: false,
+  },
+  {
+    id: "harden",
+    title: "With the inspector on: /harden finds the weaknesses planted in a module, the user picks one, builder fixes it, reviewer checks it, and it is committed as a security fix",
+    setup: [switches({ inspector: true }), { kind: "write", path: "stations/archive.py", content: WEAK_ARCHIVE }, { kind: "commit", message: "feat: pack a station's folder, and cache summaries" }],
+    turns: [{ turn: { kind: "command", command: "harden", arguments: "stations/archive.py" } }],
+    checks: [
+      helpersRan(["inspector", "builder", "reviewer"]),
+      askedUser("findings-question", "lead put the findings to the user", [{ label: "a weakness", any: [/shell|injection|pickle|deserial/i] }]),
+      securityCommit("stations/archive.py"),
+      weaknessRemoved("stations/archive.py", [
+        { label: "shell=True", any: [/shell\s*=\s*True/] },
+        { label: "pickle.load", any: [/pickle\.loads?\(/] },
+      ]),
+      testsPass(),
+      changedOnlyIn("only-archive", "only the module and tests changed (work files allowed)", /^stations\/archive\.py$|^tests\//),
+      neverPushed(),
+    ],
+    baseline: false,
+  },
+  {
+    id: "harden-off",
+    title: "With the inspector off: /harden refuses, saying so and how to switch it on, without a model turn",
+    setup: [],
+    turns: [{ turn: { kind: "command", command: "harden", arguments: "" } }],
+    checks: [
+      answerMentions("inspector-off", "the refusal says the inspector is off and how to switch it on", [
+        { label: "switched off", any: [/switched off/i] },
+        { label: "the setting", any: ['"inspector": { "enabled": true }'] },
+      ]),
+      agentNeverRan("inspector"),
+      agentNeverRan("lead"),
+      noChanges(WORK_FILES, "nothing changed"),
     ],
     baseline: false,
   },

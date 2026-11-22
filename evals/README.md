@@ -158,6 +158,8 @@ new session.
 | `researcher-compare` | `researcher` on: plain versus time-weighted daily means, with an experiment, the package untouched | no |
 | `designer-limit` | `designer` on with a step limit of 12: it reports at the limit with its spec started, and `lead` continues its session rather than designing itself | no |
 | `designer-limit-twice` | `designer` on with a step limit of 6: it reaches the limit twice in one session, `lead` puts the plugin's offer of a higher limit to the user with the question tool, and the project's settings file gets it | no |
+| `harden` | `inspector` on, two weaknesses planted in a committed module: `/harden` puts the findings to the user, builder fixes the picked one, the reviewer checks it, and it is committed as `fix(security)`, never pushed | no |
+| `harden-off` | `inspector` off: `/harden` refuses with the plugin's message and the setting, without a model turn | no |
 
 The cases are defined in `evals/cases.ts`; hidden tests are in `evals/hidden/<case>/` (a case
 may name another case's folder) and run from outside the project after the run. In `no-push`, the baseline has no approval rule, so its

@@ -42,7 +42,7 @@ type Action = { tool: string; args: Record<string, unknown> } | { text: string }
 function agentOf(system: string): string {
   const lower = system.toLowerCase();
   if (lower.includes("title generator")) return "title";
-  for (const agent of ["lead", "scout", "builder", "reviewer", "researcher", "tester", "designer", "data scientist"]) {
+  for (const agent of ["lead", "scout", "builder", "reviewer", "researcher", "tester", "designer", "data scientist", "inspector"]) {
     if (new RegExp(`you are (?:a |an |the )?${agent}\\b`).test(lower)) return agent.replace(" ", "-");
   }
   return "primary";
@@ -98,6 +98,39 @@ function script(agent: string, users: string[], results: number, tools: { texts:
       return { tool: "write", args: { path: ".opencode/ecmwf-multi-agents.jsonc", content: '{ "agents": { "designer": { "enabled": true, "steps": 9 } } }\n' } };
     }
     return { text: "The designer's spec is started; its step limit is now 9 from the next start." };
+  }
+  // harden: the inspector reports, the user picks the first finding, builder fixes, reviewer approves, lead commits, the inspector rechecks.
+  if (agent === "inspector") {
+    if (last.includes("RECHECK")) return { text: "STATUS: DONE\nRECHECK: S1 CLOSED: pack runs tar without a shell." };
+    if (results === 0) return { tool: "write", args: { path: ".ecmwf-multi-agents/security/archive.md", content: "# stations/archive.py\n\nS1 shell injection; S2 pickle.\n" } };
+    return { text: "STATUS: DONE\nREPORT: .ecmwf-multi-agents/security/archive.md\nFINDINGS: S1, high, high; WHERE: stations/archive.py:9; WEAKNESS: shell injection through the folder name; ADVICE: pass a list, no shell; PROS: no injection; CONS: none; ALTERNATIVES: none. S2, medium, high; WHERE: stations/archive.py:15; WEAKNESS: pickle runs code from the cache file; ADVICE: JSON; PROS: no code from data; CONS: old caches unreadable; ALTERNATIVES: none." };
+  }
+  if (agent === "builder" && all.includes("FIX_SHELL")) {
+    if (results === 0) {
+      const fixed = 'import pickle\nimport subprocess\n\n\ndef pack(folder):\n    """Write <folder>.tar.gz next to the folder."""\n    subprocess.run(["tar", "czf", f"{folder}.tar.gz", folder], check=True)\n\n\ndef load_cache(path):\n    """Read a summary cached by an earlier run."""\n    with open(path, "rb") as handle:\n        return pickle.load(handle)\n';
+      return { tool: "write", args: { path: "stations/archive.py", content: fixed } };
+    }
+    return { text: "STATUS: DONE\nCHANGED: stations/archive.py\nCHECKS: none run" };
+  }
+  if (agent === "reviewer" && all.includes("REVIEW_FIX")) {
+    if (results === 0) return { tool: "shell", args: { command: "git diff", description: "the change" } };
+    return { text: "VERDICT: APPROVE\nCHECKED: git diff" };
+  }
+  if (agent === "lead" && all.includes("Harden the security of")) {
+    const inspected = /sessionID="([^"]+)"/.exec(tools.texts[0] ?? "")?.[1];
+    if (results === 0) return { tool: "subagent", args: { agent: "inspector", description: "inspect the module", prompt: "INSPECT: review stations/archive.py for security weaknesses." } };
+    if (results === 1) {
+      const options = [
+        { label: "S1 shell injection in pack (Recommended)", description: "Pro: no injection. Con: none." },
+        { label: "S2 pickle in load_cache", description: "Pro: no code from data. Con: old caches unreadable." },
+      ];
+      return { tool: "question", args: { questions: [{ question: "Which findings should be fixed?", header: "Findings", multiple: true, options }] } };
+    }
+    if (results === 2) return { tool: "subagent", args: { agent: "builder", description: "fix the shell injection", prompt: "FIX_SHELL: run tar without a shell in stations/archive.py." } };
+    if (results === 3) return { tool: "subagent", args: { agent: "reviewer", description: "check the fix", prompt: "REVIEW_FIX: check that pack no longer uses a shell." } };
+    if (results === 4) return { tool: "shell", args: { command: 'git add stations/archive.py && git commit -q -m "fix(security): pack runs tar without a shell"', description: "commit the fix" } };
+    if (results === 5 && inspected !== undefined) return { tool: "subagent", args: { agent: "inspector", sessionID: inspected, description: "recheck", prompt: "RECHECK S1 against the last commit." } };
+    return { text: "S1 fixed and committed; the inspector says CLOSED. S2 not picked." };
   }
   if (all.includes("LOOP_FOREVER")) return { tool: "shell", args: { command: "sleep 1", description: "wait" } };
   if (agent === "title") return { text: "Stand-in title" };
@@ -399,6 +432,31 @@ describe.skipIf(!enabled)(`eval runner end to end (${name}, stand-in model)`, ()
     expect(record.questions).toHaveLength(1);
     expect(record.questions[0]).toMatchObject({ agent: "lead", answers: [["Raise to 9 (Recommended)"]] });
     expect(record.changedFiles.sort()).toEqual([".ecmwf-multi-agents/design/weeks/spec.md", ".opencode/ecmwf-multi-agents.jsonc"]);
+    expect(record.pass).toBe(true);
+  }, 400_000);
+
+  test("harness, harden: the inspector reports, the first finding is picked, builder fixes, reviewer approves, one fix(security) commit, the inspector rechecks", async () => {
+    const record = keep(await runCase(byId("harden"), options("harness")));
+    expect(record.error).toBeUndefined();
+    expect(record.checks.map((check) => [check.id, check.pass])).toEqual([
+      ["helpers-ran", true],
+      ["findings-question", true],
+      ["security-commit", true],
+      ["weakness-removed", true],
+      ["tests-pass", true],
+      ["only-archive", true],
+      ["never-pushed", true],
+    ]);
+    expect(record.metrics.childSessions).toEqual({ inspector: 1, builder: 1, reviewer: 1 });
+    expect(record.questions[0]).toMatchObject({ agent: "lead", answers: [["S1 shell injection in pack (Recommended)"]] });
+    expect(record.pass).toBe(true);
+  }, 400_000);
+
+  test("harness, harden-off: with the inspector off, /harden refuses with the plugin's message and no model turn", async () => {
+    const record = keep(await runCase(byId("harden-off"), options("harness")));
+    expect(record.error).toBeUndefined();
+    expect(record.turns[0]!.refusal).toContain("The inspector is switched off here, so /harden cannot run.");
+    expect(record.metrics.requests).toBe(0);
     expect(record.pass).toBe(true);
   }, 400_000);
 

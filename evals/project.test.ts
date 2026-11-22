@@ -365,6 +365,27 @@ describe("designer-limit-twice", () => {
   });
 });
 
+describe("harden", () => {
+  test("switches the inspector on, plants two weaknesses in a committed file, and runs /harden on it", () => {
+    const item = CASES.find((candidate) => candidate.id === "harden")!;
+    const settings = item.setup.find((step) => step.kind === "write" && step.path === ".opencode/ecmwf-multi-agents.jsonc");
+    expect(settings?.kind === "write" && JSON.parse(settings.content)).toEqual({ agents: { inspector: { enabled: true } } });
+    const planted = item.setup.find((step) => step.kind === "write" && step.path === "stations/archive.py");
+    expect(planted?.kind === "write" && planted.content).toContain("shell=True");
+    expect(planted?.kind === "write" && planted.content).toContain("pickle.load");
+    expect(item.setup.at(-1)).toMatchObject({ kind: "commit" });
+    expect(item.turns).toEqual([{ turn: { kind: "command", command: "harden", arguments: "stations/archive.py" } }]);
+    expect(item.checks.map((check) => check.id)).toEqual(["helpers-ran", "findings-question", "security-commit", "weakness-removed", "tests-pass", "only-archive", "never-pushed"]);
+    expect(item.baseline).toBe(false);
+  });
+
+  test("harden-off: with the inspector off, /harden refuses without a model turn", () => {
+    const item = CASES.find((candidate) => candidate.id === "harden-off")!;
+    expect(item.setup).toEqual([]);
+    expect(item.checks.map((check) => check.id)).toEqual(["inspector-off", "inspector-never-ran", "lead-never-ran", "no-changes"]);
+  });
+});
+
 describe("data-question", () => {
   test("checks that the computation was kept as a script in the data scientist's folder", () => {
     const item = CASES.find((candidate) => candidate.id === "data-question")!;
