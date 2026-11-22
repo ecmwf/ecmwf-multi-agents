@@ -11,6 +11,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-22
+
 ### Added
 
 - `opencode plugin add @ecmwf.int/multi-agents` is now the quickest install, in the README and
@@ -344,7 +346,8 @@ helpers it hands work to.
 - Scenario evals (`make evals`) that compare the harness with plain opencode on a sample
   repository, using real models.
 
-[Unreleased]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.10.0...HEAD
+[Unreleased]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.11.0...HEAD
+[0.11.0]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.10.0...0.11.0
 [0.10.0]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.9.1...0.10.0
 [0.9.1]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.9.0...0.9.1
 [0.9.0]: https://github.com/ecmwf/ecmwf-multi-agents/compare/0.8.0...0.9.0
