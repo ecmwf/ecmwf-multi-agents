@@ -45,6 +45,7 @@ answers land in `docs/research/` and `docs/adr/`.
 | `tester` | subagent, optional | Tries to break a change: edge cases, adversarial and new tests, never product code; drafts issues | 60 |
 | `designer` | subagent, optional | UI specs, interaction flows and standalone prototypes; a builder implements them | 60 |
 | `data-scientist` | subagent, optional | Answers questions about datasets with scripts it runs, never by reading the data into its context | 60 |
+| `inspector` | subagent, optional | Reviews code for security weaknesses and advises, each finding with its pros and cons; never changes project files (ADR 0007) | 60 |
 
 Steps cap the number of model turns a helper may take. They act as a cost limit. Each agent
 also gets a model and an effort from the active profile (see Profiles), and users can change
@@ -374,6 +375,17 @@ CAVEATS: limits, assumptions and data quality issues.
 NOT CHECKED: what was out of reach or skipped.
 ```
 
+Inspector:
+
+```text
+STATUS: DONE, PARTIAL or BLOCKED.
+REPORT: the path of the report file.
+FINDINGS: most serious first; for each: ID, SEVERITY (critical, high, medium or low), CONFIDENCE (high, medium or low); WHERE: path:line; WEAKNESS: what an attacker can do, and how; ADVICE: the change; PROS: what it removes; CONS: its cost, risk and what may break; ALTERNATIVES: other options, or none.
+RECHECK: for each finding the brief names: CLOSED, OPEN or PARTLY, with the evidence; or none.
+CHECKS: one line per scanner or command: what it found.
+NOT CHECKED: what was not examined.
+```
+
 A background helper's report arrives wrapped by opencode (`<subagent ... state="completed">`
 with the report inside; `state="error"` or `state="cancelled"` when it did not finish). `lead` reads the inside as the
 helper's report.
@@ -506,6 +518,7 @@ All harness files in a project live under `.ecmwf-multi-agents/` at the top of t
 | `issues/<slug>.md` | Issue drafts from `tester`, filed by `lead` only after the user approves |
 | `design/<slug>/` | Specs, prototypes and screenshots from `designer` |
 | `data/<slug>/` | Scripts, results, figures and the data sources from `data-scientist` |
+| `security/<date>-<slug>.md` | Findings and scanner output from `inspector` |
 
 At each start of a user's session in a git repository, the plugin adds `.ecmwf-multi-agents/`
 to the file that `git rev-parse --git-path info/exclude` names, once, finding it as git does
@@ -513,6 +526,24 @@ in a repository, a worktree or a submodule; it is the plugin's only write into a
 folder then never shows up in `git status` or commits, and the file is local to the clone.
 A failure to write it is reported, and `doctor` says whether the line is there. Because search
 tools skip ignored files, prompts refer to work files by exact path.
+
+## Security hardening
+
+`/harden [target]` runs on `lead` and needs `inspector` (ADR 0007); while the inspector is
+off, the plugin's `/harden` refuses with the settings line that switches it on, as `/review`
+does with the reviewer off, and no model turn starts. The loop:
+
+1. With uncommitted changes, `lead` asks whether to commit them first, stop, or leave them out.
+2. For a repository on GitHub, `lead` asks before it reads the open code scanning, Dependabot
+   and secret scanning alerts with `gh api`, and offers to start a CodeQL workflow first;
+   `gh workflow run` always asks.
+3. The inspector reviews the target and runs local scanners. A scout reads the advisories and
+   CVEs its findings name, since the web is untrusted input the inspector does not read itself.
+4. `lead` puts the findings to the user in one question, several answers allowed, each with its
+   severity and its pros and cons. Nothing changes without a pick.
+5. For each pick, builder fixes and reviewer checks, at most two rounds; each passed fix is one
+   commit, `fix(security): ...`, on the current branch. Nothing is pushed.
+6. The inspector rechecks each picked finding against its commit: CLOSED, OPEN or PARTLY.
 
 ## Onboarding summary
 

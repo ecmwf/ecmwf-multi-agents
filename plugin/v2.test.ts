@@ -1324,7 +1324,7 @@ describe("v2 inline commands", () => {
     // The registration during setup (register.ts): every harness command, the helpers' in a child session.
     expect(host.commandTransforms).toHaveLength(1);
     const early = host.commands();
-    expect([...early.keys()]).toEqual(["plan", "review", "progress"]);
+    expect([...early.keys()]).toEqual(["plan", "review", "progress", "break"]);
     // opencode's loader for command files comes after it.
     const files = (editor: V2CommandEditor) => editor.add({ name: "review", description: "file", execute: async () => {} });
     host.commandTransforms.push(files);
@@ -1337,6 +1337,8 @@ describe("v2 inline commands", () => {
       expect(late.get(name)).not.toBe(early.get(name)!);
       expect(late.get(name)!.description).not.toBe("file");
     }
+    // tester is off: the command that needs it refuses, and no turn starts.
+    await expect(late.get("break")!.execute({ sessionID: "root", prompt: { text: "x" } })).rejects.toThrow("The tester is switched off here, so /break cannot run.");
     // The late review answers inline: it switches the session to the reviewer, never makes a child.
     host.sessions.root = { agent: "lead" };
     await late.get("review")!.execute({ sessionID: "root", prompt: { text: "x" } });
@@ -1406,8 +1408,13 @@ describe("v2 inline commands", () => {
     await start({}, host);
     host.emit("plugin.updated");
     await settle();
-    // Only the registration during setup, which runs the helpers' commands in a child session.
-    expect(host.commandTransforms).toHaveLength(1);
+    // The registration during setup, which runs the helpers' commands in a child session, and a
+    // late one with only the refusal of a command whose helper is off.
+    expect(host.commandTransforms).toHaveLength(2);
+    const seen: string[] = [];
+    host.commandTransforms[1]!({ add: (definition) => void seen.push(definition.name) });
+    expect(seen).toEqual(["break"]);
+    expect(host.commands().get("review")).toBeDefined();
   });
 });
 

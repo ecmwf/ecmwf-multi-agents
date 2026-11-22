@@ -977,7 +977,7 @@ Copilot agents; the two follow-ups below, which Tiago takes. Tests come first in
 
 Exit: `make check` and the integration suites pass on 2.2.6; PR #7 merged; the evals above pass.
 
-## Phase 14: the security advisor, /harden, and release 0.11.0
+## Phase 14: the inspector, /harden, and release 0.11.0
 
 Release 0.11.0 on the branch `release/0.11.0`: Samet's PR #9 (the README animation, `opencode
 plugin add`, the update notice) with the review's fixes, and a new optional helper for
@@ -988,16 +988,16 @@ security. Tests first in every task.
   reaches every location; the docs say the toast comes at each start until the update; quoted
   commands in `doctor`'s advice; npm aliases and git specs recognised; the notice text without
   backticks; the opencode facts in `docs/research/`. The animation stays as it is
-- [~] Tiago: `security-advisor`, an optional helper (off by default) that reviews code for
+- [~] Tiago: `inspector`, an optional helper (off by default) that reviews code for
   security weaknesses and advises: each finding with its pros and cons, for the user to decide.
   It reads code and runs local scanners, writes only its report, and never changes the project.
   Default profile: `github-copilot/gpt-6.2-astra` at xhigh, falling back to Claude Opus 5.5 at
   xhigh. ADR 0007
-- [~] Tiago: `/harden [target]`: lead runs the advisor (a scout reads CVEs and advisories for
+- [~] Tiago: `/harden [target]`: lead runs the inspector (a scout reads CVEs and advisories for
   context), the user picks findings with the question tool, then for each pick builder fixes
-  and reviewer checks, one commit per fix on the current branch, and the advisor checks again
+  and reviewer checks, one commit per fix on the current branch, and the inspector checks again
   at the end. With the user's approval lead reads GitHub's security alerts and offers a new
-  scan. With the advisor off, `/harden` refuses and says how to switch it on
+  scan. With the inspector off, `/harden` refuses and says how to switch it on
 - [~] Tiago: Checks: `make check`, integration on 2.2.6, stand-in evals with a new `harden`
   case, every case once on real models (at most $40)
 - [ ] Tiago: Release 0.11.0

@@ -84,6 +84,8 @@ export interface SourceCommand {
   /** Template file, relative to src/. */
   template: string;
   subtask: boolean;
+  /** A helper the command needs; while it is off, the plugin's command refuses and says so. */
+  needs?: string;
 }
 
 export interface SourceSkill {
@@ -144,7 +146,7 @@ const AGENT_REQUIRED = ["mode", "description", "prompt", "budget"];
 const RULE_KEYS = ["action", "resource", "effect"];
 const USE_KEYS = ["use", "effect"];
 const RULE_SET_ITEM_KEYS = ["action", "resource"];
-const COMMAND_KEYS = ["description", "agent", "template", "subtask"];
+const COMMAND_KEYS = ["description", "agent", "template", "subtask", "needs"];
 const COMMAND_REQUIRED = ["description", "agent", "template"];
 const SKILL_KEYS = ["description", "body", "hidden"];
 const SKILL_REQUIRED = ["description", "body"];
@@ -566,7 +568,8 @@ function readAgents(
   return out;
 }
 
-function readCommands(value: unknown, c: Checker, agentIds: ReadonlySet<string>, refs: MarkdownRef[]): SourceCommand[] {
+function readCommands(value: unknown, c: Checker, agents: readonly SourceAgent[], refs: MarkdownRef[]): SourceCommand[] {
+  const agentIds = new Set(agents.map((agent) => agent.id));
   if (value === undefined) return [];
   const map = c.object(value, ["commands"]);
   if (map === undefined) return [];
@@ -583,7 +586,15 @@ function readCommands(value: unknown, c: Checker, agentIds: ReadonlySet<string>,
     const template = c.markdownPath(entry.template, [...at, "template"]) ?? "";
     if (template !== "") refs.push({ file: template, at: [...at, "template"], template: true });
     const subtask = c.boolean(entry.subtask, [...at, "subtask"]) ?? false;
-    out.push({ id, description, agent, template, subtask });
+    const command: SourceCommand = { id, description, agent, template, subtask };
+    if (entry.needs !== undefined) {
+      const needs = c.text(entry.needs, [...at, "needs"]);
+      const helper = agents.find((item) => item.id === needs);
+      if (needs !== undefined && helper === undefined) c.fail([...at, "needs"], `names no agent; agents: ${known([...agentIds])}`);
+      else if (needs !== undefined && helper?.mode !== "subagent") c.fail([...at, "needs"], `must name a helper (a subagent), not ${needs}`);
+      else if (needs !== undefined) command.needs = needs;
+    }
+    out.push(command);
   }
   return out;
 }
@@ -637,7 +648,7 @@ function readManifest(value: unknown, c: Checker, refs: MarkdownRef[]): Manifest
   const ruleSets = readRuleSets(top.ruleSets, c);
   const agents = readAgents(top.agents, c, budgets, ruleSets, refs);
   const agentIds = new Set(agents.map((agent) => agent.id));
-  const commands = readCommands(top.commands, c, agentIds, refs);
+  const commands = readCommands(top.commands, c, agents, refs);
   const skills = readSkills(top.skills, c, refs);
   if (isObject(top.budgets)) {
     if (commands.length > 0 && !budgets.has("command")) {

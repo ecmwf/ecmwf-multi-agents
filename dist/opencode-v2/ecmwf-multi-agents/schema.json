@@ -688,6 +688,85 @@
               "minimum": 1
             }
           }
+        },
+        "inspector": {
+          "title": "inspector",
+          "description": "Reviews code for security weaknesses and advises, each finding with its pros and cons, for people to decide. Never changes the project's code. Settings here override the profile for inspector.",
+          "type": "object",
+          "additionalProperties": false,
+          "dependentRequired": {
+            "fallback": [
+              "model"
+            ]
+          },
+          "properties": {
+            "enabled": {
+              "title": "On or off",
+              "description": "Switch inspector on or off, for you or for one project. Default: false: inspector is an optional helper, on only where a settings file switches it on.",
+              "type": "boolean",
+              "default": false
+            },
+            "model": {
+              "title": "Model",
+              "description": "Model for inspector, written as provider/model, for example github-copilot/gpt-6.2-astra. No \"#\" and no spaces. Leave it out to use the profile's choice.",
+              "type": "string",
+              "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
+            },
+            "effort": {
+              "title": "Reasoning effort",
+              "description": "Reasoning effort for the model of inspector. Common values: low, medium, high, xhigh and max; some models also take none. Default: xhigh, from the default profile. It applies only when inspector has a model, from the profile or from this entry, so it has no effect under the inherit profile unless this entry also names a model. No \"#\" and no spaces. Leave it out to use the profile's choice.",
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^#\\s]+$"
+            },
+            "fallback": {
+              "title": "Fallback models",
+              "description": "Models inspector tries, in order, when its own model is not usable. Each entry is provider/model, or an object with \"model\" and an optional \"effort\". Needs a model in this same entry. Setting a model without a fallback list drops the profile's list; an empty list means no fallbacks. A list here replaces any list from the profile or from an earlier settings file.",
+              "type": "array",
+              "items": {
+                "title": "Fallback model",
+                "description": "A model, or a model with its reasoning effort.",
+                "oneOf": [
+                  {
+                    "title": "Model",
+                    "description": "Written as provider/model. No \"#\" and no spaces.",
+                    "type": "string",
+                    "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
+                  },
+                  {
+                    "title": "Model with effort",
+                    "description": "A fallback model and the reasoning effort to use on it.",
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "model"
+                    ],
+                    "properties": {
+                      "model": {
+                        "title": "Model",
+                        "description": "Written as provider/model. No \"#\" and no spaces.",
+                        "type": "string",
+                        "pattern": "^[^/#\\s]+\\/[^#\\s]+$"
+                      },
+                      "effort": {
+                        "title": "Reasoning effort",
+                        "description": "Reasoning effort for this model, such as \"high\". No \"#\" and no spaces. Leave it out for the model's own default.",
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "^[^#\\s]+$"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "steps": {
+              "title": "Step limit",
+              "description": "Most model turns inspector may take before it stops and reports. A whole number of at least 1. Default: 60.",
+              "type": "integer",
+              "minimum": 1
+            }
+          }
         }
       }
     }

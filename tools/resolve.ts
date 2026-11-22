@@ -111,6 +111,7 @@ export function resolveHarness(source: Source): ResolvedHarness {
       agent: command.agent,
       subtask: command.subtask,
       template: sourceText(source, command.template),
+      ...(command.needs === undefined ? {} : { needs: command.needs }),
     }),
   );
   const skills = manifest.skills.map(

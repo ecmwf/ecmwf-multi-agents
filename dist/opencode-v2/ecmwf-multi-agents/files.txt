@@ -4,6 +4,7 @@ agents/reviewer.md
 agents/scout.md
 commands/execute.md
 commands/guide.md
+commands/harden.md
 commands/onboard.md
 commands/plan.md
 commands/progress.md

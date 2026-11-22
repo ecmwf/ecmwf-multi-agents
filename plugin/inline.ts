@@ -254,6 +254,15 @@ export function reviewerOffText(harness: EmbeddedHarness): string {
   );
 }
 
+/** What a command that needs a helper says while that helper is switched off. */
+export function helperOffText(harness: EmbeddedHarness, helper: string, command: string): string {
+  return (
+    `The ${helper} is switched off here, so /${command} cannot run. ` +
+    `To switch it on, set "agents": { "${helper}": { "enabled": true } } in .opencode/${harness.name}.jsonc for this project, ` +
+    `or in ${harness.name}.jsonc in your opencode config folder for every project, then restart opencode.`
+  );
+}
+
 /** Inline runs of the helpers' commands: the commands to register and the context hook's part. */
 export class Inline {
   readonly runs = new InlineRuns();
@@ -273,6 +282,32 @@ export class Inline {
    * and, while it is off, run without it whatever opencode can do.
    */
   commands(): V2CommandDefinition[] {
+    return [...this.helperCommands(), ...this.refusals()];
+  }
+
+  /**
+   * A command that needs a helper which is switched off refuses: a command that throws fails with
+   * the error's message, which the TUI shows, and no model turn starts.
+   */
+  private refusals(): V2CommandDefinition[] {
+    const { harness, enabled } = this.deps;
+    if (enabled === undefined) return [];
+    return harness.commands.flatMap((command): V2CommandDefinition[] => {
+      if (command.needs === undefined || enabled.has(command.needs)) return [];
+      const needs = command.needs;
+      return [
+        {
+          name: command.name,
+          ...(command.description === undefined ? {} : { description: command.description }),
+          execute: async () => {
+            throw new Error(helperOffText(harness, needs, command.name));
+          },
+        },
+      ];
+    });
+  }
+
+  private helperCommands(): V2CommandDefinition[] {
     const inline = this.available();
     return inlineCommands(this.deps.harness, this.deps.helpers).flatMap((command): V2CommandDefinition[] => {
       if (this.deps.enabled !== undefined && !this.deps.enabled.has(command.agent)) return [this.withoutHelper(command)];

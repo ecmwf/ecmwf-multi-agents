@@ -79,6 +79,8 @@ export interface EmbeddedCommand {
   model?: string;
   subagent?: boolean;
   template: string;
+  /** A helper the command needs: while it is off, the plugin's command refuses and says so. */
+  needs?: string;
 }
 
 /** A skill as opencode reads its generated SKILL.md; `content` is the text after the frontmatter. */

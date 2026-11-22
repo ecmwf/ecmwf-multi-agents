@@ -45,6 +45,16 @@
     "data-scientist": {
       "model": "anthropic/claude-sonnet-5-5",
       "effort": "high"
+    },
+    "inspector": {
+      "model": "github-copilot/gpt-6.2-astra",
+      "effort": "xhigh",
+      "fallback": [
+        {
+          "model": "anthropic/claude-opus-5-5",
+          "effort": "xhigh"
+        }
+      ]
     }
   }
 }

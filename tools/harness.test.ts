@@ -15,7 +15,7 @@ import type { Rule } from "./types.ts";
 
 const root = path.resolve(import.meta.dir, "..");
 const harness = resolveHarness(await load(root));
-const OPTIONAL = ["researcher", "tester", "designer", "data-scientist"];
+const OPTIONAL = ["researcher", "tester", "designer", "data-scientist", "inspector"];
 const HELPERS = ["scout", "builder", "reviewer", ...OPTIONAL];
 
 function agent(id: string) {
@@ -39,12 +39,13 @@ function decide(rules: readonly Rule[], action: string, resource: string): strin
 }
 
 describe("the optional helpers", () => {
-  test("four subagents, off by default, each with a routing line and its step limit", () => {
+  test("five subagents, off by default, each with a routing line and its step limit", () => {
     expect(harness.agents.filter((item) => item.optional === true).map((item) => [item.id, item.mode, item.steps])).toEqual([
       ["researcher", "subagent", 80],
       ["tester", "subagent", 60],
       ["designer", "subagent", 60],
       ["data-scientist", "subagent", 60],
+      ["inspector", "subagent", 60],
     ]);
     for (const id of OPTIONAL) expect(agent(id).routing).toMatch(/^[a-z].+\.$/);
     expect(harness.helperOff).toBeDefined();
@@ -73,6 +74,7 @@ describe("the optional helpers", () => {
       ["tester", ".ecmwf-multi-agents/issues/"],
       ["designer", ".ecmwf-multi-agents/design/"],
       ["data-scientist", ".ecmwf-multi-agents/data/"],
+      ["inspector", ".ecmwf-multi-agents/security/"],
     ] as const) {
       expect([id, agent(id).routing?.includes(`\`${folder}\``)]).toEqual([id, true]);
     }
@@ -144,6 +146,7 @@ describe("the optional helpers", () => {
       tester: ["Tester:", ".ecmwf-multi-agents/issues/"],
       designer: ["Designer:", ".ecmwf-multi-agents/design/"],
       "data-scientist": ["Data scientist:", ".ecmwf-multi-agents/data/"],
+      "inspector": ["Inspector:", ".ecmwf-multi-agents/security/"],
     };
     for (const [id, [heading, folder]] of Object.entries(reports)) {
       const block = new RegExp(`\\n${heading}\\n\\n\`\`\`text\\n([\\s\\S]*?)\\n\`\`\``).exec(architecture)?.[1];
@@ -152,6 +155,57 @@ describe("the optional helpers", () => {
       expect([id, prompt.trimEnd().endsWith(`\`\`\`text\n${block}\n\`\`\``)]).toEqual([id, true]);
       expect([id, prompt.includes(folder)]).toEqual([id, true]);
     }
+  });
+});
+
+describe("the inspector and /harden", () => {
+  const inspector = () => agent("inspector");
+  const harden = () => harness.commands.find((command) => command.id === "harden")!;
+
+  test("advises only: it writes its own folder and nothing else, never git, GitHub or the web, and runs local scanners under the user's policy", () => {
+    const rules = inspector().permissions;
+    for (const file of [".ecmwf-multi-agents/security/2026-11-22.md", "sub/.ecmwf-multi-agents/security/a.md"]) expect([file, decide(rules, "edit", file)]).toEqual([file, "allow"]);
+    for (const file of ["src/app.py", "requirements.txt", ".github/workflows/ci.yml", ".ecmwf-multi-agents/plans/x.md"]) expect([file, decide(rules, "edit", file)]).toEqual([file, "deny"]);
+    for (const command of ["gh api repos/o/r/code-scanning/alerts", "git commit -m x", "git -C /x log"]) expect([command, decide(rules, "shell", command)]).toEqual([command, "deny"]);
+    for (const tool of ["webfetch", "websearch"]) expect([tool, decide(rules, tool, "https://nvd.nist.gov")]).toEqual([tool, "deny"]);
+    for (const command of ["uvx pip-audit -r requirements.txt", "npx osv-scanner --lockfile package-lock.json", "semgrep --config auto .", "gitleaks detect --no-git"]) {
+      expect([command, decide(rules, "shell", command)]).toEqual([command, undefined]);
+    }
+  });
+
+  test("lead uses it only when asked; it gives each finding its pros and cons for the user to decide", () => {
+    const routing = inspector().routing ?? "";
+    expect(routing).toContain("/harden");
+    expect(routing).toContain("only when the user asks");
+    expect(routing).toContain("pros and cons");
+    const prompt = inspector().prompt;
+    for (const text of ["PROS:", "CONS:", "never change project files", "Never print or copy secrets", "untrusted", "CLOSED"]) expect([text, prompt.includes(text)]).toEqual([text, true]);
+  });
+
+  test("/harden is lead's, needs the inspector, and runs the loop: advise, the user picks, builder fixes, reviewer checks, one commit each, the inspector checks again", () => {
+    expect(harden()).toMatchObject({ agent: "lead", needs: "inspector", subtask: false });
+    const template = harden().template;
+    for (const text of [
+      "inspector",
+      "question tool",
+      "scout",
+      "builder",
+      "reviewer",
+      "fix(security):",
+      "Never push",
+      "at most two rounds",
+      "code-scanning/alerts",
+      "dependabot/alerts",
+      "secret-scanning/alerts",
+      "gh workflow run",
+      "uncommitted changes",
+    ]) {
+      expect([text, template.includes(text)]).toEqual([text, true]);
+    }
+  });
+
+  test("lead asks before it starts a workflow on GitHub", () => {
+    expect(decide(agent("lead").permissions, "shell", "gh workflow run codeql.yml")).toBe("ask");
   });
 });
 
@@ -235,27 +289,30 @@ describe("profiles", () => {
       tester: { model: "github-copilot/gpt-6.1-sol", effort: "high", fallback: [{ model: "anthropic/claude-opus-5-5", effort: "high" }] },
       designer: { model: "anthropic/claude-opus-5-5", effort: "high" },
       "data-scientist": { model: "anthropic/claude-sonnet-5-5", effort: "high" },
+      "inspector": { model: "github-copilot/gpt-6.2-astra", effort: "xhigh", fallback: [{ model: "anthropic/claude-opus-5-5", effort: "xhigh" }] },
     });
     expect(models("anthropic")).toEqual({
       researcher: { model: "anthropic/claude-opus-5-5", effort: "xhigh" },
       tester: { model: "anthropic/claude-opus-5-5", effort: "high" },
       designer: { model: "anthropic/claude-opus-5-5", effort: "high" },
       "data-scientist": { model: "anthropic/claude-sonnet-5-5", effort: "high" },
+      "inspector": { model: "anthropic/claude-opus-5-5", effort: "xhigh" },
     });
     expect(models("copilot")).toEqual({
       researcher: { model: "github-copilot/claude-opus-5.5", effort: "xhigh" },
       tester: { model: "github-copilot/gpt-6.1-sol", effort: "high" },
       designer: { model: "github-copilot/claude-opus-5.5", effort: "high" },
       "data-scientist": { model: "github-copilot/claude-sonnet-5.5", effort: "high" },
+      "inspector": { model: "github-copilot/gpt-6.2-astra", effort: "xhigh" },
     });
-    expect(models("inherit")).toEqual({ researcher: undefined, tester: undefined, designer: undefined, "data-scientist": undefined });
+    expect(models("inherit")).toEqual({ researcher: undefined, tester: undefined, designer: undefined, "data-scientist": undefined, "inspector": undefined });
   });
 
   test("the default profile's Copilot agents fall back to the anthropic profile's model; no other agent or profile has a fallback", () => {
     const withFallback = harness.profiles.flatMap((profile) => Object.entries(profile.agents).flatMap(([id, agent]) => (agent?.fallback === undefined ? [] : [`${profile.id}/${id}`])));
-    expect(withFallback.sort()).toEqual(["default/reviewer", "default/tester"]);
+    expect(withFallback.sort()).toEqual(["default/inspector", "default/reviewer", "default/tester"]);
     const profile = (id: string) => harness.profiles.find((item) => item.id === id)!;
-    for (const id of ["reviewer", "tester"]) {
+    for (const id of ["reviewer", "tester", "inspector"]) {
       const { model, effort } = profile("anthropic").agents[id]!;
       expect(profile("default").agents[id]!.fallback).toEqual([{ model: model!, effort }]);
     }

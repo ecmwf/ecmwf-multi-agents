@@ -102,6 +102,8 @@ export interface ResolvedCommand {
   /** Run in a child session and return the result to the current one. */
   subtask: boolean;
   template: string;
+  /** A helper the command needs (see SourceCommand). */
+  needs?: string;
 }
 
 export interface ResolvedSkill {
